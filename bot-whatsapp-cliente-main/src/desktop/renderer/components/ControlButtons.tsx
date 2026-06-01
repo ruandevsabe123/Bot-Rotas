@@ -6,13 +6,12 @@ type Props = {
   onStart: () => void;
   onStop: () => void;
   onStartMonitoring: () => void;
+  onStartTestMonitoring: () => void;
   onStopMonitoring: () => void;
   onRestart: () => void;
   onClearSession: () => void;
   monitoringEnabled?: boolean;
-  warmupCompleted?: boolean;
-  warmupRequired?: boolean;
-  tutorialMode?: "connect" | "start-monitoring" | "stop-monitoring";
+  monitoringMode?: "target" | "test";
 };
 
 export function ControlButtons({
@@ -21,13 +20,12 @@ export function ControlButtons({
   onStart,
   onStop,
   onStartMonitoring,
+  onStartTestMonitoring,
   onStopMonitoring,
   onRestart,
   onClearSession,
   monitoringEnabled,
-  warmupCompleted,
-  warmupRequired,
-  tutorialMode
+  monitoringMode
 }: Props) {
   const isConnectingFlow = status === "connecting" || status === "waiting_qr" || status === "reconnecting";
   const isConnected = status === "connected";
@@ -35,38 +33,28 @@ export function ControlButtons({
   const isError = status === "error";
   const isRunning = isConnectingFlow || isConnected;
 
-  const tutorialActive = Boolean(tutorialMode);
-  const canConnect = !busy && (isDisconnected || isError) && (!tutorialActive || tutorialMode === "connect");
-  const canStop = !busy && isRunning && !tutorialActive;
-  const canRestart = !busy && isRunning && !tutorialActive;
-  const canClearSession = !busy && (isRunning || isError) && !tutorialActive;
-  const canStartMonitoring =
-    !busy &&
-    isConnected &&
-    !Boolean(monitoringEnabled) &&
-    (!warmupRequired || Boolean(warmupCompleted)) &&
-    (!tutorialActive || tutorialMode === "start-monitoring");
-  const canStopMonitoring =
-    !busy && isConnected && Boolean(monitoringEnabled) && (!tutorialActive || tutorialMode === "stop-monitoring");
+  const canConnect = !busy && (isDisconnected || isError);
+  const canStop = !busy && isRunning;
+  const canRestart = !busy && isRunning;
+  const canClearSession = !busy && (isRunning || isError);
+  const canStartMonitoring = !busy && isConnected && !Boolean(monitoringEnabled);
+  const canStopMonitoring = !busy && isConnected && Boolean(monitoringEnabled);
 
   return (
     <article className="panel">
       <p className="panel-label">Controles</p>
       <div className="button-grid">
-        <button
-          data-tutorial-id="connect-whatsapp"
-          className="button primary wide-button"
-          disabled={!canConnect}
-          onClick={onStart}
-          title={isConnected ? "WhatsApp já conectado" : undefined}
-        >
+        <button className="button primary wide-button" disabled={!canConnect} onClick={onStart}>
           Conectar WhatsApp
         </button>
-        <button data-tutorial-id="start-monitoring" className="button" disabled={!canStartMonitoring} onClick={onStartMonitoring}>
+        <button className="button" disabled={!canStartMonitoring} onClick={onStartMonitoring}>
           Iniciar bot
         </button>
-        <button data-tutorial-id="stop-monitoring" className="button" disabled={!canStopMonitoring} onClick={onStopMonitoring}>
-          Parar bot
+        <button className="button" disabled={!canStartMonitoring} onClick={onStartTestMonitoring}>
+          Iniciar teste
+        </button>
+        <button className="button" disabled={!canStopMonitoring} onClick={onStopMonitoring}>
+          Parar bot{monitoringMode === "test" ? " teste" : ""}
         </button>
         <button className="button" disabled={!canStop} onClick={onStop}>
           Desconectar WhatsApp

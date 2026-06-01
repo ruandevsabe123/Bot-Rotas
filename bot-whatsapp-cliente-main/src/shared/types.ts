@@ -34,6 +34,7 @@ export type BotConfig = {
   grupoTesteJid: string;
   grupoTesteNome: string;
   nomeEnvio: string;
+  nuclearMode: boolean;
   // mensagens específicas para o uso do bot
   // mensagens enviadas no grupo alvo
   codigosMensagensAlvo: string[];
@@ -52,6 +53,7 @@ export type BotSnapshot = {
   logs: BotLog[];
   error?: string;
   monitoringEnabled?: boolean;
+  monitoringMode?: "target" | "test";
   warmupCompleted?: boolean;
   warmupMessagesSent?: number;
   warmupRequiredMessages?: number;
@@ -82,14 +84,21 @@ export type SaveTargetMessageSettingsPayload = {
   codes: string[];
 };
 
+export type GeneralSettingsPayload = {
+  nuclearMode: boolean;
+};
+
 export type DesktopApi = {
   getSnapshot: () => Promise<BotSnapshot>;
   startBot: () => Promise<BotSnapshot>;
   stopBot: () => Promise<BotSnapshot>;
   restartBot: () => Promise<BotSnapshot>;
   clearSession: () => Promise<BotSnapshot>;
+  clearLogs: () => Promise<BotSnapshot>;
   refreshGroups: () => Promise<BotSnapshot>;
   startMonitoring: () => Promise<BotSnapshot>;
+  startNuclearMonitoring: () => Promise<BotSnapshot>;
+  startTestMonitoring: () => Promise<BotSnapshot>;
   stopMonitoring: () => Promise<BotSnapshot>;
   saveGroup: (payload: SaveGroupPayload) => Promise<BotSnapshot>;
   saveTestGroup: (payload: SaveGroupPayload) => Promise<BotSnapshot>;
@@ -98,5 +107,6 @@ export type DesktopApi = {
   saveMessageSettings: (payload: SaveMessageSettingsPayload) => Promise<BotSnapshot>;
   saveWarmupMessageSettings: (payload: SaveWarmupMessageSettingsPayload) => Promise<BotSnapshot>;
   saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) => Promise<BotSnapshot>;
+  saveGeneralSettings: (payload: GeneralSettingsPayload) => Promise<BotSnapshot>;
   onSnapshot: (callback: (snapshot: BotSnapshot) => void) => () => void;
 };

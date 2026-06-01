@@ -31,7 +31,7 @@ textarea {
 .app-shell {
   width: min(1180px, calc(100vw - 40px));
   margin: 0 auto;
-  padding: 28px 0;
+  padding: 28px 0 112px;
 }
 
 .topbar {
@@ -95,11 +95,128 @@ h2 {
   gap: 18px;
 }
 
+.connection-view {
+  align-items: start;
+}
+
 .primary-column,
 .secondary-column {
   display: grid;
   gap: 18px;
   align-content: start;
+}
+
+.tab-stack {
+  display: grid;
+  gap: 18px;
+  max-width: 780px;
+  margin: 0 auto;
+}
+
+.connection-config-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.nuclear-view {
+  display: grid;
+  gap: 16px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.nuclear-controls-panel {
+  display: grid;
+  gap: 16px;
+  border-color: rgba(248, 81, 73, 0.38);
+  border-left: 5px solid #f85149;
+}
+
+.nuclear-controls-panel h2 {
+  font-size: 1.45rem;
+}
+
+.nuclear-controls-panel .panel-label {
+  color: #ff7b72;
+}
+
+.nuclear-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.nuclear-state {
+  display: grid;
+  gap: 3px;
+  min-width: 128px;
+  padding: 10px 12px;
+  border: 1px solid rgba(139, 148, 158, 0.24);
+  border-radius: 8px;
+  background: rgba(13, 17, 23, 0.7);
+  text-align: right;
+}
+
+.nuclear-state span {
+  color: #8b949e;
+  font-size: 0.76rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.nuclear-state strong {
+  color: #c9d1d9;
+}
+
+.nuclear-state.active {
+  border-color: rgba(248, 81, 73, 0.48);
+  background: rgba(73, 18, 15, 0.45);
+}
+
+.nuclear-state.active strong {
+  color: #ffb1aa;
+}
+
+.nuclear-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.group-message-card {
+  border-left-width: 5px;
+}
+
+.group-message-target {
+  border-left-color: #3fb950;
+}
+
+.group-message-test {
+  border-left-color: #d29922;
+}
+
+.compact-heading {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 12px;
+}
+
+.compact-heading strong {
+  color: #f0f6fc;
+  overflow-wrap: anywhere;
+}
+
+.group-message-target .panel-label {
+  color: #7ee787;
+}
+
+.group-message-test .panel-label {
+  color: #f2cc60;
+}
+
+.compact-preview {
+  padding: 10px;
 }
 
 .panel {
@@ -374,7 +491,7 @@ h2 {
   padding: 16px;
   margin-bottom: 16px;
   border: 1px solid rgba(88, 166, 255, 0.24);
-  border-radius: 16px;
+  border-radius: 8px;
   background: rgba(20, 34, 53, 0.9);
 }
 
@@ -426,89 +543,6 @@ h2 {
   background: rgba(1, 4, 9, 0.72);
 }
 
-.tutorial-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 30;
-  background: rgba(1, 4, 9, 0.78);
-  pointer-events: auto;
-}
-
-.tutorial-panel-active {
-  position: relative;
-  z-index: 42;
-  pointer-events: auto;
-}
-
-.tutorial-panel-active > .panel {
-  border-color: rgba(88, 166, 255, 0.95);
-  box-shadow:
-    0 0 0 3px rgba(88, 166, 255, 0.28),
-    0 0 36px rgba(88, 166, 255, 0.28),
-    0 24px 80px rgba(1, 4, 9, 0.58);
-}
-
-.app-shell[data-tutorial-target="warmup-button"] [data-tutorial-id="warmup-button"],
-.app-shell[data-tutorial-target="start-monitoring"] [data-tutorial-id="start-monitoring"],
-.app-shell[data-tutorial-target="stop-monitoring"] [data-tutorial-id="stop-monitoring"] {
-  position: relative;
-  z-index: 46;
-  border-color: rgba(88, 166, 255, 0.98);
-  box-shadow:
-    0 0 0 4px rgba(88, 166, 255, 0.32),
-    0 0 34px rgba(88, 166, 255, 0.46);
-}
-
-.tutorial-balloon {
-  position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 50;
-  display: grid;
-  gap: 12px;
-  width: min(420px, calc(100vw - 32px));
-  padding: 20px;
-  border: 1px solid rgba(88, 166, 255, 0.5);
-  border-radius: 8px;
-  background: #161b22;
-  box-shadow: 0 24px 90px rgba(1, 4, 9, 0.72);
-}
-
-.tutorial-balloon p {
-  margin: 0;
-  color: #e6edf3;
-  line-height: 1.55;
-}
-
-.tutorial-warning {
-  padding: 10px 12px;
-  border: 1px solid rgba(248, 81, 73, 0.42);
-  border-radius: 8px;
-  color: #ffd8d4;
-  background: rgba(73, 18, 15, 0.65);
-}
-
-.tutorial-counter {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border: 1px solid rgba(139, 148, 158, 0.22);
-  border-radius: 8px;
-  background: #0d1117;
-}
-
-.tutorial-counter span {
-  color: #8b949e;
-  font-size: 0.82rem;
-}
-
-.tutorial-counter strong {
-  color: #58a6ff;
-  font-size: 1.2rem;
-}
-
 .confirmation-dialog {
   display: grid;
   gap: 14px;
@@ -520,6 +554,85 @@ h2 {
   border-radius: 8px;
   background: #161b22;
   box-shadow: 0 24px 80px rgba(1, 4, 9, 0.5);
+}
+
+.bottom-nav {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  z-index: 18;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  width: min(620px, calc(100vw - 28px));
+  padding: 8px;
+  border: 1px solid rgba(139, 148, 158, 0.24);
+  border-radius: 8px;
+  background: rgba(22, 27, 34, 0.94);
+  box-shadow: 0 18px 60px rgba(1, 4, 9, 0.54);
+  transform: translateX(-50%);
+  backdrop-filter: blur(14px);
+}
+
+.settings-grid {
+  display: grid;
+  gap: 14px;
+}
+
+.option-panel {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.option-panel h2 {
+  font-size: 1.35rem;
+}
+
+.option-panel p {
+  margin: 8px 0 0;
+  color: #c9d1d9;
+  line-height: 1.45;
+}
+
+.option-panel-nuclear {
+  border-color: rgba(210, 153, 34, 0.42);
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 130px;
+  color: #e6edf3;
+  font-weight: 700;
+}
+
+.toggle-row input {
+  width: 18px;
+  height: 18px;
+  accent-color: #d29922;
+}
+
+.bottom-nav button {
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #c9d1d9;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.bottom-nav button:hover {
+  background: rgba(139, 148, 158, 0.12);
+}
+
+.bottom-nav button.active {
+  border-color: rgba(46, 160, 67, 0.52);
+  color: #ffffff;
+  background: #238636;
 }
 
 .confirmation-dialog h2 {
@@ -659,10 +772,35 @@ h2 {
   .dashboard-grid {
     grid-template-columns: 1fr;
   }
+
+  .tab-stack {
+    max-width: none;
+  }
+
+  .nuclear-view {
+    max-width: none;
+  }
+
+  .option-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .nuclear-heading-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .nuclear-state {
+    text-align: left;
+  }
 }
 
 @media (max-width: 560px) {
   .button-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nuclear-actions {
     grid-template-columns: 1fr;
   }
 

@@ -4,6 +4,7 @@ import { BotService } from "../bot/connection";
 import {
   BotSnapshot,
   SaveCodesPayload,
+  GeneralSettingsPayload,
   SaveGroupPayload,
   SaveMessageSettingsPayload
 } from "../shared/types";
@@ -30,7 +31,8 @@ function createBot() {
 
   bot = new BotService({
     authDir: path.join(dataDir, "auth_info"),
-    configPath: path.join(dataDir, "config.json")
+    configPath: path.join(dataDir, "config.json"),
+    pairingPhoneNumber: ""
   });
 
   bot.on("snapshot", (snapshot: BotSnapshot) => {
@@ -83,6 +85,10 @@ function registerIpc() {
     await bot.clearSession();
     return bot.getSnapshot();
   });
+  ipcMain.handle("bot:clearLogs", async () => {
+    bot.clearLogs();
+    return bot.getSnapshot();
+  });
   ipcMain.handle("bot:refreshGroups", async () => {
     await bot.refreshGroups();
     return bot.getSnapshot();
@@ -90,6 +96,22 @@ function registerIpc() {
   ipcMain.handle("bot:enableMonitoring", async () => {
     try {
       await bot.enableMonitoring();
+    } catch (err) {
+      // ignore
+    }
+    return bot.getSnapshot();
+  });
+  ipcMain.handle("bot:enableNuclearMonitoring", async () => {
+    try {
+      await bot.enableNuclearMonitoring();
+    } catch (err) {
+      // ignore
+    }
+    return bot.getSnapshot();
+  });
+  ipcMain.handle("bot:enableTestMonitoring", async () => {
+    try {
+      await bot.enableTestMonitoring();
     } catch (err) {
       // ignore
     }
@@ -139,6 +161,10 @@ function registerIpc() {
   });
   ipcMain.handle("bot:saveMessageSettings", async (_event, payload: SaveMessageSettingsPayload) => {
     bot.setMessageSettings(payload.senderName, payload.codes);
+    return bot.getSnapshot();
+  });
+  ipcMain.handle("bot:saveGeneralSettings", async (_event, payload: GeneralSettingsPayload) => {
+    bot.setGeneralSettings(payload);
     return bot.getSnapshot();
   });
 }

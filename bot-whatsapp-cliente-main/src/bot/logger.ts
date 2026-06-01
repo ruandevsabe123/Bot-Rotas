@@ -9,6 +9,11 @@ export class BotLogger {
     return this.logs;
   }
 
+  clear() {
+    this.logs = [];
+    this.onChange?.();
+  }
+
   add(level: LogLevel, message: string) {
     this.logs = [
       {

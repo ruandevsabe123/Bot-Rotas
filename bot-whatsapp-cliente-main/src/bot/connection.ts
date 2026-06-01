@@ -58,6 +58,8 @@ type BotServiceOptions = {
   autoClearInvalidSession?: boolean;
 };
 
+type MonitoringMode = "target" | "test";
+
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 3500;
 const HEALTH_CHECK_INTERVAL_MS = 25000;
@@ -85,6 +87,7 @@ export class BotService extends EventEmitter {
   private sendCycleId = 0;
   private activeSendCycle?: Promise<void>;
   private monitoringEnabled = false;
+  private monitoringMode: MonitoringMode = "target";
   private estadoInicialDoGrupoCapturado = false;
   private grupoJaFechouDepoisDoInicio = false;
   private diagnosedNotAcceptableCycles = new Set<number>();
@@ -133,6 +136,7 @@ export class BotService extends EventEmitter {
       logs: this.logger.all(),
       error: this.error,
       monitoringEnabled: this.monitoringEnabled,
+      monitoringMode: this.monitoringEnabled ? this.monitoringMode : undefined,
       warmupCompleted: this.warmupCompleted,
       warmupMessagesSent: this.warmupMessagesSent,
       warmupRequiredMessages: WARMUP_MESSAGE_COUNT
@@ -143,16 +147,22 @@ export class BotService extends EventEmitter {
   }
 
   async enableMonitoring(): Promise<boolean> {
+    return this.enableTargetMonitoring(false);
+  }
+
+  async enableNuclearMonitoring(): Promise<boolean> {
+    return this.enableTargetMonitoring(true);
+  }
+
+  private async enableTargetMonitoring(useNuclearMode: boolean): Promise<boolean> {
     if (this.status !== "connected") {
       this.logger.warning("Conecte o WhatsApp antes de ativar o monitoramento.");
       return false;
     }
 
-    if (!this.warmupCompleted) {
-      this.logger.error("Pré-aqueça o grupo de teste antes de iniciar o bot.");
-      this.emitSnapshot();
-      return false;
-    }
+    this.monitoringMode = "target";
+    this.configStore.save({ nuclearMode: useNuclearMode });
+    this.logger.info(useNuclearMode ? "☢️ Modo nuclear selecionado. O modo normal ficará desligado." : "Modo normal selecionado. O modo nuclear ficará desligado.");
 
     if (!this.hasReadyMessages()) {
       this.monitoringEnabled = false;
@@ -171,13 +181,61 @@ export class BotService extends EventEmitter {
     await this.captureInitialGroupState();
     this.monitoringEnabled = true;
     this.startHealthCheck();
-    this.logger.success("✅ Bot ARMADO - Monitoramento ativado. Aguardando abertura do grupo...");
+    this.logger.success(useNuclearMode ? "✅ Bot NUCLEAR ARMADO. Aguardando abertura do grupo..." : "✅ Bot NORMAL ARMADO. Aguardando abertura do grupo...");
+    this.emitSnapshot();
+    return true;
+  }
+
+  async enableTestMonitoring(): Promise<boolean> {
+    if (this.status !== "connected") {
+      this.logger.warning("Conecte o WhatsApp antes de ativar o monitoramento de teste.");
+      return false;
+    }
+
+    const config = this.configStore.load();
+    if (!config.grupoTesteJid && !config.grupoTesteNome) {
+      this.logger.warning("Salve um grupo de teste antes de ativar o monitoramento de teste.");
+      return false;
+    }
+
+    const testGroup = await this.resolveWarmupTarget(config);
+    if (!testGroup?.jid) {
+      this.logger.warning("Não foi possível resolver o grupo de teste para monitorar abertura e fechamento.");
+      return false;
+    }
+
+    if (testGroup.jid !== config.grupoTesteJid) {
+      this.configStore.saveTestGroupById(testGroup.jid, config.grupoTesteNome || "Grupo teste");
+    }
+
+    this.monitoringMode = "test";
+    this.configStore.save({ nuclearMode: false });
+
+    if (!this.hasReadyMessages("test")) {
+      this.monitoringEnabled = false;
+      this.logger.error("Monitoramento de teste não armado: salve as mensagens do grupo de teste.");
+      this.emitSnapshot();
+      return false;
+    }
+
+    if (!this.prepareSendPlan()) {
+      this.monitoringEnabled = false;
+      this.logger.error("Monitoramento de teste não armado: não consegui preparar as mensagens de teste.");
+      this.emitSnapshot();
+      return false;
+    }
+
+    await this.captureInitialGroupState();
+    this.monitoringEnabled = true;
+    this.startHealthCheck();
+    this.logger.success("✅ TESTE ARMADO - O grupo de teste será ouvido como grupo real.");
     this.emitSnapshot();
     return true;
   }
 
   disableMonitoring(): void {
     this.monitoringEnabled = false;
+    this.monitoringMode = "target";
     this.clearHealthCheckTimer();
     this.logger.info("⏹️ Monitoramento desativado (Parou de escutar aberturas).");
     this.emitSnapshot();
@@ -208,6 +266,7 @@ export class BotService extends EventEmitter {
 
   async stop() {
     this.monitoringEnabled = false;
+    this.monitoringMode = "target";
     this.pairingCode = "";
     this.pairingCodeRequested = false;
     if (!this.isRunning()) {
@@ -463,6 +522,22 @@ export class BotService extends EventEmitter {
     });
   }
 
+  private getActiveMonitoringGroup(config = this.configStore.load()) {
+    if (this.monitoringMode === "test") {
+      return {
+        jid: config.grupoTesteJid,
+        name: config.grupoTesteNome || config.grupoTesteJid,
+        label: "grupo de teste"
+      };
+    }
+
+    return {
+      jid: config.grupoAlvoJid,
+      name: config.grupoAlvoNome || config.grupoAlvoJid,
+      label: "grupo alvo"
+    };
+  }
+
   private async sendWarmupMessage(jid: string, mensagem: string, messageNumber: number) {
     const maxAttempts = 3;
     const delays = [75, 150, 250];
@@ -526,6 +601,25 @@ export class BotService extends EventEmitter {
     }
 
     await this.loadGroups();
+    this.emitSnapshot();
+  }
+
+  clearLogs() {
+    this.logger.clear();
+    this.logger.info("Logs limpos.");
+    this.emitSnapshot();
+  }
+
+  setGeneralSettings(settings: { nuclearMode: boolean }) {
+    if (this.monitoringEnabled) {
+      this.logger.warning("Pare o bot antes de trocar entre modo normal e modo nuclear.");
+      this.emitSnapshot();
+      return;
+    }
+
+    const config = this.configStore.save({ nuclearMode: Boolean(settings.nuclearMode) });
+    this.prepareSendPlan();
+    this.logger.success(config.nuclearMode ? "Modo nuclear ativado." : "Modo nuclear desativado.");
     this.emitSnapshot();
   }
 
@@ -835,9 +929,10 @@ export class BotService extends EventEmitter {
   private async captureInitialGroupState(): Promise<void> {
     try {
       const config = this.configStore.load();
-      if (!config.grupoAlvoJid || !this.sock) return;
+      const activeGroup = this.getActiveMonitoringGroup(config);
+      if (!activeGroup.jid || !this.sock) return;
 
-      const metadata = await this.refreshGroupMetadata(config.grupoAlvoJid);
+      const metadata = await this.refreshGroupMetadata(activeGroup.jid);
       if (!metadata) return;
 
       const isGroupClosed = metadata.announce === true;
@@ -846,11 +941,11 @@ export class BotService extends EventEmitter {
       if (isGroupClosed) {
         this.estadoInicialDoGrupoCapturado = true;
         this.grupoJaFechouDepoisDoInicio = true;
-        this.logger.info("📌 Estado inicial do grupo: FECHADO. Aguardando abertura...");
+        this.logger.info(`📌 Estado inicial do ${activeGroup.label}: FECHADO. Aguardando abertura...`);
       } else {
         this.estadoInicialDoGrupoCapturado = true;
         this.grupoJaFechouDepoisDoInicio = false;
-        this.logger.info("📌 Estado inicial do grupo: ABERTO. Aguardando fechamento e reabertura...");
+        this.logger.info(`📌 Estado inicial do ${activeGroup.label}: ABERTO. Aguardando fechamento e reabertura...`);
       }
     } catch (error) {
       this.logger.warning(`Não foi possível capturar estado inicial do grupo: ${this.getErrorMessage(error)}`);
@@ -885,17 +980,17 @@ export class BotService extends EventEmitter {
     if (connectionId !== this.activeConnectionId) return;
     if (!this.monitoringEnabled) return;
 
-    const config = this.configStore.load();
-    if (!config.grupoAlvoJid) return;
+    const activeGroup = this.getActiveMonitoringGroup();
+    if (!activeGroup.jid) return;
 
     for (const update of updates) {
-      if (!update?.id || update.id !== config.grupoAlvoJid) continue;
+      if (!update?.id || update.id !== activeGroup.jid) continue;
 
       if (update.announce === true) {
         this.groupState = "closed";
         this.grupoJaFechouDepoisDoInicio = true;
         this.sendCycleId += 1;
-        this.logger.info("🔒 Grupo FECHADO. Bot armado para próxima abertura.");
+        this.logger.info(`🔒 ${activeGroup.label} FECHADO. Bot armado para próxima abertura.`);
         this.prepareSendPlan();
         this.logger.info("Plano de disparo preparado em memória para a próxima abertura.");
         return;
@@ -904,14 +999,14 @@ export class BotService extends EventEmitter {
       if (update.announce === false) {
         this.groupState = "open";
         if (!this.grupoJaFechouDepoisDoInicio) {
-          this.logger.info("⚠️ Grupo já estava aberto desde o início. Aguardando próximo ciclo de fechamento e reabertura...");
+          this.logger.info(`⚠️ ${activeGroup.label} já estava aberto desde o início. Aguardando próximo ciclo de fechamento e reabertura...`);
           return;
         }
 
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
         this.enviarMensagensRapidas(cycleId);
-        this.logger.info("⚡ GRUPO ABRIU! Rajada instantânea acionada.");
+        this.logger.info(`⚡ ${activeGroup.label} ABRIU! Disparo acionado.`);
         return;
       }
     }
@@ -920,13 +1015,12 @@ export class BotService extends EventEmitter {
     if (connectionId !== this.activeConnectionId) return;
     if (!this.monitoringEnabled) return;
 
-    const config = this.configStore.load();
-
-    if (!config.grupoAlvoJid) return;
+    const activeGroup = this.getActiveMonitoringGroup();
+    if (!activeGroup.jid) return;
 
     for (const msg of messages || []) {
       if (!msg?.message || !msg.key?.remoteJid) continue;
-      if (msg.key.remoteJid !== config.grupoAlvoJid) continue;
+      if (msg.key.remoteJid !== activeGroup.jid) continue;
 
       const texto =
         msg.message.conversation ||
@@ -984,7 +1078,7 @@ export class BotService extends EventEmitter {
 
     let mensagens = [...this.preparedMessages];
 
-    if (mensagens.length > MAX_OUTGOING_MESSAGES) {
+    if (this.monitoringMode === "target" && mensagens.length > MAX_OUTGOING_MESSAGES) {
       mensagens = mensagens.slice(0, MAX_OUTGOING_MESSAGES);
       this.logger.warning(
         `Limite máximo de ${MAX_OUTGOING_MESSAGES} mensagens ativo. Enviando apenas as duas primeiras.`
@@ -995,14 +1089,22 @@ export class BotService extends EventEmitter {
       this.logger.warning("Já existe um disparo em andamento. Mantendo apenas o ciclo mais novo.");
     }
 
-    this.activeSendCycle = this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId).finally(() => {
+    const config = this.configStore.load();
+    const sendCycle =
+      this.monitoringMode === "test"
+        ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId)
+        : config.nuclearMode
+        ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId)
+        : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId);
+
+    this.activeSendCycle = sendCycle.finally(() => {
       if (cycleId === this.sendCycleId) {
         this.activeSendCycle = undefined;
       }
     });
 
     this.logger.info(
-      `Modo instantâneo agressivo: ${mensagens.length} mensagens disparadas juntas com ${INSTANT_BURST_DELAY_MS}ms: ${mensagens.join(" | ")}`
+      `${this.monitoringMode === "test" ? "Aquecimento real do teste" : config.nuclearMode ? "Modo nuclear enxuto" : "Modo instantâneo agressivo"}: ${mensagens.length} mensagens preparadas: ${mensagens.join(" | ")}`
     );
   }
 
@@ -1064,6 +1166,17 @@ export class BotService extends EventEmitter {
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo turbo: ${this.getErrorMessage(error)}`);
     }
+  }
+
+  private async sendNuclearTargetSequence(jid: string, mensagens: string[], cycleId: number) {
+    this.logger.info("☢️ Modo nuclear ativo: validando abertura antes do disparo enxuto.");
+    const acceptsMessages = await this.waitUntilGroupAcceptsMessages(jid, cycleId);
+    if (!acceptsMessages || cycleId !== this.sendCycleId) {
+      this.logger.warning("Modo nuclear cancelado: o grupo ainda não aceitou mensagens.");
+      return;
+    }
+
+    await this.sendFastSequence(jid, mensagens, cycleId);
   }
 
   private async sendAggressiveTargetSequence(jid: string, mensagens: string[], cycleId: number) {
@@ -1210,11 +1323,12 @@ export class BotService extends EventEmitter {
   private prepareSendPlan() {
     const config = this.configStore.load();
     this.syncMessagesFromConfig();
+    const activeGroup = this.getActiveMonitoringGroup(config);
 
-    this.preparedTargetJid = config.grupoAlvoJid;
-    this.preparedMessages = [...this.mensagensProntasAlvo];
+    this.preparedTargetJid = activeGroup.jid;
+    this.preparedMessages = this.monitoringMode === "test" ? this.buildWarmupMessages() : [...this.mensagensProntasAlvo];
 
-    if (this.preparedMessages.length > MAX_OUTGOING_MESSAGES) {
+    if (this.monitoringMode === "target" && this.preparedMessages.length > MAX_OUTGOING_MESSAGES) {
       this.preparedMessages = this.preparedMessages.slice(0, MAX_OUTGOING_MESSAGES);
       this.logger.warning(
         `Limite máximo de ${MAX_OUTGOING_MESSAGES} mensagens ativo. As duas primeiras mensagens serão preparadas para envio.`
@@ -1320,12 +1434,13 @@ export class BotService extends EventEmitter {
     if (!this.sock || this.status !== "connected") return false;
 
     const config = this.configStore.load();
-    if (!config.grupoAlvoJid) return false;
+    const activeGroup = this.getActiveMonitoringGroup(config);
+    if (!activeGroup.jid) return false;
 
     if (message) this.logger.info(message);
 
     this.syncMessagesFromConfig();
-    const metadata = await this.refreshGroupMetadata(config.grupoAlvoJid);
+    const metadata = await this.refreshGroupMetadata(activeGroup.jid);
     if (metadata?.announce === true) {
       this.groupState = "closed";
     } else if (metadata?.announce === false) {
@@ -1341,7 +1456,7 @@ export class BotService extends EventEmitter {
 
     if (!participant) {
       this.currentUserInTargetGroup = false;
-      this.logger.warning("A conta conectada não apareceu na lista do grupo alvo. Verifique se ela ainda está no grupo.");
+      this.logger.warning(`A conta conectada não apareceu na lista do ${activeGroup.label}. Verifique se ela ainda está no grupo.`);
       return false;
     }
 
@@ -1351,6 +1466,7 @@ export class BotService extends EventEmitter {
 
   private getReadinessChecks(): BotReadinessCheck[] {
     const config = this.configStore.load();
+    const activeGroup = this.getActiveMonitoringGroup(config);
 
     return [
       {
@@ -1361,12 +1477,12 @@ export class BotService extends EventEmitter {
       {
         id: "test_group",
         label: "Grupo de teste configurado",
-        ok: Boolean(config.grupoTesteJid)
+        ok: Boolean(config.grupoTesteJid || config.grupoTesteNome)
       },
       {
         id: "group",
-        label: "Grupo configurado",
-        ok: Boolean(config.grupoAlvoJid)
+        label: this.monitoringMode === "test" ? "Grupo monitorado: teste" : "Grupo monitorado: alvo",
+        ok: Boolean(activeGroup.jid)
       },
       {
         id: "participant",
@@ -1375,8 +1491,8 @@ export class BotService extends EventEmitter {
       },
       {
         id: "messages",
-        label: "Mensagens prontas",
-        ok: this.hasReadyMessages()
+        label: this.monitoringMode === "test" ? "Mensagens de teste prontas" : "Mensagens do alvo prontas",
+        ok: this.hasReadyMessages(this.monitoringMode)
       },
       {
         id: "group_state",
@@ -1391,9 +1507,10 @@ export class BotService extends EventEmitter {
     ];
   }
 
-  private hasReadyMessages() {
+  private hasReadyMessages(mode: MonitoringMode = this.monitoringMode) {
     const config = this.configStore.load();
-    return (config.codigosMensagensAlvo || []).some((item) => item.trim());
+    const codes = mode === "test" ? config.codigosMensagensTeste : config.codigosMensagensAlvo;
+    return (codes || []).some((item) => item.trim());
   }
 
   private async waitUntilGroupAcceptsMessages(jid: string, cycleId: number) {

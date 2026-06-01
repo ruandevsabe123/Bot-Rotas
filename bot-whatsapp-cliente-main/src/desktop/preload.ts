@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   BotSnapshot,
   DesktopApi,
+  GeneralSettingsPayload,
   SaveCodesPayload,
   SaveGroupPayload,
   SaveMessageSettingsPayload,
@@ -14,9 +15,12 @@ const api: DesktopApi = {
   startBot: () => ipcRenderer.invoke("bot:start"),
   stopBot: () => ipcRenderer.invoke("bot:stop"),
   startMonitoring: () => ipcRenderer.invoke("bot:enableMonitoring"),
+  startNuclearMonitoring: () => ipcRenderer.invoke("bot:enableNuclearMonitoring"),
+  startTestMonitoring: () => ipcRenderer.invoke("bot:enableTestMonitoring"),
   stopMonitoring: () => ipcRenderer.invoke("bot:disableMonitoring"),
   restartBot: () => ipcRenderer.invoke("bot:restart"),
   clearSession: () => ipcRenderer.invoke("bot:clearSession"),
+  clearLogs: () => ipcRenderer.invoke("bot:clearLogs"),
   refreshGroups: () => ipcRenderer.invoke("bot:refreshGroups"),
   saveGroup: (payload: SaveGroupPayload) => ipcRenderer.invoke("bot:saveGroup", payload),
   saveTestGroup: (payload: SaveGroupPayload) => ipcRenderer.invoke("bot:saveTestGroup", payload),
@@ -27,6 +31,7 @@ const api: DesktopApi = {
     ipcRenderer.invoke("bot:saveWarmupMessageSettings", payload),
   saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) =>
     ipcRenderer.invoke("bot:saveTargetMessageSettings", payload),
+  saveGeneralSettings: (payload: GeneralSettingsPayload) => ipcRenderer.invoke("bot:saveGeneralSettings", payload),
   onSnapshot: (callback: (snapshot: BotSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: BotSnapshot) => callback(snapshot);
     ipcRenderer.on("bot:snapshot", listener);

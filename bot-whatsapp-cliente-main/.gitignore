@@ -8,7 +8,6 @@ out/
 auth_info/
 auth_info_backup*/
 config.json
-mobile-settings.json
 whatsapp-qr.png
 *.pid
 

@@ -8,6 +8,7 @@ export const DEFAULT_CONFIG: BotConfig = {
   grupoTesteJid: "",
   grupoTesteNome: "",
   nomeEnvio: "Alan da Silva Alves",
+  nuclearMode: false,
   codigosMensagensAlvo: [],
   codigosMensagensTeste: []
 };
@@ -107,6 +108,7 @@ export class ConfigStore {
         !["Ruan Souza da Silva", "Alan Alves"].includes(input.nomeEnvio.trim())
           ? input.nomeEnvio.trim()
           : DEFAULT_CONFIG.nomeEnvio,
+      nuclearMode: typeof input.nuclearMode === "boolean" ? input.nuclearMode : DEFAULT_CONFIG.nuclearMode,
       // support legacy `codigosMensagens` if present
       codigosMensagensAlvo: Array.isArray(input.codigosMensagensAlvo)
         ? input.codigosMensagensAlvo.filter((item) => typeof item === "string" && item.trim())
