@@ -4,13 +4,28 @@ type Props = {
   config: BotConfig;
   busy: boolean;
   monitoringEnabled: boolean;
+  userEmail?: string;
   onClearLogs: () => void;
   onToggleNuclearMode: (enabled: boolean) => void;
+  onLogout?: () => void;
 };
 
-export function SettingsPanel({ config, busy, monitoringEnabled, onClearLogs, onToggleNuclearMode }: Props) {
+export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onToggleNuclearMode, onLogout }: Props) {
   return (
     <section className="settings-grid">
+      <article className="panel option-panel account-panel">
+        <div>
+          <p className="panel-label">Conta</p>
+          <h2>{userEmail || "Cliente conectado"}</h2>
+          <p>Nome nas mensagens: {config.nomeEnvio || "não configurado"}</p>
+        </div>
+        {onLogout ? (
+          <button className="button" disabled={busy} type="button" onClick={onLogout}>
+            Sair
+          </button>
+        ) : null}
+      </article>
+
       <article className="panel option-panel">
         <div>
           <p className="panel-label">Logs</p>

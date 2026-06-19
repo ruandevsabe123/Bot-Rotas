@@ -7,7 +7,7 @@ export const DEFAULT_CONFIG: BotConfig = {
   grupoAlvoNome: "",
   grupoTesteJid: "",
   grupoTesteNome: "",
-  nomeEnvio: "Alan da Silva Alves",
+  nomeEnvio: "",
   nuclearMode: false,
   codigosMensagensAlvo: [],
   codigosMensagensTeste: []
@@ -105,7 +105,7 @@ export class ConfigStore {
       nomeEnvio:
         typeof input.nomeEnvio === "string" &&
         input.nomeEnvio.trim() &&
-        !["Ruan Souza da Silva", "Alan Alves"].includes(input.nomeEnvio.trim())
+        !["Ruan Souza da Silva", "Alan Alves", "Alan da Silva Alves"].includes(input.nomeEnvio.trim())
           ? input.nomeEnvio.trim()
           : DEFAULT_CONFIG.nomeEnvio,
       nuclearMode: typeof input.nuclearMode === "boolean" ? input.nuclearMode : DEFAULT_CONFIG.nuclearMode,
