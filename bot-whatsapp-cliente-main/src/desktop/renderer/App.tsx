@@ -6,6 +6,7 @@ import { LogsPanel } from "./components/LogsPanel";
 import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { StatusCard } from "./components/StatusCard";
+import { botApi } from "./api";
 import "./styles.css";
 
 type PendingConfirmation = {
@@ -55,8 +56,8 @@ export default function App() {
   const nuclearArmed = Boolean(snapshot.monitoringEnabled && snapshot.monitoringMode === "target" && snapshot.config.nuclearMode);
 
   useEffect(() => {
-    window.botApi.getSnapshot().then(setSnapshot);
-    return window.botApi.onSnapshot(setSnapshot);
+    botApi.getSnapshot().then(setSnapshot);
+    return botApi.onSnapshot(setSnapshot);
   }, []);
 
   const groupLabel = useMemo(() => {
@@ -93,8 +94,8 @@ export default function App() {
       confirmLabel: "Salvar alvo",
       onConfirm: async () => {
         await runAction(async () => {
-          await window.botApi.saveGroup({ group, groupId, groupName });
-          return window.botApi.saveTargetMessageSettings({ senderName, codes });
+          await botApi.saveGroup({ group, groupId, groupName });
+          return botApi.saveTargetMessageSettings({ senderName, codes });
         });
       }
     });
@@ -111,8 +112,8 @@ export default function App() {
       confirmLabel: "Salvar teste",
       onConfirm: async () => {
         await runAction(async () => {
-          await window.botApi.saveTestGroup({ group, groupId, groupName });
-          return window.botApi.saveWarmupMessageSettings({ senderName, codes });
+          await botApi.saveTestGroup({ group, groupId, groupName });
+          return botApi.saveWarmupMessageSettings({ senderName, codes });
         });
       }
     });
@@ -130,7 +131,7 @@ export default function App() {
       ],
       confirmLabel: "Iniciar bot",
       onConfirm: async () => {
-        await runAction(window.botApi.startMonitoring);
+        await runAction(botApi.startMonitoring);
       }
     });
   }
@@ -147,7 +148,7 @@ export default function App() {
       ],
       confirmLabel: "Iniciar nuclear",
       onConfirm: async () => {
-        await runAction(window.botApi.startNuclearMonitoring);
+        await runAction(botApi.startNuclearMonitoring);
       }
     });
   }
@@ -164,7 +165,7 @@ export default function App() {
       ],
       confirmLabel: "Iniciar teste",
       onConfirm: async () => {
-        await runAction(window.botApi.startTestMonitoring);
+        await runAction(botApi.startTestMonitoring);
       }
     });
   }
@@ -182,7 +183,7 @@ export default function App() {
       ],
       confirmLabel: "Enviar 15 mensagens",
       onConfirm: async () => {
-        await runAction(window.botApi.warmupGroups);
+        await runAction(botApi.warmupGroups);
       }
     });
   }
@@ -194,13 +195,13 @@ export default function App() {
       details: [`${snapshot.logs.length} evento(s) no painel.`],
       confirmLabel: "Limpar logs",
       onConfirm: async () => {
-        await runAction(window.botApi.clearLogs);
+        await runAction(botApi.clearLogs);
       }
     });
   }
 
   function saveGeneralSettings(nuclearMode: boolean) {
-    void runAction(() => window.botApi.saveGeneralSettings({ nuclearMode }));
+    void runAction(() => botApi.saveGeneralSettings({ nuclearMode }));
   }
 
   async function confirmPendingAction() {
@@ -214,7 +215,7 @@ export default function App() {
     <main className="app-shell">
       <section className="topbar">
         <div>
-          <p className="eyebrow">Painel desktop</p>
+          <p className="eyebrow">Painel web</p>
           <h1>Bot WhatsApp</h1>
         </div>
         <div className="group-pill">
@@ -236,13 +237,13 @@ export default function App() {
             <ControlButtons
               busy={busy}
               status={snapshot.status}
-              onStart={() => runAction(window.botApi.startBot)}
-              onStop={() => runAction(window.botApi.stopBot)}
+              onStart={() => runAction(botApi.startBot)}
+              onStop={() => runAction(botApi.stopBot)}
               onStartMonitoring={confirmStartMonitoring}
               onStartTestMonitoring={confirmStartTestMonitoring}
-              onStopMonitoring={() => runAction(window.botApi.stopMonitoring)}
-              onRestart={() => runAction(window.botApi.restartBot)}
-              onClearSession={() => runAction(window.botApi.clearSession)}
+              onStopMonitoring={() => runAction(botApi.stopMonitoring)}
+              onRestart={() => runAction(botApi.restartBot)}
+              onClearSession={() => runAction(botApi.clearSession)}
               monitoringEnabled={snapshot.monitoringEnabled}
               monitoringMode={snapshot.monitoringMode}
             />
@@ -252,7 +253,7 @@ export default function App() {
                 config={snapshot.config}
                 groups={snapshot.groups}
                 busy={busy}
-                onRefresh={() => runAction(window.botApi.refreshGroups)}
+                onRefresh={() => runAction(botApi.refreshGroups)}
                 onSave={confirmSaveTarget}
               />
               <GroupMessageCard
@@ -260,7 +261,7 @@ export default function App() {
                 config={snapshot.config}
                 groups={snapshot.groups}
                 busy={busy}
-                onRefresh={() => runAction(window.botApi.refreshGroups)}
+                onRefresh={() => runAction(botApi.refreshGroups)}
                 onSave={confirmSaveTest}
                 onWarmup={confirmWarmup}
               />
@@ -303,7 +304,7 @@ export default function App() {
                 className="button primary"
                 disabled={busy || !["disconnected", "error"].includes(snapshot.status)}
                 type="button"
-                onClick={() => runAction(window.botApi.startBot)}
+                onClick={() => runAction(botApi.startBot)}
               >
                 Conectar
               </button>
@@ -319,7 +320,7 @@ export default function App() {
                 className="button danger"
                 disabled={busy || !snapshot.monitoringEnabled}
                 type="button"
-                onClick={() => runAction(window.botApi.stopMonitoring)}
+                onClick={() => runAction(botApi.stopMonitoring)}
               >
                 Parar bot
               </button>
@@ -331,7 +332,7 @@ export default function App() {
             config={snapshot.config}
             groups={snapshot.groups}
             busy={busy}
-            onRefresh={() => runAction(window.botApi.refreshGroups)}
+            onRefresh={() => runAction(botApi.refreshGroups)}
             onSave={confirmSaveTarget}
           />
           <LogsPanel logs={snapshot.logs} />

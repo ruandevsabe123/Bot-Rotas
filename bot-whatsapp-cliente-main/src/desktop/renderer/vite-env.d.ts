@@ -4,6 +4,6 @@ import { DesktopApi } from "../../shared/types";
 
 declare global {
   interface Window {
-    botApi: DesktopApi;
+    botApi?: DesktopApi;
   }
 }

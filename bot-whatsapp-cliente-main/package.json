@@ -3,7 +3,12 @@
   "version": "1.0.0",
   "description": "Bot de WhatsApp com painel desktop",
   "main": "dist/desktop/main.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
+    "start": "node dist/server.js",
+    "server:dev": "npm run build && node dist/server.js",
     "desktop:dev": "concurrently -k \"npm:renderer:dev\" \"npm:electron:dev\"",
     "renderer:dev": "vite --host 127.0.0.1",
     "electron:dev": "npm run build:main && wait-on http://127.0.0.1:5173 && bash -lc 'unset ELECTRON_RUN_AS_NODE; ELECTRON_DISABLE_SECURITY_WARNINGS=true LIBGL_ALWAYS_SOFTWARE=1 ./node_modules/.bin/electron . --disable-gpu --disable-gpu-compositing --disable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan'",
