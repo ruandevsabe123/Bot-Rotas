@@ -1,4 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  Activity,
+  Flame,
+  Home,
+  LockKeyhole,
+  MessageSquareText,
+  RefreshCw,
+  Settings,
+  SlidersHorizontal,
+  TestTube2,
+  X
+} from "lucide-react";
 import { BotSnapshot } from "../../shared/types";
 import { ControlButtons } from "./components/ControlButtons";
 import { GroupMessageCard } from "./components/GroupMessageCard";
@@ -6,7 +18,7 @@ import { LogsPanel } from "./components/LogsPanel";
 import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { StatusCard } from "./components/StatusCard";
-import { botApi } from "./api";
+import { botApi, getPanelPassword, isAuthError, setPanelPassword } from "./api";
 import "./styles.css";
 
 type PendingConfirmation = {
@@ -17,7 +29,8 @@ type PendingConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-type AppTab = "connection" | "nuclear" | "settings";
+type AppTab = "home" | "logs" | "settings";
+type GroupEditor = "target" | "test" | undefined;
 
 const emptySnapshot: BotSnapshot = {
   status: "disconnected",
@@ -38,27 +51,121 @@ const emptySnapshot: BotSnapshot = {
   logs: []
 };
 
-const tabs: Array<{ id: AppTab; label: string }> = [
-  { id: "connection", label: "Conexão" },
-  { id: "nuclear", label: "Nuclear" },
-  { id: "settings", label: "Configurações" }
+const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
+  { id: "home", label: "Início", Icon: Home },
+  { id: "logs", label: "Logs", Icon: Activity },
+  { id: "settings", label: "Ajustes", Icon: Settings }
 ];
 
 function normalizeMessages(senderName: string, codes: string[]) {
   return codes.map((code) => `${senderName.trim()} ${code.trim().toUpperCase()}`.trim()).filter(Boolean);
 }
 
+function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (password: string) => void }) {
+  const [password, setPassword] = useState("");
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    onSubmit(password.trim());
+  }
+
+  return (
+    <main className="login-shell">
+      <form className="login-panel" onSubmit={submit}>
+        <div className="login-icon">
+          <LockKeyhole size={28} />
+        </div>
+        <p className="panel-label">Acesso seguro</p>
+        <h1>Bot WhatsApp</h1>
+        <input
+          autoComplete="current-password"
+          autoFocus
+          placeholder="Senha do painel"
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+        />
+        {error ? <p className="login-error">{error}</p> : null}
+        <button className="button primary" disabled={!password.trim()} type="submit">
+          Entrar
+        </button>
+      </form>
+    </main>
+  );
+}
+
+function ConfigStrip({
+  kind,
+  title,
+  group,
+  codes,
+  onOpen
+}: {
+  kind: "target" | "test";
+  title: string;
+  group: string;
+  codes: string[];
+  onOpen: () => void;
+}) {
+  const Icon = kind === "target" ? MessageSquareText : TestTube2;
+
+  return (
+    <button className={`config-strip config-strip-${kind}`} type="button" onClick={onOpen}>
+      <span className="strip-icon">
+        <Icon size={20} />
+      </span>
+      <span className="strip-copy">
+        <strong>{title}</strong>
+        <small>{group}</small>
+      </span>
+      <span className="strip-count">{codes.length}</span>
+      <SlidersHorizontal size={20} />
+    </button>
+  );
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<BotSnapshot>(emptySnapshot);
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState<PendingConfirmation>();
-  const [activeTab, setActiveTab] = useState<AppTab>("connection");
+  const [activeTab, setActiveTab] = useState<AppTab>("home");
+  const [groupEditor, setGroupEditor] = useState<GroupEditor>();
+  const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelPassword()));
+  const [loginError, setLoginError] = useState("");
   const nuclearArmed = Boolean(snapshot.monitoringEnabled && snapshot.monitoringMode === "target" && snapshot.config.nuclearMode);
 
   useEffect(() => {
-    botApi.getSnapshot().then(setSnapshot);
-    return botApi.onSnapshot(setSnapshot);
-  }, []);
+    if (!authenticated) return;
+
+    let mounted = true;
+    botApi
+      .getSnapshot()
+      .then((nextSnapshot) => {
+        if (mounted) {
+          setSnapshot(nextSnapshot);
+          setLoginError("");
+        }
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        if (isAuthError(error)) {
+          setPanelPassword("");
+          setAuthenticated(false);
+          setLoginError("Senha incorreta ou ausente.");
+          return;
+        }
+        setLoginError(error instanceof Error ? error.message : "Falha ao abrir painel.");
+      });
+
+    const unsubscribe = botApi.onSnapshot((nextSnapshot) => {
+      if (mounted) setSnapshot(nextSnapshot);
+    });
+
+    return () => {
+      mounted = false;
+      unsubscribe();
+    };
+  }, [authenticated]);
 
   const groupLabel = useMemo(() => {
     return snapshot.config.grupoAlvoNome || snapshot.config.grupoAlvoJid || "Nenhum grupo alvo";
@@ -74,6 +181,21 @@ export default function App() {
       const nextSnapshot = await action();
       setSnapshot(nextSnapshot);
       return nextSnapshot;
+    } catch (error) {
+      if (isAuthError(error)) {
+        setPanelPassword("");
+        setAuthenticated(false);
+        setLoginError("Entre novamente para continuar.");
+      } else {
+        setConfirmation({
+          title: "Erro",
+          message: error instanceof Error ? error.message : "Não consegui executar essa ação.",
+          details: [],
+          confirmLabel: "Fechar",
+          onConfirm: () => undefined
+        });
+      }
+      return snapshot;
     } finally {
       setBusy(false);
     }
@@ -95,6 +217,7 @@ export default function App() {
       onConfirm: async () => {
         await runAction(async () => {
           await botApi.saveGroup({ group, groupId, groupName });
+          setGroupEditor(undefined);
           return botApi.saveTargetMessageSettings({ senderName, codes });
         });
       }
@@ -113,6 +236,7 @@ export default function App() {
       onConfirm: async () => {
         await runAction(async () => {
           await botApi.saveTestGroup({ group, groupId, groupName });
+          setGroupEditor(undefined);
           return botApi.saveWarmupMessageSettings({ senderName, codes });
         });
       }
@@ -211,12 +335,22 @@ export default function App() {
     await action();
   }
 
+  function login(password: string) {
+    setPanelPassword(password);
+    setAuthenticated(true);
+    setLoginError("");
+  }
+
+  if (!authenticated) {
+    return <LoginScreen error={loginError} onSubmit={login} />;
+  }
+
   return (
     <main className="app-shell">
-      <section className="topbar">
+      <section className="topbar app-topbar">
         <div>
-          <p className="eyebrow">Painel web</p>
-          <h1>Bot WhatsApp</h1>
+          <p className="eyebrow">Painel mobile</p>
+          <h1>Bot Rotas</h1>
         </div>
         <div className="group-pill">
           <span>{snapshot.monitoringMode === "test" ? "Teste ativo" : "Grupo alvo"}</span>
@@ -224,53 +358,79 @@ export default function App() {
         </div>
       </section>
 
-      {activeTab === "connection" ? (
-        <section className="dashboard-grid connection-view">
-          <div className="primary-column">
-            <StatusCard
-              status={snapshot.status}
-              error={snapshot.error}
-              groupState={snapshot.groupState}
-              monitoringEnabled={snapshot.monitoringEnabled}
-              readinessChecks={snapshot.readinessChecks}
+      {activeTab === "home" ? (
+        <section className="mobile-home">
+          <StatusCard
+            status={snapshot.status}
+            error={snapshot.error}
+            groupState={snapshot.groupState}
+            monitoringEnabled={snapshot.monitoringEnabled}
+            readinessChecks={snapshot.readinessChecks}
+          />
+
+          <ControlButtons
+            busy={busy}
+            status={snapshot.status}
+            onStart={() => runAction(botApi.startBot)}
+            onStop={() => runAction(botApi.stopBot)}
+            onStartMonitoring={confirmStartMonitoring}
+            onStartTestMonitoring={confirmStartTestMonitoring}
+            onStopMonitoring={() => runAction(botApi.stopMonitoring)}
+            onRestart={() => runAction(botApi.restartBot)}
+            onClearSession={() => runAction(botApi.clearSession)}
+            monitoringEnabled={snapshot.monitoringEnabled}
+            monitoringMode={snapshot.monitoringMode}
+          />
+
+          <section className="quick-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Configuração</p>
+                <h2>Grupos e mensagens</h2>
+              </div>
+              <button className="icon-button" disabled={busy} title="Atualizar grupos" type="button" onClick={() => runAction(botApi.refreshGroups)}>
+                <RefreshCw size={20} />
+              </button>
+            </div>
+            <ConfigStrip
+              kind="target"
+              title="Config grupo alvo"
+              group={groupLabel}
+              codes={snapshot.config.codigosMensagensAlvo || []}
+              onOpen={() => setGroupEditor("target")}
             />
-            <ControlButtons
-              busy={busy}
-              status={snapshot.status}
-              onStart={() => runAction(botApi.startBot)}
-              onStop={() => runAction(botApi.stopBot)}
-              onStartMonitoring={confirmStartMonitoring}
-              onStartTestMonitoring={confirmStartTestMonitoring}
-              onStopMonitoring={() => runAction(botApi.stopMonitoring)}
-              onRestart={() => runAction(botApi.restartBot)}
-              onClearSession={() => runAction(botApi.clearSession)}
-              monitoringEnabled={snapshot.monitoringEnabled}
-              monitoringMode={snapshot.monitoringMode}
+            <ConfigStrip
+              kind="test"
+              title="Config grupo teste"
+              group={testGroupLabel}
+              codes={snapshot.config.codigosMensagensTeste || []}
+              onOpen={() => setGroupEditor("test")}
             />
-            <section className="connection-config-grid">
-              <GroupMessageCard
-                kind="target"
-                config={snapshot.config}
-                groups={snapshot.groups}
-                busy={busy}
-                onRefresh={() => runAction(botApi.refreshGroups)}
-                onSave={confirmSaveTarget}
-              />
-              <GroupMessageCard
-                kind="test"
-                config={snapshot.config}
-                groups={snapshot.groups}
-                busy={busy}
-                onRefresh={() => runAction(botApi.refreshGroups)}
-                onSave={confirmSaveTest}
-                onWarmup={confirmWarmup}
-              />
-            </section>
-          </div>
-          <div className="secondary-column">
-            <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
-            <LogsPanel logs={snapshot.logs} />
-          </div>
+          </section>
+
+          <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
+
+          <section className="nuclear-mini-panel">
+            <div>
+              <p className="panel-label">Nuclear</p>
+              <strong>{nuclearArmed ? "Armado" : snapshot.config.nuclearMode ? "Modo ligado" : "Modo desligado"}</strong>
+            </div>
+            <button
+              className="button"
+              disabled={busy || snapshot.status !== "connected" || Boolean(snapshot.monitoringEnabled)}
+              type="button"
+              onClick={confirmStartNuclearMonitoring}
+            >
+              <Flame size={18} />
+              Iniciar
+            </button>
+          </section>
+        </section>
+      ) : null}
+
+      {activeTab === "logs" ? (
+        <section className="tab-stack">
+          <LogsPanel logs={snapshot.logs} />
         </section>
       ) : null}
 
@@ -286,71 +446,45 @@ export default function App() {
         </section>
       ) : null}
 
-      {activeTab === "nuclear" ? (
-        <section className="nuclear-view">
-          <article className="panel nuclear-controls-panel">
-            <div className="nuclear-heading-row">
-              <div>
-                <p className="panel-label">Modo nuclear</p>
-                <h2>Grupo alvo enxuto</h2>
-              </div>
-              <div className={`nuclear-state ${snapshot.config.nuclearMode ? "active" : ""}`}>
-                <span>{snapshot.config.nuclearMode ? "Ligado" : "Desligado"}</span>
-                <strong>{nuclearArmed ? "Armado" : "Em espera"}</strong>
-              </div>
-            </div>
-            <div className="nuclear-actions">
-              <button
-                className="button primary"
-                disabled={busy || !["disconnected", "error"].includes(snapshot.status)}
-                type="button"
-                onClick={() => runAction(botApi.startBot)}
-              >
-                Conectar
-              </button>
-              <button
-                className="button"
-                disabled={busy || snapshot.status !== "connected" || Boolean(snapshot.monitoringEnabled)}
-                type="button"
-                onClick={confirmStartNuclearMonitoring}
-              >
-                Iniciar nuclear
-              </button>
-              <button
-                className="button danger"
-                disabled={busy || !snapshot.monitoringEnabled}
-                type="button"
-                onClick={() => runAction(botApi.stopMonitoring)}
-              >
-                Parar bot
-              </button>
-            </div>
-          </article>
-
-          <GroupMessageCard
-            kind="target"
-            config={snapshot.config}
-            groups={snapshot.groups}
-            busy={busy}
-            onRefresh={() => runAction(botApi.refreshGroups)}
-            onSave={confirmSaveTarget}
-          />
-          <LogsPanel logs={snapshot.logs} />
-        </section>
-      ) : null}
-
-      <nav className="bottom-nav" aria-label="Navegação principal">
-        {tabs.map((tab) => (
+      <nav className="bottom-nav icon-nav" aria-label="Navegação principal">
+        {tabs.map(({ id, label, Icon }) => (
           <button
-            key={tab.id}
-            className={activeTab === tab.id ? "active" : ""}
+            key={id}
+            aria-label={label}
+            className={activeTab === id ? "active" : ""}
+            title={label}
             type="button"
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => setActiveTab(id)}
           >
-            {tab.label}
+            <Icon size={23} />
           </button>
         ))}
       </nav>
+
+      {groupEditor ? (
+        <div className="modal-backdrop" role="presentation">
+          <section className="sheet-dialog" role="dialog" aria-modal="true" aria-labelledby="group-editor-title">
+            <div className="sheet-heading">
+              <div>
+                <p className="panel-label">Configuração</p>
+                <h2 id="group-editor-title">{groupEditor === "target" ? "Grupo alvo" : "Grupo teste"}</h2>
+              </div>
+              <button className="icon-button" title="Fechar" type="button" onClick={() => setGroupEditor(undefined)}>
+                <X size={20} />
+              </button>
+            </div>
+            <GroupMessageCard
+              kind={groupEditor}
+              config={snapshot.config}
+              groups={snapshot.groups}
+              busy={busy}
+              onRefresh={() => runAction(botApi.refreshGroups)}
+              onSave={groupEditor === "target" ? confirmSaveTarget : confirmSaveTest}
+              onWarmup={groupEditor === "test" ? confirmWarmup : undefined}
+            />
+          </section>
+        </div>
+      ) : null}
 
       {confirmation ? (
         <div className="modal-backdrop" role="presentation">
@@ -358,11 +492,13 @@ export default function App() {
             <p className="panel-label">Confirmação</p>
             <h2 id="confirm-title">{confirmation.title}</h2>
             <p className="confirmation-message">{confirmation.message}</p>
-            <div className="confirmation-details">
-              {confirmation.details.map((detail, index) => (
-                <span key={`${detail}-${index}`}>{detail}</span>
-              ))}
-            </div>
+            {confirmation.details.length ? (
+              <div className="confirmation-details">
+                {confirmation.details.map((detail, index) => (
+                  <span key={`${detail}-${index}`}>{detail}</span>
+                ))}
+              </div>
+            ) : null}
             <div className="confirmation-actions">
               <button className="button" disabled={busy} type="button" onClick={() => setConfirmation(undefined)}>
                 Cancelar

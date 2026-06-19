@@ -9,12 +9,22 @@ import {
   SaveWarmupMessageSettingsPayload
 } from "../../shared/types";
 
-function getPanelPassword() {
+const AUTH_ERROR_MESSAGE = "Senha do painel obrigatória.";
+
+export function getPanelPassword() {
   return window.localStorage.getItem("panelPassword") || "";
 }
 
-function setPanelPassword(password: string) {
-  window.localStorage.setItem("panelPassword", password);
+export function setPanelPassword(password: string) {
+  if (password) {
+    window.localStorage.setItem("panelPassword", password);
+  } else {
+    window.localStorage.removeItem("panelPassword");
+  }
+}
+
+export function isAuthError(error: unknown) {
+  return error instanceof Error && error.message === AUTH_ERROR_MESSAGE;
 }
 
 async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
@@ -28,14 +38,6 @@ async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> 
     ...options,
     headers
   });
-
-  if (response.status === 401) {
-    const nextPassword = window.prompt("Digite a senha do painel") || "";
-    if (nextPassword) {
-      setPanelPassword(nextPassword);
-      return fetchJson<T>(url, options);
-    }
-  }
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
