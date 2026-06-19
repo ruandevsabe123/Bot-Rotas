@@ -35,6 +35,18 @@ export function setPanelToken(token: string) {
   }
 }
 
+export function getPanelUserEmail() {
+  return window.localStorage.getItem("panelUserEmail") || "";
+}
+
+export function setPanelUserEmail(email: string) {
+  if (email) {
+    window.localStorage.setItem("panelUserEmail", email);
+  } else {
+    window.localStorage.removeItem("panelUserEmail");
+  }
+}
+
 export function isAuthError(error: unknown) {
   return error instanceof Error && AUTH_ERROR_MESSAGES.includes(error.message);
 }
@@ -45,6 +57,7 @@ export async function panelLogin(email: string, password: string) {
     body: JSON.stringify({ email, password })
   });
   setPanelToken(response.token);
+  setPanelUserEmail(response.user.email);
   setPanelPassword("");
   return response.user;
 }

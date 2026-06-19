@@ -138,7 +138,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           id={`${kind}-sender-name`}
           value={senderName}
           onChange={(event) => setSenderName(event.target.value)}
-          placeholder="Ex: Alan da Silva Alves"
+          placeholder="Digite seu nome"
         />
 
         <label htmlFor={`${kind}-codes`}>Mensagem/códigos</label>

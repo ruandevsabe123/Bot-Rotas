@@ -7,7 +7,6 @@ import {
   LockKeyhole,
   Mail,
   MessageSquareText,
-  QrCode,
   RefreshCw,
   Settings,
   SlidersHorizontal,
@@ -21,7 +20,7 @@ import { LogsPanel } from "./components/LogsPanel";
 import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { StatusCard } from "./components/StatusCard";
-import { botApi, getPanelToken, isAuthError, panelLogin, setPanelPassword, setPanelToken } from "./api";
+import { botApi, getPanelToken, getPanelUserEmail, isAuthError, panelLogin, setPanelPassword, setPanelToken, setPanelUserEmail } from "./api";
 import "./styles.css";
 
 type PendingConfirmation = {
@@ -32,7 +31,7 @@ type PendingConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-type AppTab = "home" | "groups" | "qr" | "logs" | "settings";
+type AppTab = "home" | "messages" | "logs" | "settings";
 type GroupEditor = "target" | "test" | undefined;
 
 const emptySnapshot: BotSnapshot = {
@@ -44,7 +43,7 @@ const emptySnapshot: BotSnapshot = {
     grupoAlvoNome: "",
     grupoTesteJid: "",
     grupoTesteNome: "",
-    nomeEnvio: "Alan da Silva Alves",
+    nomeEnvio: "",
     nuclearMode: false,
     codigosMensagensAlvo: [],
     codigosMensagensTeste: []
@@ -56,8 +55,7 @@ const emptySnapshot: BotSnapshot = {
 
 const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
   { id: "home", label: "Início", Icon: Home },
-  { id: "groups", label: "Grupos", Icon: MessageSquareText },
-  { id: "qr", label: "QR Code", Icon: QrCode },
+  { id: "messages", label: "Mensagens", Icon: MessageSquareText },
   { id: "logs", label: "Logs", Icon: Activity },
   { id: "settings", label: "Ajustes", Icon: Settings }
 ];
@@ -66,8 +64,42 @@ function normalizeMessages(senderName: string, codes: string[]) {
   return codes.map((code) => `${senderName.trim()} ${code.trim().toUpperCase()}`.trim()).filter(Boolean);
 }
 
+function MessagePreviewStrip({
+  title,
+  group,
+  messages,
+  onOpen
+}: {
+  title: string;
+  group: string;
+  messages: string[];
+  onOpen: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+
+  return (
+    <article className="message-strip">
+      <button className="message-strip-main" type="button" onClick={() => setExpanded((value) => !value)}>
+        <span>
+          <strong>{title}</strong>
+          <small>{group}</small>
+        </span>
+        <b>{messages.length}</b>
+      </button>
+      {expanded ? (
+        <div className="message-strip-body">
+          {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{message}</span>) : <span>Nenhuma mensagem salva.</span>}
+          <button className="link-button" type="button" onClick={onOpen}>
+            Editar
+          </button>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: string, password: string) => void }) {
-  const [email, setEmail] = useState("alanrobot@gmail.com");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   function submit(event: FormEvent) {
@@ -80,9 +112,9 @@ function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: st
       <form className="login-panel" onSubmit={submit}>
         <div className="brand-logo" aria-hidden="true">
           <Bot size={31} />
-          <span>AR</span>
+          <span>BR</span>
         </div>
-        <p className="panel-label">Alan Robot</p>
+        <p className="panel-label">Bot Manager</p>
         <h1>Bot Rotas</h1>
         <div className="login-field">
           <Mail size={18} />
@@ -151,6 +183,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>("home");
   const [groupEditor, setGroupEditor] = useState<GroupEditor>();
   const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelToken()));
+  const [userEmail, setUserEmail] = useState(getPanelUserEmail());
   const [loginError, setLoginError] = useState("");
   const nuclearArmed = Boolean(snapshot.monitoringEnabled && snapshot.monitoringMode === "target" && snapshot.config.nuclearMode);
 
@@ -170,6 +203,8 @@ export default function App() {
         if (!mounted) return;
         if (isAuthError(error)) {
           setPanelToken("");
+          setPanelUserEmail("");
+          setUserEmail("");
           setAuthenticated(false);
           setLoginError("Faça login para continuar.");
           return;
@@ -204,6 +239,8 @@ export default function App() {
     } catch (error) {
       if (isAuthError(error)) {
         setPanelToken("");
+        setPanelUserEmail("");
+        setUserEmail("");
         setPanelPassword("");
         setAuthenticated(false);
         setLoginError("Entre novamente para continuar.");
@@ -358,7 +395,8 @@ export default function App() {
 
   async function login(email: string, password: string) {
     try {
-      await panelLogin(email, password);
+      const user = await panelLogin(email, password);
+      setUserEmail(user.email);
       setAuthenticated(true);
       setLoginError("");
     } catch (error) {
@@ -408,6 +446,8 @@ export default function App() {
             monitoringMode={snapshot.monitoringMode}
           />
 
+          <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
+
           <section className="nuclear-mini-panel">
             <div>
               <p className="panel-label">Nuclear</p>
@@ -426,8 +466,17 @@ export default function App() {
         </section>
       ) : null}
 
-      {activeTab === "groups" ? (
+      {activeTab === "messages" ? (
         <section className="mobile-home">
+          <section className="quick-panel identity-panel">
+            <div>
+              <p className="panel-label">Nome nas mensagens</p>
+              <h2>{snapshot.config.nomeEnvio || "Digite seu nome"}</h2>
+            </div>
+            <button className="button" type="button" onClick={() => setGroupEditor("target")}>
+              Configurar
+            </button>
+          </section>
           <section className="quick-panel">
             <div className="panel-heading">
               <div>
@@ -453,12 +502,18 @@ export default function App() {
               onOpen={() => setGroupEditor("test")}
             />
           </section>
-        </section>
-      ) : null}
-
-      {activeTab === "qr" ? (
-        <section className="tab-stack">
-          <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
+          <MessagePreviewStrip
+            title="Mensagens alvo"
+            group={groupLabel}
+            messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
+            onOpen={() => setGroupEditor("target")}
+          />
+          <MessagePreviewStrip
+            title="Mensagens teste"
+            group={testGroupLabel}
+            messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensTeste || [])}
+            onOpen={() => setGroupEditor("test")}
+          />
         </section>
       ) : null}
 
@@ -474,8 +529,15 @@ export default function App() {
             config={snapshot.config}
             busy={busy}
             monitoringEnabled={Boolean(snapshot.monitoringEnabled)}
+            userEmail={userEmail}
             onClearLogs={confirmClearLogs}
             onToggleNuclearMode={saveGeneralSettings}
+            onLogout={() => {
+              setPanelToken("");
+              setPanelUserEmail("");
+              setUserEmail("");
+              setAuthenticated(false);
+            }}
           />
         </section>
       ) : null}
