@@ -32,6 +32,20 @@ const labels = {
   }
 };
 
+function formatMessageCode(value: string) {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^([a-zA-Z])\s*-?\s*(\d+)$/);
+  if (!match) return trimmed.toUpperCase();
+  return `${match[1].toUpperCase()}-${match[2]}`;
+}
+
+function parseCodes(value: string) {
+  return value
+    .split(/\r?\n|,/)
+    .map(formatMessageCode)
+    .filter(Boolean);
+}
+
 export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave, onWarmup }: Props) {
   const [group, setGroup] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
@@ -68,19 +82,14 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     event.preventDefault();
     const selectedGroup = groups.find((item) => item.id === selectedGroupId);
     const value = selectedGroup ? selectedGroup.name : group.trim();
-    const nextCodes = codes
-      .split(/\r?\n|,/)
-      .map((item) => item.trim())
-      .filter(Boolean);
+    const nextCodes = parseCodes(codes);
 
     if (!value || !senderName.trim() || !nextCodes.length) return;
+    setCodes(nextCodes.join("\n"));
     onSave(value, selectedGroup?.id, selectedGroup?.name, senderName.trim(), nextCodes);
   }
 
-  const previewMessages = codes
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean)
+  const previewMessages = parseCodes(codes)
     .map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
 
   return (
@@ -137,7 +146,8 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           id={`${kind}-codes`}
           value={codes}
           onChange={(event) => setCodes(event.target.value)}
-          placeholder="Ex: F-14"
+          onBlur={() => setCodes(parseCodes(codes).join("\n"))}
+          placeholder="Ex: P-12"
           rows={3}
         />
 

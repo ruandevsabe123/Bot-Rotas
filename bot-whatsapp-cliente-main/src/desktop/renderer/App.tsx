@@ -1,10 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  Bot,
   Flame,
   Home,
   LockKeyhole,
+  Mail,
   MessageSquareText,
+  QrCode,
   RefreshCw,
   Settings,
   SlidersHorizontal,
@@ -18,7 +21,7 @@ import { LogsPanel } from "./components/LogsPanel";
 import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { StatusCard } from "./components/StatusCard";
-import { botApi, getPanelPassword, isAuthError, setPanelPassword } from "./api";
+import { botApi, getPanelToken, isAuthError, panelLogin, setPanelPassword, setPanelToken } from "./api";
 import "./styles.css";
 
 type PendingConfirmation = {
@@ -29,7 +32,7 @@ type PendingConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-type AppTab = "home" | "logs" | "settings";
+type AppTab = "home" | "groups" | "qr" | "logs" | "settings";
 type GroupEditor = "target" | "test" | undefined;
 
 const emptySnapshot: BotSnapshot = {
@@ -53,6 +56,8 @@ const emptySnapshot: BotSnapshot = {
 
 const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
   { id: "home", label: "Início", Icon: Home },
+  { id: "groups", label: "Grupos", Icon: MessageSquareText },
+  { id: "qr", label: "QR Code", Icon: QrCode },
   { id: "logs", label: "Logs", Icon: Activity },
   { id: "settings", label: "Ajustes", Icon: Settings }
 ];
@@ -61,32 +66,47 @@ function normalizeMessages(senderName: string, codes: string[]) {
   return codes.map((code) => `${senderName.trim()} ${code.trim().toUpperCase()}`.trim()).filter(Boolean);
 }
 
-function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (password: string) => void }) {
+function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: string, password: string) => void }) {
+  const [email, setEmail] = useState("alanrobot@gmail.com");
   const [password, setPassword] = useState("");
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    onSubmit(password.trim());
+    onSubmit(email.trim(), password);
   }
 
   return (
     <main className="login-shell">
       <form className="login-panel" onSubmit={submit}>
-        <div className="login-icon">
-          <LockKeyhole size={28} />
+        <div className="brand-logo" aria-hidden="true">
+          <Bot size={31} />
+          <span>AR</span>
         </div>
-        <p className="panel-label">Acesso seguro</p>
-        <h1>Bot WhatsApp</h1>
-        <input
-          autoComplete="current-password"
-          autoFocus
-          placeholder="Senha do painel"
-          type="password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-        />
+        <p className="panel-label">Alan Robot</p>
+        <h1>Bot Rotas</h1>
+        <div className="login-field">
+          <Mail size={18} />
+          <input
+            autoComplete="email"
+            placeholder="Email"
+            type="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
+        </div>
+        <div className="login-field">
+          <LockKeyhole size={18} />
+          <input
+            autoComplete="current-password"
+            autoFocus
+            placeholder="Senha"
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+          />
+        </div>
         {error ? <p className="login-error">{error}</p> : null}
-        <button className="button primary" disabled={!password.trim()} type="submit">
+        <button className="button primary" disabled={!email.trim() || !password} type="submit">
           Entrar
         </button>
       </form>
@@ -130,7 +150,7 @@ export default function App() {
   const [confirmation, setConfirmation] = useState<PendingConfirmation>();
   const [activeTab, setActiveTab] = useState<AppTab>("home");
   const [groupEditor, setGroupEditor] = useState<GroupEditor>();
-  const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelPassword()));
+  const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelToken()));
   const [loginError, setLoginError] = useState("");
   const nuclearArmed = Boolean(snapshot.monitoringEnabled && snapshot.monitoringMode === "target" && snapshot.config.nuclearMode);
 
@@ -149,9 +169,9 @@ export default function App() {
       .catch((error) => {
         if (!mounted) return;
         if (isAuthError(error)) {
-          setPanelPassword("");
+          setPanelToken("");
           setAuthenticated(false);
-          setLoginError("Senha incorreta ou ausente.");
+          setLoginError("Faça login para continuar.");
           return;
         }
         setLoginError(error instanceof Error ? error.message : "Falha ao abrir painel.");
@@ -183,6 +203,7 @@ export default function App() {
       return nextSnapshot;
     } catch (error) {
       if (isAuthError(error)) {
+        setPanelToken("");
         setPanelPassword("");
         setAuthenticated(false);
         setLoginError("Entre novamente para continuar.");
@@ -335,10 +356,15 @@ export default function App() {
     await action();
   }
 
-  function login(password: string) {
-    setPanelPassword(password);
-    setAuthenticated(true);
-    setLoginError("");
+  async function login(email: string, password: string) {
+    try {
+      await panelLogin(email, password);
+      setAuthenticated(true);
+      setLoginError("");
+    } catch (error) {
+      setPanelToken("");
+      setLoginError(error instanceof Error ? error.message : "Não consegui fazer login.");
+    }
   }
 
   if (!authenticated) {
@@ -382,6 +408,26 @@ export default function App() {
             monitoringMode={snapshot.monitoringMode}
           />
 
+          <section className="nuclear-mini-panel">
+            <div>
+              <p className="panel-label">Nuclear</p>
+              <strong>{nuclearArmed ? "Armado" : snapshot.config.nuclearMode ? "Modo ligado" : "Modo desligado"}</strong>
+            </div>
+            <button
+              className="button"
+              disabled={busy || snapshot.status !== "connected" || Boolean(snapshot.monitoringEnabled)}
+              type="button"
+              onClick={confirmStartNuclearMonitoring}
+            >
+              <Flame size={18} />
+              Iniciar
+            </button>
+          </section>
+        </section>
+      ) : null}
+
+      {activeTab === "groups" ? (
+        <section className="mobile-home">
           <section className="quick-panel">
             <div className="panel-heading">
               <div>
@@ -407,24 +453,12 @@ export default function App() {
               onOpen={() => setGroupEditor("test")}
             />
           </section>
+        </section>
+      ) : null}
 
+      {activeTab === "qr" ? (
+        <section className="tab-stack">
           <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
-
-          <section className="nuclear-mini-panel">
-            <div>
-              <p className="panel-label">Nuclear</p>
-              <strong>{nuclearArmed ? "Armado" : snapshot.config.nuclearMode ? "Modo ligado" : "Modo desligado"}</strong>
-            </div>
-            <button
-              className="button"
-              disabled={busy || snapshot.status !== "connected" || Boolean(snapshot.monitoringEnabled)}
-              type="button"
-              onClick={confirmStartNuclearMonitoring}
-            >
-              <Flame size={18} />
-              Iniciar
-            </button>
-          </section>
         </section>
       ) : null}
 

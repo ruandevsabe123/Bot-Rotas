@@ -76,15 +76,57 @@ textarea {
   box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.16);
 }
 
-.login-icon {
+.brand-logo {
   display: grid;
-  width: 54px;
-  height: 54px;
-  place-items: center;
+  grid-template-columns: 38px 1fr;
+  gap: 10px;
+  align-items: center;
+  width: fit-content;
+  min-height: 58px;
+  padding: 8px 12px 8px 8px;
   border: 1px solid rgba(46, 160, 67, 0.34);
   border-radius: 8px;
   color: #7ee787;
   background: rgba(35, 134, 54, 0.16);
+}
+
+.brand-logo svg {
+  display: block;
+}
+
+.brand-logo span {
+  color: #f0f6fc;
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+
+.login-field {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  gap: 10px;
+  align-items: center;
+  min-height: 50px;
+  border: 1px solid rgba(139, 148, 158, 0.26);
+  border-radius: 8px;
+  color: #8b949e;
+  background: #0d1117;
+  padding: 0 12px;
+}
+
+.login-field:focus-within {
+  border-color: #58a6ff;
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.16);
+}
+
+.login-field input {
+  min-height: 48px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.login-field input:focus {
+  box-shadow: none;
 }
 
 .login-error {
@@ -802,8 +844,8 @@ h2 {
 }
 
 .icon-nav {
-  grid-template-columns: repeat(3, 1fr);
-  width: min(360px, calc(100vw - 28px));
+  grid-template-columns: repeat(5, 1fr);
+  width: min(460px, calc(100vw - 28px));
 }
 
 .settings-grid {

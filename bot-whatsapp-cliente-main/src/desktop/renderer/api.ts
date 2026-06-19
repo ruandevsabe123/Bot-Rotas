@@ -9,7 +9,7 @@ import {
   SaveWarmupMessageSettingsPayload
 } from "../../shared/types";
 
-const AUTH_ERROR_MESSAGE = "Senha do painel obrigatória.";
+const AUTH_ERROR_MESSAGES = ["Senha do painel obrigatória.", "Login obrigatório.", "Email ou senha inválidos."];
 
 export function getPanelPassword() {
   return window.localStorage.getItem("panelPassword") || "";
@@ -23,15 +23,39 @@ export function setPanelPassword(password: string) {
   }
 }
 
+export function getPanelToken() {
+  return window.localStorage.getItem("panelToken") || "";
+}
+
+export function setPanelToken(token: string) {
+  if (token) {
+    window.localStorage.setItem("panelToken", token);
+  } else {
+    window.localStorage.removeItem("panelToken");
+  }
+}
+
 export function isAuthError(error: unknown) {
-  return error instanceof Error && error.message === AUTH_ERROR_MESSAGE;
+  return error instanceof Error && AUTH_ERROR_MESSAGES.includes(error.message);
+}
+
+export async function panelLogin(email: string, password: string) {
+  const response = await fetchJson<{ token: string; user: { email: string } }>("/api/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password })
+  });
+  setPanelToken(response.token);
+  setPanelPassword("");
+  return response.user;
 }
 
 async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
 
+  const token = getPanelToken();
   const password = getPanelPassword();
+  if (token) headers.set("x-panel-token", token);
   if (password) headers.set("x-panel-password", password);
 
   const response = await fetch(url, {

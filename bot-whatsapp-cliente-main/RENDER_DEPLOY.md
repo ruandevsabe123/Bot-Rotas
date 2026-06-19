@@ -4,9 +4,11 @@ Este projeto agora pode rodar como painel web mobile-first no Render.
 
 ## Variáveis obrigatórias/recomendadas
 
-- `PANEL_PASSWORD`: senha para abrir/controlar o painel. Recomendado porque o link do Render é público.
+- `PANEL_EMAIL`: email de login do cliente.
+- `PANEL_PASSWORD`: senha de login do cliente. Recomendado porque o link do Render é público.
 - `DATA_DIR`: no `render.yaml` já está como `/opt/render/project/src/data`.
 - `BOT_PHONE_NUMBER`: opcional. Use somente se quiser gerar código de pareamento pelo número em vez de QR Code. Formato: `55DDDNUMERO`, sem `+`.
+- `KEEP_ALIVE_URL`: opcional, mas recomendado no plano Free para manter o bot acordado quando estiver armado. Use a URL pública do Render, por exemplo `https://seu-servico.onrender.com`.
 
 ## Comandos
 
@@ -31,10 +33,14 @@ O `render.yaml` cria um disco em `/opt/render/project/src/data`. É nele que fic
 
 Sem disco persistente, o WhatsApp pode pedir novo QR Code após deploy/restart.
 
+## Render Free
+
+No plano Free, o Render dorme após inatividade. Se você configurar `KEEP_ALIVE_URL`, o servidor faz um ping a cada 10 minutos somente quando o WhatsApp estiver conectado e o monitoramento estiver ativo. Isso ajuda o bot a continuar acordado durante o período em que precisa disparar rápido.
+
 ## Uso
 
 1. Abra o link do Render pelo celular.
-2. Digite a senha configurada em `PANEL_PASSWORD`.
+2. Faça login com o email de `PANEL_EMAIL` e a senha de `PANEL_PASSWORD`.
 3. Toque em `Conectar WhatsApp`.
 4. Escaneie o QR Code pelo WhatsApp.
 5. Atualize grupos, salve grupo alvo/teste e mensagens.

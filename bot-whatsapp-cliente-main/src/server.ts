@@ -2,6 +2,7 @@ import fs from "fs";
 import http from "http";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import QRCode from "qrcode";
 import qrcodeTerminal from "qrcode-terminal";
 import { BotService } from "./bot/connection";
@@ -10,8 +11,16 @@ const port = Number(process.env.PORT || 3000);
 const dataDir = path.resolve(process.env.DATA_DIR || process.cwd());
 const authDir = path.join(dataDir, "auth_info");
 const configPath = path.join(dataDir, "config.json");
-const panelPassword = process.env.PANEL_PASSWORD || "";
+const panelEmail = process.env.PANEL_EMAIL || "alanrobot@gmail.com";
+const panelPassword = process.env.PANEL_PASSWORD || "senhanova";
+const panelSessionSecret = process.env.PANEL_SESSION_SECRET || panelPassword;
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
+const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
+const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
+const keepAliveUrl =
+  process.env.KEEP_ALIVE_URL ||
+  process.env.RENDER_EXTERNAL_URL ||
+  (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : "");
 
 fs.mkdirSync(dataDir, { recursive: true });
 
@@ -56,14 +65,44 @@ function readJsonBody<T = any>(request: http.IncomingMessage): Promise<T> {
   });
 }
 
+function base64Url(input: string) {
+  return Buffer.from(input).toString("base64url");
+}
+
+function signPayload(payload: string) {
+  return crypto.createHmac("sha256", panelSessionSecret).update(payload).digest("base64url");
+}
+
+function createSessionToken(email: string) {
+  const payload = base64Url(JSON.stringify({ email, exp: Date.now() + SESSION_TTL_MS }));
+  return `${payload}.${signPayload(payload)}`;
+}
+
+function verifySessionToken(token: string) {
+  const [payload, signature] = token.split(".");
+  if (!payload || !signature) return false;
+  const expected = signPayload(payload);
+  if (signature.length !== expected.length) return false;
+
+  try {
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return false;
+    const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
+    return parsed.email === panelEmail && Number(parsed.exp) > Date.now();
+  } catch {
+    return false;
+  }
+}
+
 function isAuthorized(request: http.IncomingMessage) {
   if (!panelPassword) return true;
-  return request.headers["x-panel-password"] === panelPassword;
+  const token = String(request.headers["x-panel-token"] || "").trim();
+  const password = String(request.headers["x-panel-password"] || "").trim();
+  return verifySessionToken(token) || password === panelPassword;
 }
 
 function requireAuth(request: http.IncomingMessage, response: http.ServerResponse) {
   if (isAuthorized(request)) return false;
-  sendJson(response, 401, { error: "Senha do painel obrigatória." });
+  sendJson(response, 401, { error: "Login obrigatório." });
   return true;
 }
 
@@ -210,12 +249,51 @@ function getLocalAddresses() {
   return addresses;
 }
 
+function startKeepAlive() {
+  if (!keepAliveUrl || process.env.KEEP_ALIVE_WHEN_MONITORING === "false") return;
+
+  const pingUrl = `${keepAliveUrl.replace(/\/$/, "")}/api/ping`;
+  console.log(`Keep-alive armado para monitoramento: ${pingUrl}`);
+
+  setInterval(() => {
+    const snapshot = bot.getSnapshot();
+    if (!snapshot.monitoringEnabled || snapshot.status !== "connected") return;
+
+    fetch(pingUrl)
+      .then((response) => {
+        if (!response.ok) {
+          console.log(`Keep-alive respondeu ${response.status}.`);
+        }
+      })
+      .catch((error) => {
+        console.log(`Keep-alive falhou: ${error instanceof Error ? error.message : String(error)}`);
+      });
+  }, KEEP_ALIVE_INTERVAL_MS);
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
 
   try {
     if (request.method === "GET" && url.pathname === "/api/ping") {
-      sendJson(response, 200, { ok: true, protected: Boolean(panelPassword) });
+      sendJson(response, 200, { ok: true, protected: Boolean(panelPassword), login: "email" });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/login") {
+      const body = await readJsonBody(request);
+      const email = String(body.email || "").trim().toLowerCase();
+      const password = String(body.password || "");
+      if (email !== panelEmail.toLowerCase() || password !== panelPassword) {
+        sendJson(response, 401, { error: "Email ou senha inválidos." });
+        return;
+      }
+
+      sendJson(response, 200, {
+        ok: true,
+        token: createSessionToken(panelEmail),
+        user: { email: panelEmail }
+      });
       return;
     }
 
@@ -285,6 +363,7 @@ server.listen(port, "0.0.0.0", () => {
   if (!panelPassword) {
     console.log("Aviso: defina PANEL_PASSWORD no Render para proteger o painel público.");
   }
+  startKeepAlive();
 });
 
 async function shutdown() {

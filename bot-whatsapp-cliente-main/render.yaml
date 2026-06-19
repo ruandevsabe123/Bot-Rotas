@@ -10,7 +10,11 @@ services:
         value: production
       - key: DATA_DIR
         value: /opt/render/project/src/data
+      - key: PANEL_EMAIL
+        sync: false
       - key: PANEL_PASSWORD
+        sync: false
+      - key: KEEP_ALIVE_URL
         sync: false
       - key: BOT_PHONE_NUMBER
         sync: false
