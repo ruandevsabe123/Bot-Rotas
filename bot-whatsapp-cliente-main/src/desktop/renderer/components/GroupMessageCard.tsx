@@ -47,12 +47,13 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     () => (isTarget ? config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
     [config.codigosMensagensAlvo, config.codigosMensagensTeste, isTarget]
   );
+  const savedCodesKey = savedCodes.join("\n");
 
   useEffect(() => {
     setGroup(isTarget ? config.grupoAlvoJid || config.grupoAlvoNome || "" : config.grupoTesteJid || config.grupoTesteNome || "");
     setSelectedGroupId(isTarget ? config.grupoAlvoJid || "" : config.grupoTesteJid || "");
     setSenderName(config.nomeEnvio);
-    setCodes(savedCodes.join("\n"));
+    setCodes(savedCodesKey);
   }, [
     config.grupoAlvoJid,
     config.grupoAlvoNome,
@@ -60,7 +61,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     config.grupoTesteNome,
     config.nomeEnvio,
     isTarget,
-    savedCodes
+    savedCodesKey
   ]);
 
   function submit(event: FormEvent) {
