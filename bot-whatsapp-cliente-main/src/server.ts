@@ -214,17 +214,17 @@ const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
 
   try {
+    if (request.method === "GET" && url.pathname === "/api/ping") {
+      sendJson(response, 200, { ok: true, protected: Boolean(panelPassword) });
+      return;
+    }
+
     if (url.pathname.startsWith("/api/") || url.pathname === "/events" || url.pathname === "/qr.svg") {
       if (requireAuth(request, response)) return;
     }
 
     if (request.method === "GET" && url.pathname === "/api/snapshot") {
       sendJson(response, 200, bot.getSnapshot());
-      return;
-    }
-
-    if (request.method === "GET" && url.pathname === "/api/ping") {
-      sendJson(response, 200, { ok: true, protected: Boolean(panelPassword) });
       return;
     }
 
