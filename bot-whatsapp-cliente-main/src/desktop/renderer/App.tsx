@@ -5,7 +5,6 @@ import {
   Bot,
   Clock3,
   Edit3,
-  Flame,
   Gauge,
   Home,
   Info,
@@ -15,13 +14,11 @@ import {
   RefreshCw,
   Route,
   Save,
-  Shield,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
   TestTube2,
   UserPlus,
-  Users,
   X,
   Zap
 } from "lucide-react";
@@ -273,6 +270,64 @@ function CockpitPanel({
       <CockpitCard Icon={ShieldCheck} tone="yellow" title="Grupo" value={groupValue} detail={armedValue} />
       <CockpitCard Icon={Clock3} tone="blue" title="Última abertura" value={lastOpening} detail="real ou simulada" />
       <CockpitCard Icon={Zap} tone="yellow" title="Último disparo" value={lastDispatch} detail={`${confirmed} mensagens confirmadas`} />
+    </section>
+  );
+}
+
+function LaunchReviewPanel({
+  snapshot,
+  groupLabel,
+  messages,
+  onEditTarget,
+  onEditTest
+}: {
+  snapshot: BotSnapshot;
+  groupLabel: string;
+  messages: string[];
+  onEditTarget: () => void;
+  onEditTest: () => void;
+}) {
+  const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
+  const hasName = Boolean(snapshot.config.nomeEnvio);
+  const hasMessages = messages.length > 0;
+
+  return (
+    <section className="quick-panel launch-review-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="panel-label">Revisão antes de iniciar</p>
+          <h2>Rota e mensagens</h2>
+        </div>
+        <button className="button" type="button" onClick={onEditTarget}>
+          <SlidersHorizontal size={18} />
+          Editar
+        </button>
+      </div>
+      <div className="review-grid">
+        <article className={hasGroup ? "review-item ok" : "review-item pending"}>
+          <span>Rota</span>
+          <strong>{groupLabel}</strong>
+        </article>
+        <article className={hasName ? "review-item ok" : "review-item pending"}>
+          <span>Nome</span>
+          <strong>{snapshot.config.nomeEnvio || "Não configurado"}</strong>
+        </article>
+        <article className={hasMessages ? "review-item ok" : "review-item pending"}>
+          <span>Mensagens</span>
+          <strong>{messages.length ? `${messages.length} pronta(s)` : "Nenhuma"}</strong>
+        </article>
+      </div>
+      <div className="review-messages">
+        {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{message}</span>) : <span>Configure as mensagens que serão enviadas antes de iniciar.</span>}
+      </div>
+      <div className="review-actions">
+        <button className="button" type="button" onClick={onEditTarget}>
+          Configurar envio real
+        </button>
+        <button className="button accent" type="button" onClick={onEditTest}>
+          Configurar teste
+        </button>
+      </div>
     </section>
   );
 }
@@ -640,7 +695,6 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
-  const nuclearArmed = Boolean(snapshot.monitoringEnabled && snapshot.monitoringMode === "target" && snapshot.config.nuclearMode);
 
   function logout(message = "") {
     setPanelToken("");
@@ -834,34 +888,36 @@ export default function App() {
 
   function confirmStartMonitoring() {
     const messages = buildMessagePreview();
+    const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
+    const hasName = Boolean(snapshot.config.nomeEnvio);
+
+    if (!hasGroup || !hasName || !messages.length) {
+      setGroupEditor("target");
+      setConfirmation({
+        title: "Revise o envio",
+        message: "Falta configurar a rota, o nome ou as mensagens antes de iniciar.",
+        details: [
+          hasGroup ? `Rota: ${groupLabel}` : "Rota ainda não configurada.",
+          hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",
+          messages.length ? `Mensagens: ${messages.join(" | ")}` : "Nenhuma mensagem configurada."
+        ],
+        confirmLabel: "Entendi",
+        onConfirm: () => undefined
+      });
+      return;
+    }
 
     setConfirmation({
-      title: "Iniciar bot real",
-      message: "Deseja iniciar o monitoramento do grupo alvo?",
+      title: "Iniciar bot",
+      message: "Confira a rota e as mensagens que serão enviadas.",
       details: [
         `Grupo alvo: ${groupLabel}`,
-        messages.length ? `Mensagens: ${messages.join(" | ")}` : "Nenhuma mensagem do alvo configurada."
+        `Nome: ${snapshot.config.nomeEnvio}`,
+        `Mensagens: ${messages.join(" | ")}`
       ],
       confirmLabel: "Iniciar bot",
       onConfirm: async () => {
         await runAction(botApi.startMonitoring);
-      }
-    });
-  }
-
-  function confirmStartNuclearMonitoring() {
-    const messages = buildMessagePreview();
-
-    setConfirmation({
-      title: "Iniciar modo nuclear",
-      message: "Deseja iniciar o grupo alvo com o disparo enxuto?",
-      details: [
-        `Grupo alvo: ${groupLabel}`,
-        messages.length ? `Mensagens: ${messages.join(" | ")}` : "Nenhuma mensagem do alvo configurada."
-      ],
-      confirmLabel: "Iniciar nuclear",
-      onConfirm: async () => {
-        await runAction(botApi.startNuclearMonitoring);
       }
     });
   }
@@ -985,38 +1041,26 @@ export default function App() {
         <section className="mobile-home">
           <CockpitPanel snapshot={snapshot} groupLabel={snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel} />
 
+          <LaunchReviewPanel
+            snapshot={snapshot}
+            groupLabel={groupLabel}
+            messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
+            onEditTarget={() => setGroupEditor("target")}
+            onEditTest={() => setGroupEditor("test")}
+          />
+
           <ControlButtons
             busy={busy}
             status={snapshot.status}
             onStart={() => runAction(botApi.startBot)}
             onStop={() => runAction(botApi.stopBot)}
             onStartMonitoring={confirmStartMonitoring}
-            onStartTestMonitoring={confirmStartTestMonitoring}
             onStopMonitoring={() => runAction(botApi.stopMonitoring)}
-            onSimulateOpening={() => runAction(botApi.simulateOpening)}
-            onRestart={() => runAction(botApi.restartBot)}
-            onClearSession={() => runAction(botApi.clearSession)}
             monitoringEnabled={snapshot.monitoringEnabled}
             monitoringMode={snapshot.monitoringMode}
           />
 
           <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
-
-          <section className="nuclear-mini-panel">
-            <div>
-              <p className="panel-label">Nuclear</p>
-              <strong>{nuclearArmed ? "Armado" : snapshot.config.nuclearMode ? "Modo ligado" : "Modo desligado"}</strong>
-            </div>
-            <button
-              className="button"
-              disabled={busy || snapshot.status !== "connected" || Boolean(snapshot.monitoringEnabled)}
-              type="button"
-              onClick={confirmStartNuclearMonitoring}
-            >
-              <Flame size={18} />
-              Iniciar
-            </button>
-          </section>
         </section>
       ) : null}
 
@@ -1085,8 +1129,6 @@ export default function App() {
             monitoringEnabled={Boolean(snapshot.monitoringEnabled)}
             userEmail={userEmail}
             onClearLogs={confirmClearLogs}
-            onFactoryReset={confirmFactoryReset}
-            onToggleNuclearMode={saveGeneralSettings}
             onLogout={() => {
               logout();
             }}

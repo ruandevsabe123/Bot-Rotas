@@ -1,4 +1,4 @@
-import { LogOut, Play, QrCode, RefreshCw, RotateCcw, Square, TestTube2, Zap } from "lucide-react";
+import { LogOut, Play, QrCode, Square } from "lucide-react";
 import { BotStatus } from "../../../shared/types";
 
 type Props = {
@@ -7,11 +7,7 @@ type Props = {
   onStart: () => void;
   onStop: () => void;
   onStartMonitoring: () => void;
-  onStartTestMonitoring: () => void;
   onStopMonitoring: () => void;
-  onSimulateOpening: () => void;
-  onRestart: () => void;
-  onClearSession: () => void;
   monitoringEnabled?: boolean;
   monitoringMode?: "target" | "test";
 };
@@ -22,11 +18,7 @@ export function ControlButtons({
   onStart,
   onStop,
   onStartMonitoring,
-  onStartTestMonitoring,
   onStopMonitoring,
-  onSimulateOpening,
-  onRestart,
-  onClearSession,
   monitoringEnabled,
   monitoringMode
 }: Props) {
@@ -38,51 +30,31 @@ export function ControlButtons({
 
   const canConnect = !busy && (isDisconnected || isError);
   const canStop = !busy && isRunning;
-  const canRestart = !busy && isRunning;
-  const canClearSession = !busy && (isRunning || isError);
   const canStartMonitoring = !busy && isConnected && !Boolean(monitoringEnabled);
   const canStopMonitoring = !busy && isConnected && Boolean(monitoringEnabled);
-  const canSimulateOpening = !busy && isConnected;
 
   return (
     <article className="panel">
-      <p className="panel-label">Controles</p>
+      <p className="panel-label">Operação</p>
       <div className="button-grid">
-        <button className="button primary wide-button" disabled={!canConnect} onClick={onStart}>
+        <button className="button primary" disabled={!canConnect} onClick={onStart}>
           <QrCode size={18} />
           Conectar WhatsApp
         </button>
-        <button className="button" disabled={!canStartMonitoring} onClick={onStartMonitoring}>
+        <button className="button" disabled={!canStop} onClick={onStop}>
+          <LogOut size={18} />
+          Desconectar
+        </button>
+        <button className="button primary" disabled={!canStartMonitoring} onClick={onStartMonitoring}>
           <Play size={18} />
           Iniciar bot
-        </button>
-        <button className="button" disabled={!canStartMonitoring} onClick={onStartTestMonitoring}>
-          <TestTube2 size={18} />
-          Iniciar teste
         </button>
         <button className="button" disabled={!canStopMonitoring} onClick={onStopMonitoring}>
           <Square size={18} />
           Parar bot{monitoringMode === "test" ? " teste" : ""}
         </button>
-        <button className="button accent" disabled={!canSimulateOpening} onClick={onSimulateOpening}>
-          <Zap size={18} />
-          Simular abertura
-        </button>
-        <button className="button" disabled={!canStop} onClick={onStop}>
-          <LogOut size={18} />
-          Desconectar WhatsApp
-        </button>
-        <button className="button" disabled={!canRestart} onClick={onRestart}>
-          <RefreshCw size={18} />
-          Reiniciar conexao
-        </button>
-        <button className="button danger" disabled={!canClearSession} onClick={onClearSession}>
-          <RotateCcw size={18} />
-          Gerar novo QR
-        </button>
       </div>
     </article>
   );
 }
-
 

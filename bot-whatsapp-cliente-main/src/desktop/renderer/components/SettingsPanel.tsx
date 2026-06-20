@@ -1,3 +1,4 @@
+import { HelpCircle, LogOut, Mail, MessageCircle, Trash2 } from "lucide-react";
 import { BotConfig } from "../../../shared/types";
 
 type Props = {
@@ -6,63 +7,71 @@ type Props = {
   monitoringEnabled: boolean;
   userEmail?: string;
   onClearLogs: () => void;
-  onFactoryReset: () => void;
-  onToggleNuclearMode: (enabled: boolean) => void;
   onLogout?: () => void;
 };
 
-export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onToggleNuclearMode, onLogout }: Props) {
+export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onLogout }: Props) {
   return (
     <section className="settings-grid">
       <article className="panel option-panel account-panel">
         <div>
           <p className="panel-label">Conta</p>
           <h2>{userEmail || "Cliente conectado"}</h2>
-          <p>Nome nas mensagens: {config.nomeEnvio || "não configurado"}</p>
+          <p>Nome configurado: {config.nomeEnvio || "não configurado"}</p>
         </div>
         {onLogout ? (
           <button className="button" disabled={busy} type="button" onClick={onLogout}>
+            <LogOut size={18} />
             Sair
           </button>
         ) : null}
       </article>
 
+      <article className="panel support-card">
+        <div>
+          <span className="support-icon">
+            <MessageCircle size={22} />
+          </span>
+          <p className="panel-label">Suporte</p>
+          <h2>Precisa de ajuda?</h2>
+          <p>Se o bot não conectar, não enviar rota ou aparecer algum erro, chama o suporte com uma foto da tela.</p>
+        </div>
+        <a className="button primary" href="mailto:ruansouzamitobr@gmail.com">
+          <Mail size={18} />
+          Falar comigo
+        </a>
+      </article>
+
       <article className="panel option-panel">
         <div>
-          <p className="panel-label">Logs</p>
-          <h2>Limpar log</h2>
+          <p className="panel-label">Status</p>
+          <h2>{monitoringEnabled ? "Bot em execução" : "Bot parado"}</h2>
+          <p>Grupo alvo: {config.grupoAlvoNome || config.grupoAlvoJid || "não configurado"}</p>
+        </div>
+        <span className={monitoringEnabled ? "mini-badge ok" : "mini-badge"}>{monitoringEnabled ? "Ativo" : "Aguardando"}</span>
+      </article>
+
+      <article className="panel option-panel">
+        <div>
+          <p className="panel-label">Histórico local</p>
+          <h2>Limpar avisos</h2>
+          <p>Remove apenas os logs exibidos no painel. Não apaga grupos nem mensagens.</p>
         </div>
         <button className="button danger" disabled={busy} type="button" onClick={onClearLogs}>
-          Limpar logs
+          <Trash2 size={18} />
+          Limpar
         </button>
       </article>
 
-      <article className="panel option-panel">
+      <article className="panel support-note">
+        <span className="support-icon muted">
+          <HelpCircle size={22} />
+        </span>
         <div>
-          <p className="panel-label">Reset</p>
-          <h2>Padrão de fábrica</h2>
-          <p>Apaga sessão, grupos, nome e mensagens salvas.</p>
+          <p className="panel-label">Dica rápida</p>
+          <h2>Antes de iniciar</h2>
+          <p>Confira a rota, o nome e as mensagens na tela inicial. Se algo estiver errado, toque em editar e salve antes de iniciar o bot.</p>
         </div>
-        <button className="button danger" disabled={busy} type="button" onClick={onFactoryReset}>
-          Resetar tudo
-        </button>
-      </article>
-
-      <article className="panel option-panel option-panel-nuclear">
-        <div>
-          <p className="panel-label">Contingência</p>
-          <h2>Modo nuclear</h2>
-          <p>{monitoringEnabled ? "Pare o bot para trocar de modo." : "Usa um disparo mais enxuto quando o modo principal não estiver confiável."}</p>
-        </div>
-        <label className="toggle-row">
-          <input
-            type="checkbox"
-            checked={config.nuclearMode}
-            disabled={busy || monitoringEnabled}
-            onChange={(event) => onToggleNuclearMode(event.target.checked)}
-          />
-          <span>{config.nuclearMode ? "Ativado" : "Desativado"}</span>
-        </label>
       </article>
     </section>
   );
