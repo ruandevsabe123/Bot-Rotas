@@ -6,6 +6,8 @@ import crypto from "crypto";
 import QRCode from "qrcode";
 import qrcodeTerminal from "qrcode-terminal";
 import { BotService } from "./bot/connection";
+import { PanelUserStore, StoredPanelUser } from "./panelUserStore";
+import { AdminRoutesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
 const dataDir = path.resolve(process.env.DATA_DIR || process.cwd());
@@ -15,32 +17,85 @@ const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
 
-function parsePanelUsers(envUsers: string | undefined, defaultEmail: string, defaultPassword: string) {
-  const users = new Map<string, string>();
+type PanelUserRecord = {
+  password: string;
+  role: PanelUserRole;
+  blocked: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt?: string;
+  lastSeenAt?: string;
+  totalUsageMs: number;
+  loginHistory: StoredPanelUser["loginHistory"];
+};
+
+function parseList(value: string | undefined) {
+  return String(value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizePhone(value: string) {
+  return String(value || "").split("@")[0].split(":")[0].replace(/\D/g, "");
+}
+
+function createUserRecord(email: string, password: string, role: PanelUserRole, overrides: Partial<PanelUserRecord> = {}): PanelUserRecord {
+  const now = new Date().toISOString();
+  return {
+    password,
+    role,
+    blocked: false,
+    createdAt: now,
+    updatedAt: now,
+    totalUsageMs: 0,
+    loginHistory: [],
+    ...overrides
+  };
+}
+
+function parsePanelUsers(envUsers: string | undefined, defaultEmail: string, defaultPassword: string, adminEmails: Set<string>) {
+  const users = new Map<string, PanelUserRecord>();
   const raw = String(envUsers || "").trim();
   for (const part of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
-    const [email, password] = part.split(":").map((item) => item.trim());
+    const [email, password, role] = part.split(":").map((item) => item.trim());
     if (!email || !password) continue;
-    users.set(email.toLowerCase(), password);
+    const normalizedEmail = email.toLowerCase();
+    users.set(normalizedEmail, createUserRecord(normalizedEmail, password, role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "client"));
   }
   if (defaultEmail && defaultPassword) {
-    users.set(defaultEmail.toLowerCase(), defaultPassword);
+    const normalizedEmail = defaultEmail.toLowerCase();
+    users.set(normalizedEmail, createUserRecord(normalizedEmail, defaultPassword, adminEmails.has(normalizedEmail) ? "admin" : "client"));
   }
   return users;
 }
 
-const panelUsers = parsePanelUsers(
+function mergeStoredUsers(users: Map<string, PanelUserRecord>, storedUsers: StoredPanelUser[]) {
+  for (const storedUser of storedUsers) {
+    users.set(storedUser.email, createUserRecord(storedUser.email, storedUser.password, storedUser.role, storedUser));
+  }
+  return users;
+}
+
+const configuredAdminEmails = new Set(parseList(process.env.PANEL_ADMIN_EMAILS || process.env.ADMIN_EMAILS).map((item) => item.toLowerCase()));
+const adminPhoneNumbers = parseList(process.env.ADMIN_PHONE_NUMBERS || process.env.ADMIN_PHONES)
+  .map(normalizePhone)
+  .filter(Boolean);
+const panelUserStore = new PanelUserStore(path.join(dataDir, "panel_users.json"));
+const panelUsers = mergeStoredUsers(parsePanelUsers(
   process.env.PANEL_USERS || process.env.PANEL_USER || process.env.PAINEL_USER,
   panelEmail,
-  panelPassword
-);
-const panelSessionSecret = process.env.PANEL_SESSION_SECRET || Array.from(panelUsers.values())[0] || panelPassword;
+  panelPassword,
+  configuredAdminEmails
+), panelUserStore.all());
+const panelSessionSecret = process.env.PANEL_SESSION_SECRET || Array.from(panelUsers.values())[0]?.password || panelPassword;
 const keepAliveUrl =
   process.env.KEEP_ALIVE_URL ||
   process.env.RENDER_EXTERNAL_URL ||
   (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : "");
 
 console.log("Painel de usuarios habilitados:", Array.from(panelUsers.keys()).join(", "));
+console.log("Administradores do painel:", Array.from(panelUsers.entries()).filter(([, user]) => user.role === "admin").map(([email]) => email).join(", ") || "nenhum");
 
 fs.mkdirSync(dataDir, { recursive: true });
 
@@ -57,6 +112,37 @@ function getUserStorageKey(email: string) {
   return email.toLowerCase().replace(/[^a-z0-9._-]+/g, "_");
 }
 
+async function renameUserStorage(oldEmail: string, nextEmail: string) {
+  if (oldEmail === nextEmail) return;
+
+  const existingBot = bots.get(oldEmail);
+  if (existingBot) {
+    await existingBot.stop().catch(() => undefined);
+    bots.delete(oldEmail);
+  }
+
+  const oldDir = path.join(dataDir, "users", getUserStorageKey(oldEmail));
+  const nextDir = path.join(dataDir, "users", getUserStorageKey(nextEmail));
+  if (fs.existsSync(oldDir) && !fs.existsSync(nextDir)) {
+    fs.mkdirSync(path.dirname(nextDir), { recursive: true });
+    fs.renameSync(oldDir, nextDir);
+  }
+  const routeHistoryPath = path.join(nextDir, "route_history.json");
+  if (fs.existsSync(routeHistoryPath)) {
+    try {
+      const routes = JSON.parse(fs.readFileSync(routeHistoryPath, "utf-8"));
+      if (Array.isArray(routes)) {
+        fs.writeFileSync(
+          routeHistoryPath,
+          JSON.stringify(routes.map((route) => ({ ...route, clientEmail: nextEmail })), null, 2)
+        );
+      }
+    } catch {
+      // Mantém o histórico original se o arquivo estiver inválido.
+    }
+  }
+}
+
 function getBotForEmail(email: string) {
   const normalizedEmail = email.toLowerCase();
   const existing = bots.get(normalizedEmail);
@@ -65,6 +151,7 @@ function getBotForEmail(email: string) {
   const userDir = path.join(dataDir, "users", getUserStorageKey(normalizedEmail));
   const userAuthDir = path.join(userDir, "auth_info");
   const userConfigPath = path.join(userDir, "config.json");
+  const userRouteStorePath = path.join(userDir, "route_history.json");
 
   if (normalizedEmail === panelEmail) {
     const legacyAuthDir = path.join(dataDir, "auth_info");
@@ -82,6 +169,9 @@ function getBotForEmail(email: string) {
   const nextBot = new BotService({
     authDir: userAuthDir,
     configPath: userConfigPath,
+    routeStorePath: userRouteStorePath,
+    clientEmail: normalizedEmail,
+    adminPhoneNumbers,
     pairingPhoneNumber: process.env.BOT_PHONE_NUMBER || "",
     autoClearInvalidSession: true
   });
@@ -148,7 +238,8 @@ function verifySessionToken(token: string): string | undefined {
     if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return undefined;
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     const email = String(parsed.email || "").toLowerCase();
-    return email && panelUsers.has(email) && Number(parsed.exp) > Date.now() ? email : undefined;
+    const user = panelUsers.get(email);
+    return email && user && !user.blocked && Number(parsed.exp) > Date.now() ? email : undefined;
   } catch {
     return undefined;
   }
@@ -163,7 +254,7 @@ function getAuthorizedEmail(request: http.IncomingMessage) {
 
   if (password) {
     for (const [email, expected] of panelUsers.entries()) {
-      if (expected === password) return email;
+      if (!expected.blocked && expected.password === password) return email;
     }
   }
 
@@ -172,10 +263,110 @@ function getAuthorizedEmail(request: http.IncomingMessage) {
 
 function requireAuth(request: http.IncomingMessage, response: http.ServerResponse) {
   const email = getAuthorizedEmail(request);
-  if (email) return email;
+  if (email) {
+    touchPanelUser(email);
+    return email;
+  }
   sendJson(response, 401, { error: "Login obrigatório." });
   return undefined;
 }
+
+function syncPanelUser(user: StoredPanelUser) {
+  panelUsers.set(user.email, createUserRecord(user.email, user.password, user.role, user));
+}
+
+function touchPanelUser(email: string) {
+  const user = panelUsers.get(email);
+  if (!user) return;
+  const nowMs = Date.now();
+  const now = new Date(nowMs).toISOString();
+  const lastSeenMs = user.lastSeenAt ? new Date(user.lastSeenAt).getTime() : 0;
+  const delta = lastSeenMs && nowMs - lastSeenMs <= 1000 * 60 * 5 ? nowMs - lastSeenMs : 0;
+  user.lastSeenAt = now;
+  user.totalUsageMs += delta;
+  panelUserStore.touch(email);
+}
+
+function getUserRole(email: string): PanelUserRole {
+  return panelUsers.get(email)?.role || "client";
+}
+
+function requireAdmin(email: string, response: http.ServerResponse) {
+  if (getUserRole(email) === "admin") return true;
+  sendJson(response, 403, { error: "Acesso de administrador obrigatório." });
+  return false;
+}
+
+function getClientEmails() {
+  return Array.from(panelUsers.entries())
+    .filter(([, user]) => user.role !== "admin")
+    .map(([email]) => email);
+}
+
+function toUserSummary(email: string, user: PanelUserRecord) {
+  return {
+    email,
+    role: user.role,
+    blocked: user.blocked,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    lastLoginAt: user.lastLoginAt,
+    lastSeenAt: user.lastSeenAt,
+    totalUsageMs: user.totalUsageMs,
+    loginCount: user.loginHistory.length
+  };
+}
+
+function getAdminUsersSnapshot(): AdminUsersSnapshot {
+  return {
+    users: Array.from(panelUsers.entries())
+      .map(([email, user]) => toUserSummary(email, user))
+      .sort((a, b) => a.email.localeCompare(b.email))
+  };
+}
+
+function getLastWhatsAppConnectionAt(logs: AdminUserDetail["logs"]) {
+  const found = [...logs].reverse().find((log) => /conectad|online|sessão carregada|bot iniciado/i.test(log.message));
+  return found?.timestamp;
+}
+
+function getAdminUserDetail(email: string): AdminUserDetail | undefined {
+  const normalizedEmail = email.trim().toLowerCase();
+  const user = panelUsers.get(normalizedEmail);
+  if (!user) return undefined;
+
+  const snapshot = getBotForEmail(normalizedEmail).getSnapshot();
+  return {
+    ...toUserSummary(normalizedEmail, user),
+    config: snapshot.config,
+    groups: snapshot.groups,
+    botStatus: snapshot.status,
+    monitoringEnabled: snapshot.monitoringEnabled,
+    monitoringMode: snapshot.monitoringMode,
+    lastWhatsAppConnectionAt: getLastWhatsAppConnectionAt(snapshot.logs),
+    logs: snapshot.logs.slice(-40).reverse(),
+    routes: snapshot.routeDispatches || [],
+    loginHistory: user.loginHistory
+  };
+}
+
+function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
+  const routes = getClientEmails()
+    .flatMap((email) => getBotForEmail(email).getRoutes())
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+  const clients = new Set(routes.map((route) => route.clientEmail).filter(Boolean));
+  return {
+    routes,
+    totals: {
+      routes: routes.length,
+      validated: routes.filter((route) => route.validated).length,
+      reactions: routes.reduce((total, route) => total + route.reactions.length, 0),
+      clients: clients.size
+    }
+  };
+}
+
 function broadcastSnapshot(email: string) {
   const snapshot = getBotForEmail(email).getSnapshot();
   const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
@@ -364,15 +555,40 @@ const server = http.createServer(async (request, response) => {
         return;
       }
       const expectedPassword = panelUsers.get(email);
-      if (!email || !expectedPassword || password !== expectedPassword) {
+      if (!email || !expectedPassword || password !== expectedPassword.password) {
         sendJson(response, 401, { error: "Email ou senha invalidos." });
         return;
       }
+      if (expectedPassword.blocked) {
+        sendJson(response, 403, { error: "Usuário bloqueado pelo administrador." });
+        return;
+      }
+
+      const ip = String(request.headers["x-forwarded-for"] || request.socket.remoteAddress || "").split(",")[0].trim();
+      const userAgent = String(request.headers["user-agent"] || "");
+      syncPanelUser(panelUserStore.upsert({
+        email,
+        password: expectedPassword.password,
+        role: expectedPassword.role,
+        blocked: expectedPassword.blocked
+      }));
+      expectedPassword.lastLoginAt = new Date().toISOString();
+      expectedPassword.lastSeenAt = expectedPassword.lastLoginAt;
+      expectedPassword.loginHistory = [
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          timestamp: expectedPassword.lastLoginAt,
+          ip,
+          userAgent
+        },
+        ...expectedPassword.loginHistory
+      ].slice(0, 100);
+      panelUserStore.recordLogin(email, ip, userAgent);
 
       sendJson(response, 200, {
         ok: true,
         token: createSessionToken(email),
-        user: { email }
+        user: { email, role: expectedPassword.role, blocked: expectedPassword.blocked }
       });
       return;
     }
@@ -382,6 +598,77 @@ const server = http.createServer(async (request, response) => {
       const email = requireAuth(request, response);
       if (!email) return;
       authorizedEmail = email;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/me") {
+      sendJson(response, 200, { email: authorizedEmail, role: getUserRole(authorizedEmail) });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/routes") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      sendJson(response, 200, getAdminRoutesSnapshot());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/users") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      sendJson(response, 200, getAdminUsersSnapshot());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname.startsWith("/api/admin/users/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const email = decodeURIComponent(url.pathname.replace("/api/admin/users/", ""));
+      const detail = getAdminUserDetail(email);
+      if (!detail) {
+        sendJson(response, 404, { error: "Usuário não encontrado." });
+        return;
+      }
+      sendJson(response, 200, detail);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/admin/users") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const body = await readJsonBody(request);
+      const user = panelUserStore.upsert({
+        email: String(body.email || ""),
+        password: String(body.password || ""),
+        role: body.role === "admin" ? "admin" : "client",
+        blocked: Boolean(body.blocked)
+      });
+      syncPanelUser(user);
+      sendJson(response, 200, getAdminUsersSnapshot());
+      return;
+    }
+
+    if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/users/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const targetEmail = decodeURIComponent(url.pathname.replace("/api/admin/users/", "")).trim().toLowerCase();
+      if (!panelUsers.has(targetEmail)) {
+        sendJson(response, 404, { error: "Usuário não encontrado." });
+        return;
+      }
+      const body = await readJsonBody(request);
+      const nextEmail = String(body.email || targetEmail).trim().toLowerCase();
+      const currentUser = panelUsers.get(targetEmail)!;
+
+      if (nextEmail !== targetEmail) {
+        await renameUserStorage(targetEmail, nextEmail);
+        panelUserStore.remove(targetEmail);
+        panelUsers.delete(targetEmail);
+      }
+
+      const user = panelUserStore.upsert({
+        email: nextEmail,
+        password: typeof body.password === "string" && body.password.trim() ? body.password : currentUser.password,
+        role: body.role === "admin" ? "admin" : "client",
+        blocked: Boolean(body.blocked)
+      });
+      syncPanelUser(user);
+      sendJson(response, 200, getAdminUsersSnapshot());
+      return;
     }
 
     const activeBot = authorizedEmail ? getBotForEmail(authorizedEmail) : undefined;

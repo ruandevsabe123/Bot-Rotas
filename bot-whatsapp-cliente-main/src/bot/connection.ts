@@ -7,7 +7,8 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { BotConfig, BotGroup, BotGroupState, BotReadinessCheck, BotSnapshot, BotStatus } from "../shared/types";
+import { RouteStore } from "./routeStore";
+import { BotConfig, BotGroup, BotGroupState, BotReadinessCheck, BotSnapshot, BotStatus, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -52,6 +53,9 @@ function loadBaileys(): Promise<void> {
 type BotServiceOptions = {
   authDir?: string;
   configPath?: string;
+  routeStorePath?: string;
+  clientEmail?: string;
+  adminPhoneNumbers?: string[];
   terminalMode?: boolean;
   initialCodes?: string[];
   pairingPhoneNumber?: string;
@@ -100,8 +104,12 @@ export class BotService extends EventEmitter {
   private warmupMessagesSent = 0;
   private warmupCompleted = false;
   private configStore: ConfigStore;
+  private routeStore: RouteStore;
   private logger: BotLogger;
   private authDir: string;
+  private clientEmail = "";
+  private adminPhoneNumbers = new Set<string>();
+  private activeRouteByCycle = new Map<number, string>();
   private autoClearInvalidSession = false;
   private clearedInvalidSessionInCurrentRun = false;
   private groupMetadataCache = new Map<string, any>();
@@ -112,7 +120,10 @@ export class BotService extends EventEmitter {
     super();
     this.authDir = options.authDir || path.resolve(process.cwd(), "auth_info");
     this.configStore = new ConfigStore(options.configPath);
+    this.routeStore = new RouteStore(options.routeStorePath || path.resolve(process.cwd(), "route_history.json"));
     this.logger = new BotLogger(() => this.emitSnapshot());
+    this.clientEmail = options.clientEmail || "";
+    this.adminPhoneNumbers = new Set((options.adminPhoneNumbers || []).map((item) => this.normalizePhone(item)).filter(Boolean));
     this.autoClearInvalidSession = Boolean(options.autoClearInvalidSession);
     this.pairingPhoneNumber = Object.prototype.hasOwnProperty.call(options, "pairingPhoneNumber")
       ? options.pairingPhoneNumber || ""
@@ -139,8 +150,13 @@ export class BotService extends EventEmitter {
       monitoringMode: this.monitoringEnabled ? this.monitoringMode : undefined,
       warmupCompleted: this.warmupCompleted,
       warmupMessagesSent: this.warmupMessagesSent,
-      warmupRequiredMessages: WARMUP_MESSAGE_COUNT
+      warmupRequiredMessages: WARMUP_MESSAGE_COUNT,
+      routeDispatches: this.getRoutes()
     };
+  }
+
+  getRoutes() {
+    return this.routeStore.all();
   }
   isMonitoringEnabled(): boolean {
     return this.monitoringEnabled;
@@ -1039,6 +1055,7 @@ export class BotService extends EventEmitter {
   }
   private handleMessages(messages: any[], connectionId: number) {
     if (connectionId !== this.activeConnectionId) return;
+    this.handleReactions(messages);
     if (!this.monitoringEnabled) return;
 
     const activeGroup = this.getActiveMonitoringGroup();
@@ -1087,6 +1104,38 @@ export class BotService extends EventEmitter {
       }
     }
   }
+
+  private handleReactions(messages: any[]) {
+    for (const msg of messages || []) {
+      const reaction = msg?.message?.reactionMessage;
+      const reactedMessageId = reaction?.key?.id;
+      if (!reaction || !reactedMessageId) continue;
+
+      const senderJid = String(msg.key?.participant || msg.key?.remoteJid || reaction.key?.participant || "");
+      const senderPhone = this.normalizePhone(senderJid);
+      const emoji = String(reaction.text || "");
+      const timestampMs = Number(reaction.senderTimestampMs || msg.messageTimestamp || Date.now());
+      const timestamp = new Date(timestampMs > 9999999999 ? timestampMs : timestampMs * 1000).toISOString();
+      const routeReaction: RouteReaction = {
+        id: `${reactedMessageId}:${senderJid}:${emoji}:${timestamp}`,
+        timestamp,
+        emoji,
+        senderJid,
+        senderPhone,
+        isAdmin: Boolean(senderPhone && this.adminPhoneNumbers.has(senderPhone))
+      };
+
+      if (this.routeStore.addReaction(String(reactedMessageId), routeReaction)) {
+        this.logger.info(
+          routeReaction.isAdmin
+            ? `Rota validada por administrador (${senderPhone}).`
+            : `Reação recebida em rota enviada (${senderPhone || "remetente desconhecido"}).`
+        );
+        this.emitSnapshot();
+      }
+    }
+  }
+
   private enviarMensagensRapidas(cycleId: number) {
     if (!this.preparedTargetJid || !this.preparedMessages.length) {
       this.prepareSendPlan();
@@ -1116,6 +1165,8 @@ export class BotService extends EventEmitter {
     }
 
     const config = this.configStore.load();
+    this.ensurePreparedRelayMessages(this.preparedTargetJid, mensagens);
+    this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens);
     const sendCycle =
       this.monitoringMode === "test"
         ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId)
@@ -1134,6 +1185,39 @@ export class BotService extends EventEmitter {
     );
   }
 
+  private ensurePreparedRelayMessages(jid: string, mensagens: string[]) {
+    if (!this.sock || !jid) return;
+    if (this.preparedRelayMessages.length === mensagens.length) return;
+    this.preparedRelayMessages = mensagens.map((mensagem) => this.buildRelayTextMessage(this.sock, jid, mensagem));
+  }
+
+  private registerRouteDispatch(cycleId: number, jid: string, mensagens: string[]) {
+    const config = this.configStore.load();
+    const route = this.routeStore.create({
+      id: `${Date.now()}-${cycleId}`,
+      clientEmail: this.clientEmail,
+      groupJid: jid,
+      groupName: this.monitoringMode === "test" ? config.grupoTesteNome || jid : config.grupoAlvoNome || jid,
+      mode: this.monitoringMode,
+      messages: mensagens,
+      sentMessageIds: this.preparedRelayMessages.map((item) => String(item?.key?.id || "")).filter(Boolean),
+      confirmedCount: 0,
+      totalCount: mensagens.length,
+      status: "sending"
+    });
+    this.activeRouteByCycle.set(cycleId, route.id);
+  }
+
+  private updateRouteDispatch(cycleId: number, confirmedCount: number, totalCount: number) {
+    const routeId = this.activeRouteByCycle.get(cycleId);
+    if (!routeId) return;
+    this.routeStore.update(routeId, {
+      confirmedCount,
+      status: confirmedCount === totalCount ? "sent" : confirmedCount > 0 ? "partial" : "failed"
+    });
+    this.emitSnapshot();
+  }
+
   private async sendFastSequence(jid: string, mensagens: string[], cycleId: number) {
     try {
       const sock = this.sock;
@@ -1149,6 +1233,7 @@ export class BotService extends EventEmitter {
         } else {
           this.logger.warning("Disparo terminou com atenção: 0/1 mensagem confirmada.");
         }
+        this.updateRouteDispatch(cycleId, sent ? 1 : 0, 1);
         return;
       }
 
@@ -1189,8 +1274,10 @@ export class BotService extends EventEmitter {
       } else {
         this.logger.warning(`Disparo terminou com atenção: ${confirmed}/${mensagens.length} mensagens confirmadas.`);
       }
+      this.updateRouteDispatch(cycleId, confirmed, mensagens.length);
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo turbo: ${this.getErrorMessage(error)}`);
+      this.updateRouteDispatch(cycleId, 0, mensagens.length);
     }
   }
 
@@ -1250,9 +1337,11 @@ export class BotService extends EventEmitter {
         this.logger.warning(`Disparo instantâneo terminou com atenção em ${Date.now() - startedAt}ms: ${confirmed}/${mensagens.length}.`);
       }
 
+      this.updateRouteDispatch(cycleId, confirmed, mensagens.length);
       this.emitSnapshot();
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo agressivo: ${this.getErrorMessage(error)}`);
+      this.updateRouteDispatch(cycleId, 0, mensagens.length);
     }
   }
 
@@ -1744,5 +1833,8 @@ export class BotService extends EventEmitter {
     if (error instanceof Error) return error.message;
     return String(error);
   }
-}
 
+  private normalizePhone(value: string) {
+    return String(value || "").split("@")[0].split(":")[0].replace(/\D/g, "");
+  }
+}

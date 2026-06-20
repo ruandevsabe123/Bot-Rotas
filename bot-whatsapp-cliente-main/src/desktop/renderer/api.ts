@@ -1,7 +1,12 @@
 import {
+  AdminRoutesSnapshot,
+  AdminUserDetail,
+  AdminUsersSnapshot,
   BotSnapshot,
   DesktopApi,
   GeneralSettingsPayload,
+  PanelUser,
+  PanelUserRole,
   SaveCodesPayload,
   SaveGroupPayload,
   SaveMessageSettingsPayload,
@@ -10,7 +15,13 @@ import {
   StartBotPayload
 } from "../../shared/types";
 
-const AUTH_ERROR_MESSAGES = ["Senha do painel obrigatória.", "Login obrigatório.", "Email ou senha inválidos."];
+const AUTH_ERROR_MESSAGES = [
+  "Senha do painel obrigatória.",
+  "Login obrigatório.",
+  "Email ou senha inválidos.",
+  "Email ou senha invalidos.",
+  "Usuário bloqueado pelo administrador."
+];
 
 export function getPanelPassword() {
   return window.localStorage.getItem("panelPassword") || "";
@@ -48,19 +59,68 @@ export function setPanelUserEmail(email: string) {
   }
 }
 
+export function getPanelUserRole(): PanelUserRole {
+  return window.localStorage.getItem("panelUserRole") === "admin" ? "admin" : "client";
+}
+
+export function setPanelUserRole(role: PanelUserRole | "") {
+  if (role) {
+    window.localStorage.setItem("panelUserRole", role);
+  } else {
+    window.localStorage.removeItem("panelUserRole");
+  }
+}
+
 export function isAuthError(error: unknown) {
   return error instanceof Error && AUTH_ERROR_MESSAGES.includes(error.message);
 }
 
 export async function panelLogin(email: string, password: string) {
-  const response = await fetchJson<{ token: string; user: { email: string } }>("/api/login", {
+  const response = await fetchJson<{ token: string; user: PanelUser }>("/api/login", {
     method: "POST",
     body: JSON.stringify({ email, password })
   });
   setPanelToken(response.token);
   setPanelUserEmail(response.user.email);
+  setPanelUserRole(response.user.role);
   setPanelPassword("");
   return response.user;
+}
+
+export async function getPanelMe() {
+  const user = await fetchJson<PanelUser>("/api/me");
+  setPanelUserEmail(user.email);
+  setPanelUserRole(user.role);
+  return user;
+}
+
+export function getAdminRoutes() {
+  return fetchJson<AdminRoutesSnapshot>("/api/admin/routes");
+}
+
+export function getAdminUsers() {
+  return fetchJson<AdminUsersSnapshot>("/api/admin/users");
+}
+
+export function getAdminUserDetail(email: string) {
+  return fetchJson<AdminUserDetail>(`/api/admin/users/${encodeURIComponent(email)}`);
+}
+
+export function saveAdminUser(payload: {
+  originalEmail?: string;
+  email: string;
+  password?: string;
+  role: PanelUserRole;
+  blocked: boolean;
+}) {
+  const isEdit = Boolean(payload.originalEmail);
+  return fetchJson<AdminUsersSnapshot>(
+    isEdit ? `/api/admin/users/${encodeURIComponent(payload.originalEmail || "")}` : "/api/admin/users",
+    {
+      method: isEdit ? "PATCH" : "POST",
+      body: JSON.stringify(payload)
+    }
+  );
 }
 
 async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {

@@ -1,0 +1,152 @@
+import fs from "fs";
+import path from "path";
+import { LoginEvent, PanelUserRole } from "./shared/types";
+
+export type StoredPanelUser = {
+  email: string;
+  password: string;
+  role: PanelUserRole;
+  blocked: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt?: string;
+  lastSeenAt?: string;
+  totalUsageMs: number;
+  loginHistory: LoginEvent[];
+};
+
+const MAX_LOGIN_HISTORY = 100;
+const MAX_USAGE_GAP_MS = 1000 * 60 * 5;
+
+export class PanelUserStore {
+  constructor(private readonly filePath: string) {}
+
+  all() {
+    return this.load();
+  }
+
+  upsert(input: {
+    email: string;
+    password?: string;
+    role?: PanelUserRole;
+    blocked?: boolean;
+  }) {
+    const email = input.email.trim().toLowerCase();
+    if (!email) throw new Error("Email obrigatório.");
+
+    const now = new Date().toISOString();
+    const users = this.load();
+    const existing = users.find((user) => user.email === email);
+    if (existing) {
+      if (input.password !== undefined && input.password.trim()) existing.password = input.password;
+      if (input.role) existing.role = input.role;
+      if (input.blocked !== undefined) existing.blocked = input.blocked;
+      existing.updatedAt = now;
+      this.save(users);
+      return existing;
+    }
+
+    if (!input.password?.trim()) throw new Error("Senha obrigatória para novo usuário.");
+
+    const user: StoredPanelUser = {
+      email,
+      password: input.password,
+      role: input.role || "client",
+      blocked: Boolean(input.blocked),
+      createdAt: now,
+      updatedAt: now,
+      totalUsageMs: 0,
+      loginHistory: []
+    };
+    this.save([...users, user]);
+    return user;
+  }
+
+  remove(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    this.save(this.load().filter((user) => user.email !== normalizedEmail));
+  }
+
+  recordLogin(email: string, ip: string, userAgent: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const now = new Date().toISOString();
+    this.save(
+      this.load().map((user) => {
+        if (user.email !== normalizedEmail) return user;
+        return {
+          ...user,
+          lastLoginAt: now,
+          lastSeenAt: now,
+          loginHistory: [
+            {
+              id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              timestamp: now,
+              ip,
+              userAgent
+            },
+            ...user.loginHistory
+          ].slice(0, MAX_LOGIN_HISTORY),
+          updatedAt: now
+        };
+      })
+    );
+  }
+
+  touch(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const nowMs = Date.now();
+    const now = new Date(nowMs).toISOString();
+    this.save(
+      this.load().map((user) => {
+        if (user.email !== normalizedEmail) return user;
+        const lastSeenMs = user.lastSeenAt ? new Date(user.lastSeenAt).getTime() : 0;
+        const delta = lastSeenMs && nowMs - lastSeenMs <= MAX_USAGE_GAP_MS ? nowMs - lastSeenMs : 0;
+        return {
+          ...user,
+          lastSeenAt: now,
+          totalUsageMs: user.totalUsageMs + delta
+        };
+      })
+    );
+  }
+
+  private load(): StoredPanelUser[] {
+    if (!fs.existsSync(this.filePath)) return [];
+
+    try {
+      const data = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
+      return Array.isArray(data) ? data.map((item) => this.normalize(item)).filter(Boolean) as StoredPanelUser[] : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private save(users: StoredPanelUser[]) {
+    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
+    fs.writeFileSync(this.filePath, JSON.stringify(users, null, 2));
+  }
+
+  private normalize(input: any): StoredPanelUser | undefined {
+    if (!input || typeof input.email !== "string" || typeof input.password !== "string") return undefined;
+    const now = new Date().toISOString();
+    return {
+      email: input.email.trim().toLowerCase(),
+      password: input.password,
+      role: input.role === "admin" ? "admin" : "client",
+      blocked: Boolean(input.blocked),
+      createdAt: typeof input.createdAt === "string" ? input.createdAt : now,
+      updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : now,
+      lastLoginAt: typeof input.lastLoginAt === "string" ? input.lastLoginAt : undefined,
+      lastSeenAt: typeof input.lastSeenAt === "string" ? input.lastSeenAt : undefined,
+      totalUsageMs: Number(input.totalUsageMs || 0),
+      loginHistory: Array.isArray(input.loginHistory)
+        ? input.loginHistory.map((event: any) => ({
+            id: typeof event.id === "string" ? event.id : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            timestamp: typeof event.timestamp === "string" ? event.timestamp : now,
+            ip: typeof event.ip === "string" ? event.ip : "",
+            userAgent: typeof event.userAgent === "string" ? event.userAgent : ""
+          })).slice(0, MAX_LOGIN_HISTORY)
+        : []
+    };
+  }
+}

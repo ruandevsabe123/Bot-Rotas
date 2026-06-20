@@ -57,6 +57,88 @@ export type BotSnapshot = {
   warmupCompleted?: boolean;
   warmupMessagesSent?: number;
   warmupRequiredMessages?: number;
+  routeDispatches?: RouteDispatch[];
+};
+
+export type PanelUserRole = "client" | "admin";
+
+export type PanelUser = {
+  email: string;
+  role: PanelUserRole;
+  blocked?: boolean;
+};
+
+export type LoginEvent = {
+  id: string;
+  timestamp: string;
+  ip: string;
+  userAgent: string;
+};
+
+export type AdminUserSummary = {
+  email: string;
+  role: PanelUserRole;
+  blocked: boolean;
+  createdAt: string;
+  updatedAt: string;
+  lastLoginAt?: string;
+  lastSeenAt?: string;
+  totalUsageMs: number;
+  loginCount: number;
+};
+
+export type AdminUserDetail = AdminUserSummary & {
+  config: BotConfig;
+  groups: BotGroup[];
+  botStatus: BotStatus;
+  monitoringEnabled?: boolean;
+  monitoringMode?: "target" | "test";
+  lastWhatsAppConnectionAt?: string;
+  logs: BotLog[];
+  routes: RouteDispatch[];
+  loginHistory: LoginEvent[];
+};
+
+export type AdminUsersSnapshot = {
+  users: AdminUserSummary[];
+};
+
+export type RouteReaction = {
+  id: string;
+  timestamp: string;
+  emoji: string;
+  senderJid: string;
+  senderPhone: string;
+  isAdmin: boolean;
+};
+
+export type RouteDispatch = {
+  id: string;
+  clientEmail: string;
+  groupJid: string;
+  groupName: string;
+  mode: "target" | "test";
+  messages: string[];
+  sentMessageIds: string[];
+  confirmedCount: number;
+  totalCount: number;
+  status: "sending" | "sent" | "partial" | "failed";
+  createdAt: string;
+  updatedAt: string;
+  validated: boolean;
+  validatedAt?: string;
+  validatedBy?: string;
+  reactions: RouteReaction[];
+};
+
+export type AdminRoutesSnapshot = {
+  routes: RouteDispatch[];
+  totals: {
+    routes: number;
+    validated: number;
+    reactions: number;
+    clients: number;
+  };
 };
 
 export type SaveGroupPayload = {

@@ -1,29 +1,53 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  Ban,
   Bot,
   Clock3,
+  Edit3,
   Flame,
   Gauge,
   Home,
+  Info,
   LockKeyhole,
   Mail,
   MessageSquareText,
   RefreshCw,
+  Route,
+  Save,
+  Shield,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
   TestTube2,
+  UserPlus,
+  Users,
   X,
   Zap
 } from "lucide-react";
-import { BotSnapshot } from "../../shared/types";
+import { AdminRoutesSnapshot, AdminUserDetail, AdminUserSummary, AdminUsersSnapshot, BotSnapshot, PanelUserRole, RouteDispatch } from "../../shared/types";
 import { ControlButtons } from "./components/ControlButtons";
 import { GroupMessageCard } from "./components/GroupMessageCard";
 import { LogsPanel } from "./components/LogsPanel";
 import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { botApi, getPanelToken, getPanelUserEmail, isAuthError, panelLogin, setPanelPassword, setPanelToken, setPanelUserEmail } from "./api";
+import {
+  botApi,
+  getAdminRoutes,
+  getAdminUserDetail,
+  getAdminUsers,
+  getPanelMe,
+  getPanelToken,
+  getPanelUserEmail,
+  getPanelUserRole,
+  isAuthError,
+  panelLogin,
+  saveAdminUser,
+  setPanelPassword,
+  setPanelToken,
+  setPanelUserEmail,
+  setPanelUserRole
+} from "./api";
 import "./styles.css";
 
 type PendingConfirmation = {
@@ -188,6 +212,19 @@ function countConfirmedMessages(logs: BotSnapshot["logs"]) {
   return logs.filter((log) => /Mensagem (alvo )?\d+ .*?(confirmada|enviada)/i.test(log.message)).length;
 }
 
+function formatDate(value?: string) {
+  return value ? new Date(value).toLocaleString("pt-BR") : "Sem registro";
+}
+
+function formatDuration(ms: number) {
+  const totalMinutes = Math.floor(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours && minutes) return `${hours}h ${minutes}min`;
+  if (hours) return `${hours}h`;
+  return `${minutes}min`;
+}
+
 function CockpitCard({
   title,
   value,
@@ -240,6 +277,356 @@ function CockpitPanel({
   );
 }
 
+function AdminMetric({ title, value, detail }: { title: string; value: string | number; detail: string }) {
+  return (
+    <article className="admin-metric">
+      <span>{title}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </article>
+  );
+}
+
+function RouteRow({ route }: { route: RouteDispatch }) {
+  const createdAt = new Date(route.createdAt).toLocaleString("pt-BR");
+  const lastReaction = route.reactions[0];
+
+  return (
+    <article className={route.validated ? "route-row validated" : "route-row"}>
+      <div className="route-row-main">
+        <div>
+          <p className="panel-label">{route.clientEmail || "Cliente"}</p>
+          <h2>{route.groupName || route.groupJid || "Grupo sem nome"}</h2>
+        </div>
+        <span className={route.validated ? "route-status ok" : "route-status"}>{route.validated ? "Validada" : "Pendente"}</span>
+      </div>
+      <div className="route-meta">
+        <span>{createdAt}</span>
+        <span>{route.confirmedCount}/{route.totalCount} enviadas</span>
+        <span>{route.reactions.length} reações</span>
+      </div>
+      <div className="route-messages">
+        {route.messages.map((message, index) => (
+          <span key={`${route.id}-${message}-${index}`}>{message}</span>
+        ))}
+      </div>
+      {lastReaction ? (
+        <div className="reaction-line">
+          <b>{lastReaction.emoji || "Reação"}</b>
+          <span>{lastReaction.senderPhone || "sem telefone"}{lastReaction.isAdmin ? " · admin" : ""}</span>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+type UserEditorState = {
+  originalEmail?: string;
+  email: string;
+  password: string;
+  role: PanelUserRole;
+  blocked: boolean;
+};
+
+const emptyUserEditor: UserEditorState = {
+  email: "",
+  password: "",
+  role: "client",
+  blocked: false
+};
+
+function UserEditor({
+  value,
+  onChange,
+  onSave,
+  onCancel,
+  busy
+}: {
+  value: UserEditorState;
+  onChange: (value: UserEditorState) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  busy: boolean;
+}) {
+  return (
+    <section className="user-editor">
+      <div className="login-field">
+        <Mail size={18} />
+        <input
+          autoComplete="off"
+          placeholder="Email"
+          type="email"
+          value={value.email}
+          onChange={(event) => onChange({ ...value, email: event.target.value })}
+        />
+      </div>
+      <div className="login-field">
+        <LockKeyhole size={18} />
+        <input
+          autoComplete="new-password"
+          placeholder={value.originalEmail ? "Nova senha opcional" : "Senha"}
+          type="password"
+          value={value.password}
+          onChange={(event) => onChange({ ...value, password: event.target.value })}
+        />
+      </div>
+      <select value={value.role} onChange={(event) => onChange({ ...value, role: event.target.value === "admin" ? "admin" : "client" })}>
+        <option value="client">Cliente</option>
+        <option value="admin">Admin</option>
+      </select>
+      <label className="toggle-row">
+        <input type="checkbox" checked={value.blocked} onChange={(event) => onChange({ ...value, blocked: event.target.checked })} />
+        Bloqueado
+      </label>
+      <div className="user-editor-actions">
+        <button className="button" type="button" onClick={onCancel}>
+          <X size={18} />
+          Cancelar
+        </button>
+        <button className="button primary" disabled={busy || !value.email.trim() || (!value.originalEmail && !value.password.trim())} type="button" onClick={onSave}>
+          <Save size={18} />
+          Salvar
+        </button>
+      </div>
+    </section>
+  );
+}
+
+function AdminUserRow({
+  user,
+  onEdit,
+  onToggleBlock,
+  onDetails
+}: {
+  user: AdminUserSummary;
+  onEdit: () => void;
+  onToggleBlock: () => void;
+  onDetails: () => void;
+}) {
+  return (
+    <article className={user.blocked ? "user-row blocked" : "user-row"}>
+      <div>
+        <p className="panel-label">{user.role === "admin" ? "Admin" : "Cliente"}</p>
+        <h2>{user.email}</h2>
+        <div className="route-meta">
+          <span>Último login: {formatDate(user.lastLoginAt)}</span>
+          <span>Uso: {formatDuration(user.totalUsageMs)}</span>
+          <span>{user.loginCount} login(s)</span>
+        </div>
+      </div>
+      <div className="user-row-actions">
+        <button className="icon-button" title="Mais especificações" type="button" onClick={onDetails}>
+          <Info size={19} />
+        </button>
+        <button className="icon-button" title="Editar usuário" type="button" onClick={onEdit}>
+          <Edit3 size={19} />
+        </button>
+        <button className={user.blocked ? "icon-button active-danger" : "icon-button"} title={user.blocked ? "Desbloquear" : "Bloquear"} type="button" onClick={onToggleBlock}>
+          <Ban size={19} />
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="sheet-dialog user-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="user-detail-title">
+        <div className="sheet-heading">
+          <div>
+            <p className="panel-label">Especificações</p>
+            <h2 id="user-detail-title">{detail.email}</h2>
+          </div>
+          <button className="icon-button" title="Fechar" type="button" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
+
+        <section className="detail-grid">
+          <AdminMetric title="Uso" value={formatDuration(detail.totalUsageMs)} detail={`${detail.loginCount} login(s)`} />
+          <AdminMetric title="Bot" value={detail.botStatus} detail={detail.monitoringEnabled ? "monitorando" : "parado"} />
+          <AdminMetric title="Zap" value={formatDate(detail.lastWhatsAppConnectionAt)} detail="última conexão detectada" />
+          <AdminMetric title="Rotas" value={detail.routes.length} detail="histórico salvo" />
+        </section>
+
+        <section className="detail-section">
+          <p className="panel-label">Configuração do usuário</p>
+          <div className="detail-list">
+            <span>Nome configurado: <b>{detail.config.nomeEnvio || "Não configurado"}</b></span>
+            <span>Grupo alvo: <b>{detail.config.grupoAlvoNome || detail.config.grupoAlvoJid || "Não configurado"}</b></span>
+            <span>Grupo teste: <b>{detail.config.grupoTesteNome || detail.config.grupoTesteJid || "Não configurado"}</b></span>
+            <span>Mensagens alvo: <b>{(detail.config.codigosMensagensAlvo || []).join(", ") || "Nenhuma"}</b></span>
+            <span>Mensagens teste: <b>{(detail.config.codigosMensagensTeste || []).join(", ") || "Nenhuma"}</b></span>
+          </div>
+        </section>
+
+        <section className="detail-section">
+          <p className="panel-label">Histórico de login</p>
+          <div className="detail-list">
+            {detail.loginHistory.length ? detail.loginHistory.slice(0, 8).map((event) => (
+              <span key={event.id}>{formatDate(event.timestamp)} · {event.ip || "IP não identificado"}</span>
+            )) : <span>Nenhum login registrado.</span>}
+          </div>
+        </section>
+
+        <section className="detail-section">
+          <p className="panel-label">Últimos logs do bot</p>
+          <div className="detail-list">
+            {detail.logs.length ? detail.logs.slice(0, 8).map((log) => (
+              <span key={log.id}>{formatDate(log.timestamp)} · {log.message}</span>
+            )) : <span>Nenhum log registrado.</span>}
+          </div>
+        </section>
+      </section>
+    </div>
+  );
+}
+
+function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: () => void }) {
+  const [dashboard, setDashboard] = useState<AdminRoutesSnapshot>({
+    routes: [],
+    totals: { routes: 0, validated: 0, reactions: 0, clients: 0 }
+  });
+  const [usersDashboard, setUsersDashboard] = useState<AdminUsersSnapshot>({ users: [] });
+  const [editor, setEditor] = useState<UserEditorState>();
+  const [detail, setDetail] = useState<AdminUserDetail>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  function refresh() {
+    Promise.all([getAdminRoutes(), getAdminUsers()])
+      .then(([nextRoutes, nextUsers]) => {
+        setDashboard(nextRoutes);
+        setUsersDashboard(nextUsers);
+        setError("");
+      })
+      .catch((nextError) => {
+        if (isAuthError(nextError)) {
+          onLogout();
+          return;
+        }
+        setError(nextError instanceof Error ? nextError.message : "Falha ao carregar monitoramento.");
+      });
+  }
+
+  useEffect(() => {
+    refresh();
+    const interval = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  async function saveUser(nextEditor = editor) {
+    if (!nextEditor) return;
+    setBusy(true);
+    try {
+      const nextUsers = await saveAdminUser(nextEditor);
+      setUsersDashboard(nextUsers);
+      setEditor(undefined);
+      setError("");
+    } catch (nextError) {
+      if (isAuthError(nextError)) {
+        onLogout();
+        return;
+      }
+      setError(nextError instanceof Error ? nextError.message : "Não consegui salvar usuário.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function openDetails(email: string) {
+    try {
+      setDetail(await getAdminUserDetail(email));
+      setError("");
+    } catch (nextError) {
+      if (isAuthError(nextError)) {
+        onLogout();
+        return;
+      }
+      setError(nextError instanceof Error ? nextError.message : "Não consegui abrir especificações.");
+    }
+  }
+
+  return (
+    <main className="app-shell admin-shell">
+      <section className="topbar app-topbar">
+        <div>
+          <p className="eyebrow">Monitoramento admin</p>
+          <h1>Rotas</h1>
+        </div>
+        <div className="group-pill">
+          <span>Administrador</span>
+          <strong>{userEmail}</strong>
+        </div>
+      </section>
+
+      <section className="admin-grid">
+        <AdminMetric title="Rotas" value={dashboard.totals.routes} detail="disparos registrados" />
+        <AdminMetric title="Validadas" value={dashboard.totals.validated} detail="por reação admin" />
+        <AdminMetric title="Reações" value={dashboard.totals.reactions} detail="recebidas no WhatsApp" />
+        <AdminMetric title="Usuários" value={usersDashboard.users.length} detail={`${dashboard.totals.clients} com rotas`} />
+      </section>
+
+      <section className="quick-panel admin-list-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="panel-label">Acessos</p>
+            <h2>Usuários do painel</h2>
+          </div>
+          <button className="button primary" type="button" onClick={() => setEditor(emptyUserEditor)}>
+            <UserPlus size={18} />
+            Adicionar
+          </button>
+        </div>
+        {editor ? (
+          <UserEditor
+            value={editor}
+            onChange={setEditor}
+            onCancel={() => setEditor(undefined)}
+            onSave={() => saveUser()}
+            busy={busy}
+          />
+        ) : null}
+        <div className="user-list">
+          {usersDashboard.users.map((user) => (
+            <AdminUserRow
+              key={user.email}
+              user={user}
+              onDetails={() => openDetails(user.email)}
+              onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked })}
+              onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked })}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="quick-panel admin-list-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="panel-label">Histórico</p>
+            <h2>Rotas enviadas pelos clientes</h2>
+          </div>
+          <button className="button" type="button" onClick={onLogout}>
+            <Route size={18} />
+            Sair
+          </button>
+        </div>
+        {error ? <p className="login-error">{error}</p> : null}
+        <div className="route-list">
+          {dashboard.routes.length ? (
+            dashboard.routes.map((route) => <RouteRow key={route.id} route={route} />)
+          ) : (
+            <p className="qr-empty">Nenhuma rota enviada ainda.</p>
+          )}
+        </div>
+      </section>
+
+      {detail ? <UserDetailModal detail={detail} onClose={() => setDetail(undefined)} /> : null}
+    </main>
+  );
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<BotSnapshot>(emptySnapshot);
   const [busy, setBusy] = useState(false);
@@ -248,13 +635,55 @@ export default function App() {
   const [groupEditor, setGroupEditor] = useState<GroupEditor>();
   const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelToken()));
   const [userEmail, setUserEmail] = useState(getPanelUserEmail());
+  const [userRole, setUserRole] = useState<PanelUserRole>(getPanelUserRole());
+  const [sessionChecked, setSessionChecked] = useState(Boolean(window.botApi || !getPanelToken()));
   const [loginError, setLoginError] = useState("");
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
   const nuclearArmed = Boolean(snapshot.monitoringEnabled && snapshot.monitoringMode === "target" && snapshot.config.nuclearMode);
 
+  function logout(message = "") {
+    setPanelToken("");
+    setPanelUserEmail("");
+    setPanelUserRole("");
+    setPanelPassword("");
+    setUserEmail("");
+    setUserRole("client");
+    setAuthenticated(false);
+    setSessionChecked(true);
+    if (message) setLoginError(message);
+  }
+
+  useEffect(() => {
+    if (!authenticated || window.botApi) return;
+
+    let mounted = true;
+    getPanelMe()
+      .then((user) => {
+        if (!mounted) return;
+        setUserEmail(user.email);
+        setUserRole(user.role);
+        setSessionChecked(true);
+        setLoginError("");
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        if (isAuthError(error)) {
+          logout("Faça login novamente.");
+          return;
+        }
+        setSessionChecked(true);
+        setLoginError(error instanceof Error ? error.message : "Falha ao validar sessão.");
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [authenticated]);
+
   useEffect(() => {
     if (!authenticated) return;
+    if (userRole === "admin") return;
 
     let mounted = true;
     botApi
@@ -270,7 +699,9 @@ export default function App() {
         if (isAuthError(error)) {
           setPanelToken("");
           setPanelUserEmail("");
+          setPanelUserRole("");
           setUserEmail("");
+          setUserRole("client");
           setAuthenticated(false);
           setLoginError("Faça login para continuar.");
           return;
@@ -286,7 +717,7 @@ export default function App() {
       mounted = false;
       unsubscribe();
     };
-  }, [authenticated]);
+  }, [authenticated, userRole]);
 
   const groupLabel = useMemo(() => {
     return snapshot.config.grupoAlvoNome || "Nenhum grupo alvo";
@@ -338,7 +769,9 @@ export default function App() {
       if (isAuthError(error)) {
         setPanelToken("");
         setPanelUserEmail("");
+        setPanelUserRole("");
         setUserEmail("");
+        setUserRole("client");
         setPanelPassword("");
         setAuthenticated(false);
         setLoginError("Entre novamente para continuar.");
@@ -507,16 +940,32 @@ export default function App() {
     try {
       const user = await panelLogin(email, password);
       setUserEmail(user.email);
+      setUserRole(user.role);
+      setSessionChecked(true);
       setAuthenticated(true);
       setLoginError("");
     } catch (error) {
       setPanelToken("");
+      setPanelUserRole("");
       setLoginError(error instanceof Error ? error.message : "Não consegui fazer login.");
     }
   }
 
   if (!authenticated) {
     return <LoginScreen error={loginError} onSubmit={login} />;
+  }
+
+  if (!sessionChecked) {
+    return <LoginScreen error="Validando sessão..." onSubmit={login} />;
+  }
+
+  if (userRole === "admin") {
+    return (
+      <AdminDashboard
+        userEmail={userEmail}
+        onLogout={() => logout("Entre novamente para continuar.")}
+      />
+    );
   }
 
   return (
@@ -639,10 +1088,7 @@ export default function App() {
             onFactoryReset={confirmFactoryReset}
             onToggleNuclearMode={saveGeneralSettings}
             onLogout={() => {
-              setPanelToken("");
-              setPanelUserEmail("");
-              setUserEmail("");
-              setAuthenticated(false);
+              logout();
             }}
           />
         </section>
