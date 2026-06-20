@@ -1,17 +1,24 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  BarChart3,
   Bot,
+  CheckCircle2,
+  Clock3,
   Flame,
+  Gauge,
   Home,
   LockKeyhole,
   Mail,
   MessageSquareText,
+  Power,
   RefreshCw,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   TestTube2,
-  X
+  X,
+  Zap
 } from "lucide-react";
 import { BotSnapshot } from "../../shared/types";
 import { ControlButtons } from "./components/ControlButtons";
@@ -31,7 +38,7 @@ type PendingConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-type AppTab = "home" | "messages" | "logs" | "settings";
+type AppTab = "home" | "usage" | "messages" | "logs" | "settings";
 type GroupEditor = "target" | "test" | undefined;
 
 const emptySnapshot: BotSnapshot = {
@@ -54,7 +61,8 @@ const emptySnapshot: BotSnapshot = {
 };
 
 const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
-  { id: "home", label: "Início", Icon: Home },
+  { id: "home", label: "Inicio", Icon: Home },
+  { id: "usage", label: "Uso", Icon: BarChart3 },
   { id: "messages", label: "Mensagens", Icon: MessageSquareText },
   { id: "logs", label: "Logs", Icon: Activity },
   { id: "settings", label: "Ajustes", Icon: Settings }
@@ -173,6 +181,123 @@ function ConfigStrip({
       <span className="strip-count">{codes.length}</span>
       <SlidersHorizontal size={20} />
     </button>
+  );
+}
+
+function countMatching(logs: BotSnapshot["logs"], terms: string[]) {
+  return logs.filter((log) => {
+    const message = log.message.toLowerCase();
+    return terms.some((term) => message.includes(term));
+  }).length;
+}
+
+function getUsageMetrics(snapshot: BotSnapshot) {
+  const logs = snapshot.logs;
+  const routeOpenings = countMatching(logs, ["abriu", "palavra de abertura detectada"]);
+  const completedBursts = countMatching(logs, ["disparo conclu", "disparo instantaneo conclu", "disparo instant"]);
+  const confirmedMessages = countMatching(logs, ["mensagem alvo", "mensagem 1 confirmada", "mensagem 2 confirmada"]);
+  const reactionSignals = countMatching(logs, ["reacao", "reagiu", "reaction"]);
+  const lastBillableLog = [...logs]
+    .reverse()
+    .find((log) => /disparo|mensagem alvo|abriu|palavra de abertura/i.test(log.message));
+
+  return {
+    routeOpenings,
+    completedBursts,
+    confirmedMessages,
+    reactionSignals,
+    estimatedBillableRoutes: completedBursts || routeOpenings,
+    lastBillableAt: lastBillableLog ? new Date(lastBillableLog.timestamp).toLocaleString("pt-BR") : "Sem uso registrado"
+  };
+}
+
+function MetricCard({
+  label,
+  value,
+  helper,
+  tone,
+  Icon
+}: {
+  label: string;
+  value: string | number;
+  helper: string;
+  tone: "green" | "blue" | "amber" | "red";
+  Icon: typeof Home;
+}) {
+  return (
+    <article className={`metric-card metric-${tone}`}>
+      <span className="metric-icon">
+        <Icon size={20} />
+      </span>
+      <div>
+        <p>{label}</p>
+        <strong>{value}</strong>
+        <small>{helper}</small>
+      </div>
+    </article>
+  );
+}
+
+function UsagePanel({ snapshot }: { snapshot: BotSnapshot }) {
+  const metrics = getUsageMetrics(snapshot);
+  const usageRows = [
+    {
+      title: "Contagem atual",
+      value: metrics.estimatedBillableRoutes,
+      copy: "Estimativa baseada em abertura detectada e disparo concluido nos logs."
+    },
+    {
+      title: "Regra ideal de cobranca",
+      value: "Reacao da lideranca",
+      copy: "Cobrar quando uma mensagem do cliente receber reacao de admin ou lider do grupo."
+    },
+    {
+      title: "Proximo passo tecnico",
+      value: "messages.reaction",
+      copy: "O Baileys expoe evento de reacao; da para validar quem reagiu contra a lista de admins do grupo."
+    }
+  ];
+
+  return (
+    <section className="usage-view">
+      <div className="usage-hero">
+        <div>
+          <p className="eyebrow">Monitoramento de consumo</p>
+          <h2>Rotas usadas pelo cliente</h2>
+          <p>
+            Hoje este painel estima uso pelos disparos registrados. Para faturar fino, o melhor contador e gravar cada
+            rota quando a lideranca reagir na mensagem do cliente.
+          </p>
+        </div>
+        <strong>{metrics.estimatedBillableRoutes}</strong>
+      </div>
+
+      <div className="metrics-grid">
+        <MetricCard Icon={Zap} tone="green" label="Rotas estimadas" value={metrics.estimatedBillableRoutes} helper="base para conferir agora" />
+        <MetricCard Icon={CheckCircle2} tone="blue" label="Mensagens confirmadas" value={metrics.confirmedMessages} helper="envios aceitos pelo WhatsApp" />
+        <MetricCard Icon={Clock3} tone="amber" label="Aberturas detectadas" value={metrics.routeOpenings} helper="grupo abriu ou palavra-chave" />
+        <MetricCard Icon={ShieldCheck} tone="red" label="Reacoes capturadas" value={metrics.reactionSignals} helper="pronto para virar contador real" />
+      </div>
+
+      <section className="billing-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="panel-label">Cobranca</p>
+            <h2>Como eu faria</h2>
+          </div>
+          <span className="mini-status">{metrics.lastBillableAt}</span>
+        </div>
+        <div className="usage-list">
+          {usageRows.map((row) => (
+            <article className="usage-row" key={row.title}>
+              <span>{row.title}</span>
+              <strong>{row.value}</strong>
+              <p>{row.copy}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+    </section>
   );
 }
 
@@ -413,7 +538,7 @@ export default function App() {
     <main className="app-shell">
       <section className="topbar app-topbar">
         <div>
-          <p className="eyebrow">Painel mobile</p>
+          <p className="eyebrow">Central operacional</p>
           <h1>Bot Rotas</h1>
         </div>
         <div className="group-pill">
@@ -424,6 +549,38 @@ export default function App() {
 
       {activeTab === "home" ? (
         <section className="mobile-home">
+          <section className="command-hero">
+            <div>
+              <p className="eyebrow">Pronto para pegar rota</p>
+              <h2>{snapshot.monitoringEnabled ? "Bot armado no grupo" : "Conecte e arme o bot"}</h2>
+              <p>
+                {snapshot.monitoringEnabled
+                  ? "Monitorando abertura em tempo real."
+                  : "Use os controles para conectar o WhatsApp e iniciar o monitoramento."}
+              </p>
+            </div>
+            <span className={snapshot.monitoringEnabled ? "hero-pulse active" : "hero-pulse"}>
+              <Power size={24} />
+            </span>
+          </section>
+
+          <div className="metrics-grid home-metrics">
+            <MetricCard
+              Icon={Gauge}
+              tone="green"
+              label="Estado"
+              value={snapshot.status === "connected" ? "Online" : "Off"}
+              helper={snapshot.groupState === "closed" ? "grupo fechado" : snapshot.groupState === "open" ? "grupo aberto" : "validando grupo"}
+            />
+            <MetricCard
+              Icon={BarChart3}
+              tone="blue"
+              label="Rotas estimadas"
+              value={getUsageMetrics(snapshot).estimatedBillableRoutes}
+              helper="pelos logs atuais"
+            />
+          </div>
+
           <StatusCard
             status={snapshot.status}
             error={snapshot.error}
@@ -465,6 +622,8 @@ export default function App() {
           </section>
         </section>
       ) : null}
+
+      {activeTab === "usage" ? <UsagePanel snapshot={snapshot} /> : null}
 
       {activeTab === "messages" ? (
         <section className="mobile-home">
@@ -609,3 +768,4 @@ export default function App() {
     </main>
   );
 }
+

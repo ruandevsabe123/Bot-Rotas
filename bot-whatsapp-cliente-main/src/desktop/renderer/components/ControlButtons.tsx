@@ -1,3 +1,4 @@
+import { LogOut, Play, QrCode, RefreshCw, RotateCcw, Square, TestTube2 } from "lucide-react";
 import { BotStatus } from "../../../shared/types";
 
 type Props = {
@@ -45,27 +46,36 @@ export function ControlButtons({
       <p className="panel-label">Controles</p>
       <div className="button-grid">
         <button className="button primary wide-button" disabled={!canConnect} onClick={onStart}>
+          <QrCode size={18} />
           Conectar WhatsApp
         </button>
         <button className="button" disabled={!canStartMonitoring} onClick={onStartMonitoring}>
+          <Play size={18} />
           Iniciar bot
         </button>
         <button className="button" disabled={!canStartMonitoring} onClick={onStartTestMonitoring}>
+          <TestTube2 size={18} />
           Iniciar teste
         </button>
         <button className="button" disabled={!canStopMonitoring} onClick={onStopMonitoring}>
+          <Square size={18} />
           Parar bot{monitoringMode === "test" ? " teste" : ""}
         </button>
         <button className="button" disabled={!canStop} onClick={onStop}>
+          <LogOut size={18} />
           Desconectar WhatsApp
         </button>
         <button className="button" disabled={!canRestart} onClick={onRestart}>
-          Reiniciar conexão
+          <RefreshCw size={18} />
+          Reiniciar conexao
         </button>
         <button className="button danger" disabled={!canClearSession} onClick={onClearSession}>
+          <RotateCcw size={18} />
           Gerar novo QR
         </button>
       </div>
     </article>
   );
 }
+
+
