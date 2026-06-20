@@ -4,13 +4,11 @@ import { BotStatus } from "../../../shared/types";
 
 type Props = {
   qrCode: string;
-  pairingCode?: string;
   status: BotStatus;
 };
 
-export function QrCodeBox({ qrCode, pairingCode, status }: Props) {
+export function QrCodeBox({ qrCode, status }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const formattedPairingCode = pairingCode ? pairingCode.replace(/(.{4})(.{1,4})/, "$1-$2") : "";
 
   useEffect(() => {
     if (!qrCode || !canvasRef.current) return;
@@ -31,13 +29,7 @@ export function QrCodeBox({ qrCode, pairingCode, status }: Props) {
         <span className="mini-status">{status === "waiting_qr" ? "Aguardando leitura" : "Sem QR ativo"}</span>
       </div>
       <div className="qr-box">
-        {pairingCode ? (
-          <div className="pairing-code-box">
-            <span>Código de pareamento</span>
-            <strong>{formattedPairingCode}</strong>
-            <small>WhatsApp &gt; Aparelhos conectados &gt; Conectar com número de telefone</small>
-          </div>
-        ) : qrCode ? (
+        {qrCode ? (
           <canvas ref={canvasRef} aria-label="QR Code do WhatsApp" />
         ) : (
           <div className="qr-empty">O QR Code aparece aqui quando uma nova autenticação for necessária.</div>
