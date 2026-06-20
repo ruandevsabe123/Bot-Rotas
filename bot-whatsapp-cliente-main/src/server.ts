@@ -174,7 +174,7 @@ bot.on("snapshot", () => {
 async function handleAction(action: string, body: any) {
   switch (action) {
     case "start":
-      await bot.start();
+      await bot.start(typeof body.pairingPhoneNumber === "string" ? body.pairingPhoneNumber : undefined);
       break;
     case "stop":
       await bot.stop();

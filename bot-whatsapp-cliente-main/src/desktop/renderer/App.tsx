@@ -186,6 +186,7 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelToken()));
   const [userEmail, setUserEmail] = useState(getPanelUserEmail());
   const [loginError, setLoginError] = useState("");
+  const [pairingPhoneNumber, setPairingPhoneNumber] = useState("");
   const nuclearArmed = Boolean(snapshot.monitoringEnabled && snapshot.monitoringMode === "target" && snapshot.config.nuclearMode);
 
   useEffect(() => {
@@ -448,10 +449,24 @@ export default function App() {
             readinessChecks={snapshot.readinessChecks}
           />
 
+          <section className="pairing-panel">
+            <div>
+              <p className="panel-label">Conexão por número</p>
+              <h2>Código no celular</h2>
+              <p>Digite DDI + DDD + número. Exemplo: 5511999999999.</p>
+            </div>
+            <input
+              inputMode="tel"
+              placeholder="5511999999999"
+              value={pairingPhoneNumber}
+              onChange={(event) => setPairingPhoneNumber(event.target.value)}
+            />
+          </section>
+
           <ControlButtons
             busy={busy}
             status={snapshot.status}
-            onStart={() => runAction(botApi.startBot)}
+            onStart={() => runAction(() => botApi.startBot({ pairingPhoneNumber }))}
             onStop={() => runAction(botApi.stopBot)}
             onStartMonitoring={confirmStartMonitoring}
             onStartTestMonitoring={confirmStartTestMonitoring}
@@ -462,7 +477,7 @@ export default function App() {
             monitoringMode={snapshot.monitoringMode}
           />
 
-          <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
+          <QrCodeBox qrCode={snapshot.qrCode} pairingCode={snapshot.pairingCode} status={snapshot.status} />
 
           <section className="nuclear-mini-panel">
             <div>

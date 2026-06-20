@@ -88,9 +88,13 @@ export type GeneralSettingsPayload = {
   nuclearMode: boolean;
 };
 
+export type StartBotPayload = {
+  pairingPhoneNumber?: string;
+};
+
 export type DesktopApi = {
   getSnapshot: () => Promise<BotSnapshot>;
-  startBot: () => Promise<BotSnapshot>;
+  startBot: (payload?: StartBotPayload) => Promise<BotSnapshot>;
   stopBot: () => Promise<BotSnapshot>;
   restartBot: () => Promise<BotSnapshot>;
   clearSession: () => Promise<BotSnapshot>;

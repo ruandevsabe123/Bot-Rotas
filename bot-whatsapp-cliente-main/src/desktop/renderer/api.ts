@@ -6,7 +6,8 @@ import {
   SaveGroupPayload,
   SaveMessageSettingsPayload,
   SaveTargetMessageSettingsPayload,
-  SaveWarmupMessageSettingsPayload
+  SaveWarmupMessageSettingsPayload,
+  StartBotPayload
 } from "../../shared/types";
 
 const AUTH_ERROR_MESSAGES = ["Senha do painel obrigatória.", "Login obrigatório.", "Email ou senha inválidos."];
@@ -94,7 +95,7 @@ function action<TPayload = unknown>(name: string, payload?: TPayload) {
 function createWebApi(): DesktopApi {
   return {
     getSnapshot: () => fetchJson<BotSnapshot>("/api/snapshot"),
-    startBot: () => action("start"),
+    startBot: (payload?: StartBotPayload) => action("start", payload),
     stopBot: () => action("stop"),
     restartBot: () => action("restart"),
     clearSession: () => action("clear-session"),

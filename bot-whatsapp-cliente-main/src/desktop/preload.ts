@@ -7,12 +7,13 @@ import {
   SaveGroupPayload,
   SaveMessageSettingsPayload,
   SaveWarmupMessageSettingsPayload,
-  SaveTargetMessageSettingsPayload
+  SaveTargetMessageSettingsPayload,
+  StartBotPayload
 } from "../shared/types";
 
 const api: DesktopApi = {
   getSnapshot: () => ipcRenderer.invoke("bot:getSnapshot"),
-  startBot: () => ipcRenderer.invoke("bot:start"),
+  startBot: (payload?: StartBotPayload) => ipcRenderer.invoke("bot:start", payload),
   stopBot: () => ipcRenderer.invoke("bot:stop"),
   startMonitoring: () => ipcRenderer.invoke("bot:enableMonitoring"),
   startNuclearMonitoring: () => ipcRenderer.invoke("bot:enableNuclearMonitoring"),

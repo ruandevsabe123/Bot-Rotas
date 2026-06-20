@@ -241,11 +241,14 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  async start() {
+  async start(pairingPhoneNumber?: string) {
     if (this.starting) return this.starting;
     if (this.isRunning()) {
       this.logger.warning("WhatsApp já está em processo de conexão ou conectado.");
       return;
+    }
+    if (typeof pairingPhoneNumber === "string") {
+      this.pairingPhoneNumber = pairingPhoneNumber.trim();
     }
 
     this.stopping = false;
@@ -1719,3 +1722,4 @@ export class BotService extends EventEmitter {
     return String(error);
   }
 }
+

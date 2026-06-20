@@ -6,7 +6,8 @@ import {
   SaveCodesPayload,
   GeneralSettingsPayload,
   SaveGroupPayload,
-  SaveMessageSettingsPayload
+  SaveMessageSettingsPayload,
+  StartBotPayload
 } from "../shared/types";
 
 app.commandLine.appendSwitch("disable-gpu");
@@ -69,8 +70,8 @@ function createWindow() {
 
 function registerIpc() {
   ipcMain.handle("bot:getSnapshot", () => bot.getSnapshot());
-  ipcMain.handle("bot:start", async () => {
-    await bot.start();
+  ipcMain.handle("bot:start", async (_event, payload?: StartBotPayload) => {
+    await bot.start(payload?.pairingPhoneNumber);
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:stop", async () => {
