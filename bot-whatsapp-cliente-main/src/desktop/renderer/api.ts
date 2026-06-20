@@ -20,7 +20,8 @@ const AUTH_ERROR_MESSAGES = [
   "Login obrigatório.",
   "Email ou senha inválidos.",
   "Email ou senha invalidos.",
-  "Usuário bloqueado pelo administrador."
+  "Usuário bloqueado pelo administrador.",
+  "Acesso bloqueado. Fale com o suporte para liberar sua conta."
 ];
 
 export function getPanelPassword() {

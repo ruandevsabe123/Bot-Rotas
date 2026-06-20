@@ -125,6 +125,7 @@ function MessagePreviewStrip({
 function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: string, password: string) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const blocked = Boolean(error && /bloquead/i.test(error));
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -161,7 +162,16 @@ function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: st
             onChange={(event) => setPassword(event.target.value)}
           />
         </div>
-        {error ? <p className="login-error">{error}</p> : null}
+        {blocked ? (
+          <section className="blocked-access-card">
+            <strong>Acesso pausado</strong>
+            <p>Seu usuário está bloqueado no momento. Fale com o suporte para solicitar a liberação.</p>
+            <a className="button primary" href="mailto:ruansouzamitobr@gmail.com">
+              <Mail size={18} />
+              Falar com suporte
+            </a>
+          </section>
+        ) : error ? <p className="login-error">{error}</p> : null}
         <button className="button primary" disabled={!email.trim() || !password} type="submit">
           Entrar
         </button>
@@ -723,7 +733,7 @@ export default function App() {
       .catch((error) => {
         if (!mounted) return;
         if (isAuthError(error)) {
-          logout("Faça login novamente.");
+          logout(error instanceof Error ? error.message : "Faça login novamente.");
           return;
         }
         setSessionChecked(true);
@@ -751,13 +761,7 @@ export default function App() {
       .catch((error) => {
         if (!mounted) return;
         if (isAuthError(error)) {
-          setPanelToken("");
-          setPanelUserEmail("");
-          setPanelUserRole("");
-          setUserEmail("");
-          setUserRole("client");
-          setAuthenticated(false);
-          setLoginError("Faça login para continuar.");
+          logout(error instanceof Error ? error.message : "Faça login para continuar.");
           return;
         }
         setLoginError(error instanceof Error ? error.message : "Falha ao abrir painel.");
@@ -821,14 +825,7 @@ export default function App() {
       return nextSnapshot;
     } catch (error) {
       if (isAuthError(error)) {
-        setPanelToken("");
-        setPanelUserEmail("");
-        setPanelUserRole("");
-        setUserEmail("");
-        setUserRole("client");
-        setPanelPassword("");
-        setAuthenticated(false);
-        setLoginError("Entre novamente para continuar.");
+        logout(error instanceof Error ? error.message : "Entre novamente para continuar.");
       } else {
         setConfirmation({
           title: "Erro",

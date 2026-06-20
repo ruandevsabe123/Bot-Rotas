@@ -157,6 +157,25 @@ button {
   font-size: 0.92rem;
 }
 
+.blocked-access-card {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255, 81, 72, 0.28);
+  border-radius: 8px;
+  background: rgba(255, 81, 72, 0.08);
+}
+
+.blocked-access-card strong {
+  color: #ffffff;
+}
+
+.blocked-access-card p {
+  margin: 0;
+  color: #ffb8b2;
+  line-height: 1.45;
+}
+
 .topbar {
   display: flex;
   align-items: flex-end;

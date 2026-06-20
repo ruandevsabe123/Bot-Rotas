@@ -238,8 +238,7 @@ function verifySessionToken(token: string): string | undefined {
     if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return undefined;
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     const email = String(parsed.email || "").toLowerCase();
-    const user = panelUsers.get(email);
-    return email && user && !user.blocked && Number(parsed.exp) > Date.now() ? email : undefined;
+    return email && panelUsers.has(email) && Number(parsed.exp) > Date.now() ? email : undefined;
   } catch {
     return undefined;
   }
@@ -264,6 +263,10 @@ function getAuthorizedEmail(request: http.IncomingMessage) {
 function requireAuth(request: http.IncomingMessage, response: http.ServerResponse) {
   const email = getAuthorizedEmail(request);
   if (email) {
+    if (panelUsers.get(email)?.blocked) {
+      sendJson(response, 403, { error: "Acesso bloqueado. Fale com o suporte para liberar sua conta." });
+      return undefined;
+    }
     touchPanelUser(email);
     return email;
   }
