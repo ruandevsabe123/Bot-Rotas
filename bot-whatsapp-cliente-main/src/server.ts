@@ -16,6 +16,7 @@ const panelPassword = String(process.env.PANEL_PASSWORD || "");
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
+const supportChatUrl = String(process.env.SUPPORT_CHAT_URL || process.env.ADMIN_CHAT_URL || "").trim();
 
 type PanelUserRecord = {
   password: string;
@@ -546,6 +547,11 @@ const server = http.createServer(async (request, response) => {
   try {
     if (request.method === "GET" && url.pathname === "/api/ping") {
       sendJson(response, 200, { ok: true, protected: Boolean(panelUsers.size), login: "email" });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/support") {
+      sendJson(response, 200, { chatUrl: supportChatUrl });
       return;
     }
 

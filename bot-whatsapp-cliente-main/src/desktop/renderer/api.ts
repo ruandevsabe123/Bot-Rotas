@@ -124,6 +124,10 @@ export function saveAdminUser(payload: {
   );
 }
 
+export function getSupportInfo() {
+  return fetchJson<{ chatUrl: string }>("/api/support");
+}
+
 async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");

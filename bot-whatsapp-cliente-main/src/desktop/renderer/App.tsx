@@ -37,6 +37,7 @@ import {
   getPanelToken,
   getPanelUserEmail,
   getPanelUserRole,
+  getSupportInfo,
   isAuthError,
   panelLogin,
   saveAdminUser,
@@ -125,7 +126,15 @@ function MessagePreviewStrip({
 function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: string, password: string) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [supportChatUrl, setSupportChatUrl] = useState("");
   const blocked = Boolean(error && /bloquead/i.test(error));
+
+  useEffect(() => {
+    if (!blocked) return;
+    getSupportInfo()
+      .then((info) => setSupportChatUrl(info.chatUrl || ""))
+      .catch(() => setSupportChatUrl(""));
+  }, [blocked]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -166,10 +175,14 @@ function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: st
           <section className="blocked-access-card">
             <strong>Acesso pausado</strong>
             <p>Seu usuário está bloqueado no momento. Fale com o suporte para solicitar a liberação.</p>
-            <a className="button primary" href="mailto:ruansouzamitobr@gmail.com">
-              <Mail size={18} />
-              Falar com suporte
-            </a>
+            {supportChatUrl ? (
+              <a className="button primary" href={supportChatUrl} target="_blank" rel="noreferrer">
+                <MessageSquareText size={18} />
+                Abrir chat
+              </a>
+            ) : (
+              <span className="support-unavailable">Peça ao administrador para configurar o chat de suporte.</span>
+            )}
           </section>
         ) : error ? <p className="login-error">{error}</p> : null}
         <button className="button primary" disabled={!email.trim() || !password} type="submit">

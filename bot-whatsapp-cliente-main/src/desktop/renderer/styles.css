@@ -176,6 +176,12 @@ button {
   line-height: 1.45;
 }
 
+.support-unavailable {
+  color: #ffb8b2;
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
 .topbar {
   display: flex;
   align-items: flex-end;

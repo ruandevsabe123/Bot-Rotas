@@ -1,5 +1,7 @@
-import { HelpCircle, LogOut, Mail, MessageCircle, Trash2 } from "lucide-react";
+import { HelpCircle, LogOut, MessageCircle, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { BotConfig } from "../../../shared/types";
+import { getSupportInfo } from "../api";
 
 type Props = {
   config: BotConfig;
@@ -11,6 +13,14 @@ type Props = {
 };
 
 export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onLogout }: Props) {
+  const [supportChatUrl, setSupportChatUrl] = useState("");
+
+  useEffect(() => {
+    getSupportInfo()
+      .then((info) => setSupportChatUrl(info.chatUrl || ""))
+      .catch(() => setSupportChatUrl(""));
+  }, []);
+
   return (
     <section className="settings-grid">
       <article className="panel option-panel account-panel">
@@ -36,10 +46,14 @@ export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onCl
           <h2>Precisa de ajuda?</h2>
           <p>Se o bot não conectar, não enviar rota ou aparecer algum erro, chama o suporte com uma foto da tela.</p>
         </div>
-        <a className="button primary" href="mailto:ruansouzamitobr@gmail.com">
-          <Mail size={18} />
-          Falar comigo
-        </a>
+        {supportChatUrl ? (
+          <a className="button primary" href={supportChatUrl} target="_blank" rel="noreferrer">
+            <MessageCircle size={18} />
+            Abrir chat
+          </a>
+        ) : (
+          <span className="mini-badge">Chat indisponível</span>
+        )}
       </article>
 
       <article className="panel option-panel">
