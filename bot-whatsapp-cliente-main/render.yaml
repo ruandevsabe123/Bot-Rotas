@@ -14,6 +14,8 @@ services:
         sync: false
       - key: PANEL_PASSWORD
         sync: false
+      - key: PANEL_USERS
+        sync: false
       - key: KEEP_ALIVE_URL
         sync: false
       - key: BOT_PHONE_NUMBER

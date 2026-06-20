@@ -11,12 +11,28 @@ const port = Number(process.env.PORT || 3000);
 const dataDir = path.resolve(process.env.DATA_DIR || process.cwd());
 const authDir = path.join(dataDir, "auth_info");
 const configPath = path.join(dataDir, "config.json");
-const panelEmail = process.env.PANEL_EMAIL || "alanrobot@gmail.com";
-const panelPassword = process.env.PANEL_PASSWORD || "senhanova";
-const panelSessionSecret = process.env.PANEL_SESSION_SECRET || panelPassword;
+const panelEmail = String(process.env.PANEL_EMAIL || "alanrobot@gmail.com").trim().toLowerCase();
+const panelPassword = String(process.env.PANEL_PASSWORD || "senhanova");
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
+
+function parsePanelUsers(envUsers: string | undefined, defaultEmail: string, defaultPassword: string) {
+  const users = new Map<string, string>();
+  const raw = String(envUsers || `${defaultEmail}:${defaultPassword}`).trim();
+  for (const part of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
+    const [email, password] = part.split(":").map((item) => item.trim());
+    if (!email || !password) continue;
+    users.set(email.toLowerCase(), password);
+  }
+  if (users.size === 0) {
+    users.set(defaultEmail.toLowerCase(), defaultPassword);
+  }
+  return users;
+}
+
+const panelUsers = parsePanelUsers(process.env.PANEL_USERS, panelEmail, panelPassword);
+const panelSessionSecret = process.env.PANEL_SESSION_SECRET || Array.from(panelUsers.values())[0] || panelPassword;
 const keepAliveUrl =
   process.env.KEEP_ALIVE_URL ||
   process.env.RENDER_EXTERNAL_URL ||
@@ -87,17 +103,20 @@ function verifySessionToken(token: string) {
   try {
     if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return false;
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
-    return parsed.email === panelEmail && Number(parsed.exp) > Date.now();
+    return parsed.email && panelUsers.has(parsed.email.toLowerCase()) && Number(parsed.exp) > Date.now();
   } catch {
     return false;
   }
 }
 
 function isAuthorized(request: http.IncomingMessage) {
-  if (!panelPassword) return true;
+  if (!panelUsers.size) return true;
   const token = String(request.headers["x-panel-token"] || "").trim();
   const password = String(request.headers["x-panel-password"] || "").trim();
-  return verifySessionToken(token) || password === panelPassword;
+  return (
+    verifySessionToken(token) ||
+    (password ? Array.from(panelUsers.values()).some((expected) => expected === password) : false)
+  );
 }
 
 function requireAuth(request: http.IncomingMessage, response: http.ServerResponse) {
@@ -284,15 +303,16 @@ const server = http.createServer(async (request, response) => {
       const body = await readJsonBody(request);
       const email = String(body.email || "").trim().toLowerCase();
       const password = String(body.password || "");
-      if (email !== panelEmail.toLowerCase() || password !== panelPassword) {
+      const expectedPassword = panelUsers.get(email);
+      if (!email || !expectedPassword || password !== expectedPassword) {
         sendJson(response, 401, { error: "Email ou senha inválidos." });
         return;
       }
 
       sendJson(response, 200, {
         ok: true,
-        token: createSessionToken(panelEmail),
-        user: { email: panelEmail }
+        token: createSessionToken(email),
+        user: { email }
       });
       return;
     }
