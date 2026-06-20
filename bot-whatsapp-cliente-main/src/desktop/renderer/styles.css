@@ -311,50 +311,100 @@ h2 {
   box-shadow: 0 0 42px rgba(245, 197, 66, 0.3);
 }
 
-.cockpit-grid {
+.operation-panel {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 12px;
-}
-
-.cockpit-card {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  gap: 12px;
-  min-height: 116px;
-  padding: 14px;
-  border: 1px solid rgba(245, 247, 248, 0.09);
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(245, 197, 66, 0.18);
   border-radius: 8px;
   background:
-    linear-gradient(180deg, rgba(20, 24, 28, 0.98), rgba(7, 9, 11, 0.98));
-  box-shadow:
-    0 18px 52px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    linear-gradient(135deg, rgba(245, 197, 66, 0.12), transparent 34%),
+    linear-gradient(180deg, #14181c 0%, #07090b 100%);
 }
 
-.cockpit-card span {
+.operation-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.operation-heading h2 {
+  margin-top: 3px;
+  font-size: 1.35rem;
+}
+
+.live-badge {
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border: 1px solid rgba(245, 197, 66, 0.28);
+  border-radius: 8px;
+  color: #f5c542;
+  background: rgba(245, 197, 66, 0.08);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.live-badge.active {
+  border-color: rgba(53, 208, 127, 0.32);
+  color: #35d07f;
+  background: rgba(53, 208, 127, 0.1);
+}
+
+.operation-steps {
   display: grid;
-  width: 42px;
-  height: 42px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.operation-step {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  min-height: 116px;
+  padding: 12px;
+  border: 1px solid rgba(245, 247, 248, 0.09);
+  border-radius: 8px;
+  background: rgba(5, 6, 7, 0.72);
+}
+
+.operation-icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
   place-items: center;
   border-radius: 8px;
   color: #f5c542;
   background: rgba(245, 197, 66, 0.1);
 }
 
-.cockpit-card p,
-.cockpit-card small {
-  margin: 0;
-  color: #8e99a3;
-  font-size: 0.8rem;
+.step-done .operation-icon {
+  color: #35d07f;
+  background: rgba(53, 208, 127, 0.1);
 }
 
-.cockpit-card strong {
+.step-error .operation-icon {
+  color: #ff7a70;
+  background: rgba(255, 81, 72, 0.1);
+}
+
+.step-active {
+  border-color: rgba(245, 197, 66, 0.26);
+}
+
+.operation-step strong {
   display: block;
-  margin: 5px 0;
   color: #ffffff;
-  font-size: 1.2rem;
-  line-height: 1.15;
+  font-size: 0.96rem;
+  line-height: 1.2;
+}
+
+.operation-step small {
+  display: block;
+  margin-top: 4px;
+  color: #8e99a3;
+  font-size: 0.78rem;
+  line-height: 1.35;
   overflow-wrap: anywhere;
 }
 
@@ -483,7 +533,7 @@ h2 {
 
 .launch-review-panel {
   display: grid;
-  gap: 14px;
+  gap: 12px;
 }
 
 .review-grid {
@@ -495,7 +545,7 @@ h2 {
 .review-item {
   display: grid;
   gap: 5px;
-  min-height: 86px;
+  min-height: 72px;
   padding: 12px;
   border: 1px solid rgba(245, 197, 66, 0.2);
   border-radius: 8px;
@@ -1058,6 +1108,8 @@ h2 {
   display: grid;
   gap: 6px;
   margin-top: -4px;
+  max-height: 260px;
+  overflow: auto;
   padding: 8px;
   border: 1px solid rgba(245, 197, 66, 0.16);
   border-radius: 8px;
@@ -1078,6 +1130,18 @@ h2 {
 .group-search-list button:hover {
   border-color: rgba(245, 197, 66, 0.34);
   color: #f5c542;
+}
+
+.group-search-list button.selected {
+  border-color: rgba(53, 208, 127, 0.36);
+  color: #35d07f;
+  background: rgba(53, 208, 127, 0.08);
+}
+
+.group-search-empty {
+  color: #8e99a3;
+  font-size: 0.9rem;
+  line-height: 1.4;
 }
 
 .link-button {
@@ -1421,7 +1485,7 @@ h2 {
     max-width: none;
   }
 
-  .cockpit-grid,
+  .operation-steps,
   .admin-grid,
   .detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1462,7 +1526,7 @@ h2 {
 
   .readiness-list,
   .button-grid,
-  .cockpit-grid,
+  .operation-steps,
   .admin-grid,
   .detail-grid,
   .user-editor,

@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BotConfig, BotGroup } from "../../../shared/types";
 
 type Props = {
@@ -51,6 +51,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [senderName, setSenderName] = useState("");
   const [codes, setCodes] = useState("");
+  const requestedGroupsRef = useRef(false);
 
   const isTarget = kind === "target";
   const label = labels[kind];
@@ -78,6 +79,12 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     savedCodesKey
   ]);
 
+  useEffect(() => {
+    if (requestedGroupsRef.current || groups.length || busy) return;
+    requestedGroupsRef.current = true;
+    onRefresh();
+  }, [busy, groups.length, onRefresh]);
+
   function submit(event: FormEvent) {
     event.preventDefault();
     const selectedGroup = groups.find((item) => item.id === selectedGroupId);
@@ -93,9 +100,10 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
 
   const previewMessages = parseCodes(codes)
     .map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
+  const query = group.trim().toLowerCase();
   const filteredGroups = groups
-    .filter((item) => item.name.toLowerCase().includes(group.trim().toLowerCase()))
-    .slice(0, 6);
+    .filter((item) => !query || item.name.toLowerCase().includes(query))
+    .slice(0, 12);
 
   return (
     <article className={`panel group-message-card ${isTarget ? "group-message-target" : "group-message-test"}`}>
@@ -120,11 +128,12 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           }}
           placeholder={label.placeholder}
         />
-        {group.trim() && filteredGroups.length ? (
+        {filteredGroups.length ? (
           <div className="group-search-list">
             {filteredGroups.map((item) => (
               <button
                 key={item.id}
+                className={selectedGroupId === item.id ? "selected" : ""}
                 type="button"
                 onClick={() => {
                   setGroup(item.name);
@@ -135,7 +144,11 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
               </button>
             ))}
           </div>
-        ) : null}
+        ) : (
+          <div className="group-search-list group-search-empty">
+            <span>{groups.length ? "Nenhum grupo encontrado com essa pesquisa." : "Conecte o WhatsApp e toque em Atualizar para carregar os grupos."}</span>
+          </div>
+        )}
 
         <label htmlFor={`${kind}-sender-name`}>Nome na mensagem</label>
         <input
@@ -145,7 +158,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           placeholder="Digite seu nome"
         />
 
-        <label htmlFor={`${kind}-codes`}>Códigos</label>
+        <label htmlFor={`${kind}-codes`}>CÃ³digos</label>
         <textarea
           id={`${kind}-codes`}
           value={codes}

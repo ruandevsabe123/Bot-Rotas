@@ -1,8 +1,10 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
+  AlertTriangle,
   Ban,
   Bot,
+  CheckCircle2,
   Clock3,
   Edit3,
   Gauge,
@@ -14,12 +16,15 @@ import {
   RefreshCw,
   Route,
   Save,
+  Send,
   Settings,
   ShieldCheck,
   SlidersHorizontal,
   TestTube2,
   UserPlus,
   X,
+  Wifi,
+  WifiOff,
   Zap
 } from "lucide-react";
 import {
@@ -263,27 +268,24 @@ function formatDuration(ms: number) {
   return `${minutes}min`;
 }
 
-function CockpitCard({
+function OperationStep({
   title,
-  value,
   detail,
-  tone,
+  state,
   Icon
 }: {
   title: string;
-  value: string | number;
   detail: string;
-  tone: "yellow" | "green" | "blue" | "red";
+  state: "done" | "active" | "waiting" | "error";
   Icon: typeof Home;
 }) {
   return (
-    <article className={`cockpit-card cockpit-${tone}`}>
-      <span>
-        <Icon size={20} />
+    <article className={`operation-step step-${state}`}>
+      <span className="operation-icon">
+        {state === "done" ? <CheckCircle2 size={19} /> : state === "error" ? <AlertTriangle size={19} /> : <Icon size={19} />}
       </span>
       <div>
-        <p>{title}</p>
-        <strong>{value}</strong>
+        <strong>{title}</strong>
         <small>{detail}</small>
       </div>
     </article>
@@ -297,20 +299,49 @@ function CockpitPanel({
   snapshot: BotSnapshot;
   groupLabel: string;
 }) {
-  const connectionValue = snapshot.status === "connected" ? "Online" : snapshot.status === "waiting_qr" ? "QR" : "Off";
-  const groupValue =
-    snapshot.groupState === "closed" ? "Fechado" : snapshot.groupState === "open" ? "Aberto" : "Validando";
-  const armedValue = snapshot.monitoringEnabled ? "Armado" : "Parado";
+  const connected = snapshot.status === "connected";
+  const connectionWaiting = snapshot.status === "connecting" || snapshot.status === "waiting_qr" || snapshot.status === "reconnecting";
+  const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
+  const hasMessages = Boolean(snapshot.config.nomeEnvio && snapshot.config.codigosMensagensAlvo?.length);
+  const armed = Boolean(snapshot.monitoringEnabled);
   const lastOpening = getLastLogTime(snapshot.logs, [/ABRIU/i, /Palavra de abertura/i, /Abertura simulada/i]);
-  const lastDispatch = getLastLogTime(snapshot.logs, [/Disparo .*conclu/i, /Mensagem alvo \d+ enviada/i, /Mensagem \d+ confirmada/i]);
   const confirmed = countConfirmedMessages(snapshot.logs);
 
   return (
-    <section className="cockpit-grid" aria-label="Cockpit do bot">
-      <CockpitCard Icon={Gauge} tone="green" title="Conexão" value={connectionValue} detail={groupLabel} />
-      <CockpitCard Icon={ShieldCheck} tone="yellow" title="Grupo" value={groupValue} detail={armedValue} />
-      <CockpitCard Icon={Clock3} tone="blue" title="Última abertura" value={lastOpening} detail="real ou simulada" />
-      <CockpitCard Icon={Zap} tone="yellow" title="Último disparo" value={lastDispatch} detail={`${confirmed} mensagens confirmadas`} />
+    <section className="operation-panel" aria-label="Resumo operacional">
+      <div className="operation-heading">
+        <div>
+          <p className="panel-label">Agora</p>
+          <h2>{armed ? "Bot armado e ouvindo o grupo" : connected ? "Pronto para iniciar" : connectionWaiting ? "Conectando WhatsApp" : "Conecte o WhatsApp"}</h2>
+        </div>
+        <span className={armed ? "live-badge active" : "live-badge"}>{armed ? "Ao vivo" : "Parado"}</span>
+      </div>
+      <div className="operation-steps">
+        <OperationStep
+          Icon={connected ? Wifi : WifiOff}
+          state={snapshot.status === "error" ? "error" : connected ? "done" : connectionWaiting ? "active" : "waiting"}
+          title="WhatsApp"
+          detail={connected ? "Conectado" : snapshot.status === "waiting_qr" ? "Leia o QR Code" : "Aguardando conexão"}
+        />
+        <OperationStep
+          Icon={ShieldCheck}
+          state={hasGroup ? "done" : "waiting"}
+          title="Rota"
+          detail={hasGroup ? groupLabel : "Escolha o grupo alvo"}
+        />
+        <OperationStep
+          Icon={MessageSquareText}
+          state={hasMessages ? "done" : "waiting"}
+          title="Mensagens"
+          detail={hasMessages ? `${snapshot.config.codigosMensagensAlvo.length} pronta(s)` : "Configure nome e códigos"}
+        />
+        <OperationStep
+          Icon={Send}
+          state={armed ? "active" : "waiting"}
+          title="Disparo"
+          detail={armed ? `Última abertura: ${lastOpening}` : `${confirmed} mensagem(ns) confirmadas`}
+        />
+      </div>
     </section>
   );
 }
@@ -1176,7 +1207,7 @@ export default function App() {
             monitoringMode={snapshot.monitoringMode}
           />
 
-          <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
+          {snapshot.qrCode || snapshot.status === "waiting_qr" ? <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} /> : null}
         </section>
       ) : null}
 
