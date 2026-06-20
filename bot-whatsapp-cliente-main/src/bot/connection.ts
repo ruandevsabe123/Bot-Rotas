@@ -241,6 +241,31 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
+  simulateOpening(): boolean {
+    if (this.status !== "connected") {
+      this.logger.warning("Conecte o WhatsApp antes de simular abertura.");
+      this.emitSnapshot();
+      return false;
+    }
+
+    this.monitoringMode = "target";
+
+    if (!this.prepareSendPlan()) {
+      this.logger.error("Simulação cancelada: não consegui preparar o plano de disparo.");
+      this.emitSnapshot();
+      return false;
+    }
+
+    const cycleId = ++this.sendCycleId;
+    this.groupState = "open";
+    this.grupoJaFechouDepoisDoInicio = false;
+    this.logger.warning("Simulação de abertura acionada pelo painel.");
+    this.enviarMensagensRapidas(cycleId);
+    this.logger.info("⚡ Abertura simulada. Disparo acionado.");
+    this.emitSnapshot();
+    return true;
+  }
+
   async start(pairingPhoneNumber?: string) {
     if (this.starting) return this.starting;
     if (this.isRunning()) {

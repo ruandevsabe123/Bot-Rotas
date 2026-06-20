@@ -2,7 +2,9 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   Bot,
+  Clock3,
   Flame,
+  Gauge,
   Home,
   LockKeyhole,
   Mail,
@@ -10,9 +12,11 @@ import {
   Power,
   RefreshCw,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   TestTube2,
-  X
+  X,
+  Zap
 } from "lucide-react";
 import { BotSnapshot } from "../../shared/types";
 import { ControlButtons } from "./components/ControlButtons";
@@ -177,6 +181,67 @@ function ConfigStrip({
   );
 }
 
+function getLastLogTime(logs: BotSnapshot["logs"], patterns: RegExp[]) {
+  const found = [...logs].reverse().find((log) => patterns.some((pattern) => pattern.test(log.message)));
+  return found ? new Date(found.timestamp).toLocaleTimeString("pt-BR") : "Sem registro";
+}
+
+function countConfirmedMessages(logs: BotSnapshot["logs"]) {
+  return logs.filter((log) => /Mensagem (alvo )?\d+ .*?(confirmada|enviada)/i.test(log.message)).length;
+}
+
+function CockpitCard({
+  title,
+  value,
+  detail,
+  tone,
+  Icon
+}: {
+  title: string;
+  value: string | number;
+  detail: string;
+  tone: "yellow" | "green" | "blue" | "red";
+  Icon: typeof Home;
+}) {
+  return (
+    <article className={`cockpit-card cockpit-${tone}`}>
+      <span>
+        <Icon size={20} />
+      </span>
+      <div>
+        <p>{title}</p>
+        <strong>{value}</strong>
+        <small>{detail}</small>
+      </div>
+    </article>
+  );
+}
+
+function CockpitPanel({
+  snapshot,
+  groupLabel
+}: {
+  snapshot: BotSnapshot;
+  groupLabel: string;
+}) {
+  const connectionValue = snapshot.status === "connected" ? "Online" : snapshot.status === "waiting_qr" ? "QR" : "Off";
+  const groupValue =
+    snapshot.groupState === "closed" ? "Fechado" : snapshot.groupState === "open" ? "Aberto" : "Validando";
+  const armedValue = snapshot.monitoringEnabled ? "Armado" : "Parado";
+  const lastOpening = getLastLogTime(snapshot.logs, [/ABRIU/i, /Palavra de abertura/i, /Abertura simulada/i]);
+  const lastDispatch = getLastLogTime(snapshot.logs, [/Disparo .*conclu/i, /Mensagem alvo \d+ enviada/i, /Mensagem \d+ confirmada/i]);
+  const confirmed = countConfirmedMessages(snapshot.logs);
+
+  return (
+    <section className="cockpit-grid" aria-label="Cockpit do bot">
+      <CockpitCard Icon={Gauge} tone="green" title="Conexão" value={connectionValue} detail={groupLabel} />
+      <CockpitCard Icon={ShieldCheck} tone="yellow" title="Grupo" value={groupValue} detail={armedValue} />
+      <CockpitCard Icon={Clock3} tone="blue" title="Última abertura" value={lastOpening} detail="real ou simulada" />
+      <CockpitCard Icon={Zap} tone="yellow" title="Último disparo" value={lastDispatch} detail={`${confirmed} mensagens confirmadas`} />
+    </section>
+  );
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<BotSnapshot>(emptySnapshot);
   const [busy, setBusy] = useState(false);
@@ -186,6 +251,8 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelToken()));
   const [userEmail, setUserEmail] = useState(getPanelUserEmail());
   const [loginError, setLoginError] = useState("");
+  const [alertFlash, setAlertFlash] = useState(false);
+  const [lastAlertLogId, setLastAlertLogId] = useState("");
   const nuclearArmed = Boolean(snapshot.monitoringEnabled && snapshot.monitoringMode === "target" && snapshot.config.nuclearMode);
 
   useEffect(() => {
@@ -230,6 +297,38 @@ export default function App() {
   const testGroupLabel = useMemo(() => {
     return snapshot.config.grupoTesteNome || snapshot.config.grupoTesteJid || "Nenhum grupo teste";
   }, [snapshot.config]);
+
+  useEffect(() => {
+    const lastLog = snapshot.logs[snapshot.logs.length - 1];
+    if (!lastLog || lastLog.id === lastAlertLogId) return;
+
+    const shouldAlert = /ABRIU|Abertura simulada|Disparo acionado|Disparo .*conclu|Mensagem alvo \d+ enviada/i.test(lastLog.message);
+    if (!shouldAlert) return;
+
+    setLastAlertLogId(lastLog.id);
+    setAlertFlash(true);
+    window.setTimeout(() => setAlertFlash(false), 900);
+
+    try {
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+      const audio = new AudioContextClass();
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      oscillator.type = "sine";
+      oscillator.frequency.value = 740;
+      gain.gain.setValueAtTime(0.0001, audio.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.08, audio.currentTime + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.18);
+      oscillator.connect(gain);
+      gain.connect(audio.destination);
+      oscillator.start();
+      oscillator.stop(audio.currentTime + 0.2);
+      window.setTimeout(() => void audio.close(), 260);
+    } catch {
+      // Browsers can block sound before user interaction.
+    }
+  }, [lastAlertLogId, snapshot.logs]);
 
   async function runAction(action: () => Promise<BotSnapshot>) {
     setBusy(true);
@@ -411,7 +510,7 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={alertFlash ? "app-shell alert-flash" : "app-shell"}>
       <section className="topbar app-topbar">
         <div>
           <p className="eyebrow">Central operacional</p>
@@ -440,6 +539,8 @@ export default function App() {
             </span>
           </section>
 
+          <CockpitPanel snapshot={snapshot} groupLabel={snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel} />
+
           <StatusCard
             status={snapshot.status}
             error={snapshot.error}
@@ -456,6 +557,7 @@ export default function App() {
             onStartMonitoring={confirmStartMonitoring}
             onStartTestMonitoring={confirmStartTestMonitoring}
             onStopMonitoring={() => runAction(botApi.stopMonitoring)}
+            onSimulateOpening={() => runAction(botApi.simulateOpening)}
             onRestart={() => runAction(botApi.restartBot)}
             onClearSession={() => runAction(botApi.clearSession)}
             monitoringEnabled={snapshot.monitoringEnabled}

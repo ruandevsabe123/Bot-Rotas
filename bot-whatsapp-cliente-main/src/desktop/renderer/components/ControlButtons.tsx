@@ -1,4 +1,4 @@
-import { LogOut, Play, QrCode, RefreshCw, RotateCcw, Square, TestTube2 } from "lucide-react";
+import { LogOut, Play, QrCode, RefreshCw, RotateCcw, Square, TestTube2, Zap } from "lucide-react";
 import { BotStatus } from "../../../shared/types";
 
 type Props = {
@@ -9,6 +9,7 @@ type Props = {
   onStartMonitoring: () => void;
   onStartTestMonitoring: () => void;
   onStopMonitoring: () => void;
+  onSimulateOpening: () => void;
   onRestart: () => void;
   onClearSession: () => void;
   monitoringEnabled?: boolean;
@@ -23,6 +24,7 @@ export function ControlButtons({
   onStartMonitoring,
   onStartTestMonitoring,
   onStopMonitoring,
+  onSimulateOpening,
   onRestart,
   onClearSession,
   monitoringEnabled,
@@ -40,6 +42,7 @@ export function ControlButtons({
   const canClearSession = !busy && (isRunning || isError);
   const canStartMonitoring = !busy && isConnected && !Boolean(monitoringEnabled);
   const canStopMonitoring = !busy && isConnected && Boolean(monitoringEnabled);
+  const canSimulateOpening = !busy && isConnected;
 
   return (
     <article className="panel">
@@ -60,6 +63,10 @@ export function ControlButtons({
         <button className="button" disabled={!canStopMonitoring} onClick={onStopMonitoring}>
           <Square size={18} />
           Parar bot{monitoringMode === "test" ? " teste" : ""}
+        </button>
+        <button className="button accent" disabled={!canSimulateOpening} onClick={onSimulateOpening}>
+          <Zap size={18} />
+          Simular abertura
         </button>
         <button className="button" disabled={!canStop} onClick={onStop}>
           <LogOut size={18} />

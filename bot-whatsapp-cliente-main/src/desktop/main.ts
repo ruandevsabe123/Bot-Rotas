@@ -126,6 +126,10 @@ function registerIpc() {
     }
     return bot.getSnapshot();
   });
+  ipcMain.handle("bot:simulateOpening", async () => {
+    bot.simulateOpening();
+    return bot.getSnapshot();
+  });
   ipcMain.handle("bot:saveGroup", async (_event, payload: SaveGroupPayload) => {
     await bot.saveGroup(payload.group, payload.groupId, payload.groupName);
     return bot.getSnapshot();

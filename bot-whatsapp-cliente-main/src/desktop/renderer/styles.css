@@ -36,6 +36,34 @@ button {
   padding: 28px 0 112px;
 }
 
+.app-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(circle at 50% 22%, rgba(245, 197, 66, 0.34), transparent 35%);
+  transition: opacity 280ms ease;
+}
+
+.app-shell.alert-flash::before {
+  opacity: 1;
+  animation: alert-pulse 900ms ease;
+}
+
+@keyframes alert-pulse {
+  0% {
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 .login-shell {
   display: grid;
   min-height: 100vh;
@@ -245,6 +273,68 @@ h2 {
   box-shadow: 0 0 42px rgba(245, 197, 66, 0.3);
 }
 
+.cockpit-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.cockpit-card {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 116px;
+  padding: 14px;
+  border: 1px solid rgba(245, 247, 248, 0.09);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(20, 24, 28, 0.98), rgba(7, 9, 11, 0.98));
+  box-shadow:
+    0 18px 52px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.cockpit-card span {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 8px;
+  color: #f5c542;
+  background: rgba(245, 197, 66, 0.1);
+}
+
+.cockpit-card p,
+.cockpit-card small {
+  margin: 0;
+  color: #8e99a3;
+  font-size: 0.8rem;
+}
+
+.cockpit-card strong {
+  display: block;
+  margin: 5px 0;
+  color: #ffffff;
+  font-size: 1.2rem;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.cockpit-green span {
+  color: #35d07f;
+  background: rgba(53, 208, 127, 0.1);
+}
+
+.cockpit-blue span {
+  color: #7eb6ff;
+  background: rgba(126, 182, 255, 0.1);
+}
+
+.cockpit-red span {
+  color: #ff7a70;
+  background: rgba(255, 81, 72, 0.1);
+}
+
 .panel,
 .quick-panel {
   padding: 18px;
@@ -435,6 +525,12 @@ h2 {
   border-color: rgba(255, 81, 72, 0.32);
   color: #ffafa8;
   background: rgba(255, 81, 72, 0.08);
+}
+
+.button.accent {
+  border-color: rgba(245, 197, 66, 0.34);
+  color: #f5c542;
+  background: rgba(245, 197, 66, 0.08);
 }
 
 .icon-button {
@@ -718,12 +814,18 @@ h2 {
   min-height: 300px;
 }
 
-.logs-list {
+.logs-list,
+.timeline-list {
   display: grid;
   gap: 10px;
   max-height: 360px;
   overflow: auto;
   padding-right: 4px;
+}
+
+.timeline-list {
+  gap: 0;
+  max-height: 430px;
 }
 
 .log-row {
@@ -760,6 +862,69 @@ h2 {
 
 .log-error {
   border-left-color: #ff5148;
+}
+
+.timeline-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 18px 78px 1fr;
+  gap: 10px;
+  align-items: start;
+  padding: 13px 0;
+}
+
+.timeline-row::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(245, 247, 248, 0.1);
+}
+
+.timeline-dot {
+  position: relative;
+  z-index: 1;
+  width: 17px;
+  height: 17px;
+  margin-top: 2px;
+  border: 2px solid #7c8792;
+  border-radius: 999px;
+  background: #07090b;
+  box-shadow: 0 0 0 5px #07090b;
+}
+
+.timeline-row time {
+  color: #8e99a3;
+  font-size: 0.78rem;
+}
+
+.timeline-row p {
+  margin: 0;
+  color: #d4dbe0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.timeline-armed .timeline-dot {
+  border-color: #f5c542;
+  box-shadow: 0 0 0 5px #07090b, 0 0 18px rgba(245, 197, 66, 0.24);
+}
+
+.timeline-open .timeline-dot {
+  border-color: #7eb6ff;
+  box-shadow: 0 0 0 5px #07090b, 0 0 18px rgba(126, 182, 255, 0.24);
+}
+
+.timeline-sent .timeline-dot {
+  border-color: #35d07f;
+  box-shadow: 0 0 0 5px #07090b, 0 0 18px rgba(53, 208, 127, 0.24);
+}
+
+.timeline-error .timeline-dot {
+  border-color: #ff5148;
+  box-shadow: 0 0 0 5px #07090b, 0 0 18px rgba(255, 81, 72, 0.24);
 }
 
 .danger-notice,
@@ -805,6 +970,10 @@ h2 {
   .group-pill {
     max-width: none;
   }
+
+  .cockpit-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 560px) {
@@ -828,7 +997,8 @@ h2 {
   }
 
   .readiness-list,
-  .button-grid {
+  .button-grid,
+  .cockpit-grid {
     grid-template-columns: 1fr;
   }
 

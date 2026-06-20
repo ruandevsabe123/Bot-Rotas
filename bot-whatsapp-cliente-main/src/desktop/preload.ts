@@ -19,6 +19,7 @@ const api: DesktopApi = {
   startNuclearMonitoring: () => ipcRenderer.invoke("bot:enableNuclearMonitoring"),
   startTestMonitoring: () => ipcRenderer.invoke("bot:enableTestMonitoring"),
   stopMonitoring: () => ipcRenderer.invoke("bot:disableMonitoring"),
+  simulateOpening: () => ipcRenderer.invoke("bot:simulateOpening"),
   restartBot: () => ipcRenderer.invoke("bot:restart"),
   clearSession: () => ipcRenderer.invoke("bot:clearSession"),
   clearLogs: () => ipcRenderer.invoke("bot:clearLogs"),

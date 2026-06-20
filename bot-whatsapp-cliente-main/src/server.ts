@@ -203,6 +203,9 @@ async function handleAction(action: string, body: any) {
     case "stop-monitoring":
       bot.disableMonitoring();
       break;
+    case "simulate-opening":
+      bot.simulateOpening();
+      break;
     case "warmup":
       await bot.warmupConnection();
       break;
