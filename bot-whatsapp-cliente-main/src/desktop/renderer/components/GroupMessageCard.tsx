@@ -21,14 +21,14 @@ const labels = {
   target: {
     title: "Grupo alvo",
     action: "Salvar alvo",
-    placeholder: "Ex: grupo das rotas",
+    placeholder: "Pesquisar grupo alvo",
     empty: "Nenhum grupo alvo"
   },
   test: {
-    title: "Grupo teste",
+    title: "Teste de abrir e fechar",
     action: "Salvar teste",
-    placeholder: "Ex: grupo teste",
-    empty: "Nenhum grupo teste"
+    placeholder: "Pesquisar grupo de teste",
+    empty: "Nenhum teste salvo"
   }
 };
 
@@ -55,8 +55,8 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
   const isTarget = kind === "target";
   const label = labels[kind];
   const savedGroupName = isTarget
-    ? config.grupoAlvoNome || config.grupoAlvoJid
-    : config.grupoTesteNome || config.grupoTesteJid;
+    ? config.grupoAlvoNome || ""
+    : config.grupoTesteNome || "";
   const savedCodes = useMemo(
     () => (isTarget ? config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
     [config.codigosMensagensAlvo, config.codigosMensagensTeste, isTarget]
@@ -64,7 +64,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
   const savedCodesKey = savedCodes.join("\n");
 
   useEffect(() => {
-    setGroup(isTarget ? config.grupoAlvoJid || config.grupoAlvoNome || "" : config.grupoTesteJid || config.grupoTesteNome || "");
+    setGroup(isTarget ? config.grupoAlvoNome || "" : config.grupoTesteNome || "");
     setSelectedGroupId(isTarget ? config.grupoAlvoJid || "" : config.grupoTesteJid || "");
     setSenderName(config.nomeEnvio);
     setCodes(savedCodesKey);
@@ -81,16 +81,21 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
   function submit(event: FormEvent) {
     event.preventDefault();
     const selectedGroup = groups.find((item) => item.id === selectedGroupId);
-    const value = selectedGroup ? selectedGroup.name : group.trim();
+    const foundByName = groups.find((item) => item.name.toLowerCase() === group.trim().toLowerCase());
+    const chosenGroup = selectedGroup || foundByName;
+    const value = chosenGroup ? chosenGroup.name : group.trim();
     const nextCodes = parseCodes(codes);
 
     if (!value || !senderName.trim() || !nextCodes.length) return;
     setCodes(nextCodes.join("\n"));
-    onSave(value, selectedGroup?.id, selectedGroup?.name, senderName.trim(), nextCodes);
+    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes);
   }
 
   const previewMessages = parseCodes(codes)
     .map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
+  const filteredGroups = groups
+    .filter((item) => item.name.toLowerCase().includes(group.trim().toLowerCase()))
+    .slice(0, 6);
 
   return (
     <article className={`panel group-message-card ${isTarget ? "group-message-target" : "group-message-test"}`}>
@@ -101,30 +106,13 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
 
       <form className="group-form" onSubmit={submit}>
         <div className="form-heading-row">
-          <label htmlFor={`${kind}-group-select`}>Grupo</label>
+          <label htmlFor={`${kind}-group-search`}>Grupo</label>
           <button className="link-button" disabled={busy} type="button" onClick={onRefresh}>
             Atualizar
           </button>
         </div>
-        <select
-          id={`${kind}-group-select`}
-          value={selectedGroupId}
-          onChange={(event) => {
-            const id = event.target.value;
-            const selectedGroup = groups.find((item) => item.id === id);
-            setSelectedGroupId(id);
-            setGroup(selectedGroup?.name || "");
-          }}
-        >
-          <option value="">Escolha um grupo</option>
-          {groups.map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </select>
-
         <input
+          id={`${kind}-group-search`}
           value={group}
           onChange={(event) => {
             setGroup(event.target.value);
@@ -132,6 +120,22 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           }}
           placeholder={label.placeholder}
         />
+        {group.trim() && filteredGroups.length ? (
+          <div className="group-search-list">
+            {filteredGroups.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setGroup(item.name);
+                  setSelectedGroupId(item.id);
+                }}
+              >
+                {item.name}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <label htmlFor={`${kind}-sender-name`}>Nome na mensagem</label>
         <input
@@ -141,7 +145,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           placeholder="Digite seu nome"
         />
 
-        <label htmlFor={`${kind}-codes`}>Mensagem/c√≥digos</label>
+        <label htmlFor={`${kind}-codes`}>CÛdigos</label>
         <textarea
           id={`${kind}-codes`}
           value={codes}
@@ -156,7 +160,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
         </button>
         {!isTarget && onWarmup ? (
           <button className="button secondary" disabled={busy || !savedGroupName} type="button" onClick={onWarmup}>
-            Enviar 15 mensagens
+            Testar envio
           </button>
         ) : null}
 
@@ -170,3 +174,4 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     </article>
   );
 }
+

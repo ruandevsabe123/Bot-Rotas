@@ -630,6 +630,32 @@ h2 {
   padding: 12px;
 }
 
+.group-search-list {
+  display: grid;
+  gap: 6px;
+  margin-top: -4px;
+  padding: 8px;
+  border: 1px solid rgba(245, 197, 66, 0.16);
+  border-radius: 8px;
+  background: #050607;
+}
+
+.group-search-list button {
+  min-height: 38px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-radius: 8px;
+  color: #f4f7f8;
+  background: #0e1114;
+  cursor: pointer;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.group-search-list button:hover {
+  border-color: rgba(245, 197, 66, 0.34);
+  color: #f5c542;
+}
+
 .link-button {
   border: 0;
   color: #f5c542;

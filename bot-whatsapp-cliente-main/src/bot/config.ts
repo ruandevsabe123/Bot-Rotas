@@ -102,12 +102,7 @@ export class ConfigStore {
       grupoAlvoNome: typeof input.grupoAlvoNome === "string" ? input.grupoAlvoNome : "",
       grupoTesteJid: typeof input.grupoTesteJid === "string" ? input.grupoTesteJid : "",
       grupoTesteNome: typeof input.grupoTesteNome === "string" ? input.grupoTesteNome : "",
-      nomeEnvio:
-        typeof input.nomeEnvio === "string" &&
-        input.nomeEnvio.trim() &&
-        !["Ruan Souza da Silva", "Alan Alves", "Alan da Silva Alves"].includes(input.nomeEnvio.trim())
-          ? input.nomeEnvio.trim()
-          : DEFAULT_CONFIG.nomeEnvio,
+      nomeEnvio: typeof input.nomeEnvio === "string" ? input.nomeEnvio.trim() : DEFAULT_CONFIG.nomeEnvio,
       nuclearMode: typeof input.nuclearMode === "boolean" ? input.nuclearMode : DEFAULT_CONFIG.nuclearMode,
       // support legacy `codigosMensagens` if present
       codigosMensagensAlvo: Array.isArray(input.codigosMensagensAlvo)

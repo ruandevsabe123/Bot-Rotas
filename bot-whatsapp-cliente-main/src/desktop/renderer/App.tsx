@@ -9,7 +9,6 @@ import {
   LockKeyhole,
   Mail,
   MessageSquareText,
-  Power,
   RefreshCw,
   Settings,
   ShieldCheck,
@@ -24,7 +23,6 @@ import { GroupMessageCard } from "./components/GroupMessageCard";
 import { LogsPanel } from "./components/LogsPanel";
 import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { StatusCard } from "./components/StatusCard";
 import { botApi, getPanelToken, getPanelUserEmail, isAuthError, panelLogin, setPanelPassword, setPanelToken, setPanelUserEmail } from "./api";
 import "./styles.css";
 
@@ -291,11 +289,11 @@ export default function App() {
   }, [authenticated]);
 
   const groupLabel = useMemo(() => {
-    return snapshot.config.grupoAlvoNome || snapshot.config.grupoAlvoJid || "Nenhum grupo alvo";
+    return snapshot.config.grupoAlvoNome || "Nenhum grupo alvo";
   }, [snapshot.config]);
 
   const testGroupLabel = useMemo(() => {
-    return snapshot.config.grupoTesteNome || snapshot.config.grupoTesteJid || "Nenhum grupo teste";
+    return snapshot.config.grupoTesteNome || "Nenhum teste salvo";
   }, [snapshot.config]);
 
   useEffect(() => {
@@ -439,13 +437,13 @@ export default function App() {
     const messages = normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensTeste || []);
 
     setConfirmation({
-      title: "Iniciar teste real",
-      message: "Deseja ouvir abertura e fechamento do grupo teste?",
+      title: "Teste abrir/fechar",
+      message: "Deseja testar abrindo e fechando o grupo?",
       details: [
         `Grupo teste: ${testGroupLabel}`,
-        messages.length ? `Base das 15 mensagens: ${messages.join(" | ")}` : "Nenhuma mensagem de teste configurada."
+        messages.length ? `Mensagens: ${messages.join(" | ")}` : "Nenhuma mensagem de teste configurada."
       ],
-      confirmLabel: "Iniciar teste",
+      confirmLabel: "Testar grupo",
       onConfirm: async () => {
         await runAction(botApi.startTestMonitoring);
       }
@@ -455,15 +453,15 @@ export default function App() {
   function confirmWarmup() {
     const config = snapshot.config;
     setConfirmation({
-      title: "Enviar 15 mensagens de teste",
-      message: "Deseja disparar agora a sequência imediata de aquecimento no grupo teste?",
+      title: "Testar envio",
+      message: "Deseja enviar as mensagens de teste agora?",
       details: [
         config.grupoTesteNome || config.grupoTesteJid
-          ? `Grupo teste: ${config.grupoTesteNome || config.grupoTesteJid}`
+          ? `Grupo teste: ${testGroupLabel}`
           : "Nenhum grupo de teste configurado.",
-        `${snapshot.warmupMessagesSent || 0}/${snapshot.warmupRequiredMessages || 15} mensagens no último aquecimento.`
+        `${snapshot.warmupMessagesSent || 0}/${snapshot.warmupRequiredMessages || 15} mensagens no último teste.`
       ],
-      confirmLabel: "Enviar 15 mensagens",
+      confirmLabel: "Testar envio",
       onConfirm: async () => {
         await runAction(botApi.warmupGroups);
       }
@@ -524,30 +522,7 @@ export default function App() {
 
       {activeTab === "home" ? (
         <section className="mobile-home">
-          <section className="command-hero">
-            <div>
-              <p className="eyebrow">Pronto para pegar rota</p>
-              <h2>{snapshot.monitoringEnabled ? "Bot armado no grupo" : "Conecte e arme o bot"}</h2>
-              <p>
-                {snapshot.monitoringEnabled
-                  ? "Monitorando abertura em tempo real."
-                  : "Use os controles para conectar o WhatsApp e iniciar o monitoramento."}
-              </p>
-            </div>
-            <span className={snapshot.monitoringEnabled ? "hero-pulse active" : "hero-pulse"}>
-              <Power size={24} />
-            </span>
-          </section>
-
           <CockpitPanel snapshot={snapshot} groupLabel={snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel} />
-
-          <StatusCard
-            status={snapshot.status}
-            error={snapshot.error}
-            groupState={snapshot.groupState}
-            monitoringEnabled={snapshot.monitoringEnabled}
-            readinessChecks={snapshot.readinessChecks}
-          />
 
           <ControlButtons
             busy={busy}
@@ -614,7 +589,7 @@ export default function App() {
             />
             <ConfigStrip
               kind="test"
-              title="Config grupo teste"
+              title="Teste abrir/fechar"
               group={testGroupLabel}
               codes={snapshot.config.codigosMensagensTeste || []}
               onOpen={() => setGroupEditor("test")}
@@ -681,7 +656,7 @@ export default function App() {
             <div className="sheet-heading">
               <div>
                 <p className="panel-label">Configuração</p>
-                <h2 id="group-editor-title">{groupEditor === "target" ? "Grupo alvo" : "Grupo teste"}</h2>
+                <h2 id="group-editor-title">{groupEditor === "target" ? "Grupo alvo" : "Teste abrir/fechar"}</h2>
               </div>
               <button className="icon-button" title="Fechar" type="button" onClick={() => setGroupEditor(undefined)}>
                 <X size={20} />
