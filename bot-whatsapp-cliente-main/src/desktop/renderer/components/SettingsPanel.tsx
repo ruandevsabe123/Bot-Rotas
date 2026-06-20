@@ -1,7 +1,7 @@
 import { HelpCircle, LogOut, MessageCircle, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { BotConfig } from "../../../shared/types";
-import { getSupportInfo } from "../api";
+import { sendSupportMessage } from "../api";
 
 type Props = {
   config: BotConfig;
@@ -13,13 +13,22 @@ type Props = {
 };
 
 export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onLogout }: Props) {
-  const [supportChatUrl, setSupportChatUrl] = useState("");
+  const [supportMessage, setSupportMessage] = useState("");
+  const [supportStatus, setSupportStatus] = useState("");
 
-  useEffect(() => {
-    getSupportInfo()
-      .then((info) => setSupportChatUrl(info.chatUrl || ""))
-      .catch(() => setSupportChatUrl(""));
-  }, []);
+  async function sendMessage() {
+    setSupportStatus("");
+    try {
+      await sendSupportMessage({
+        email: userEmail || "cliente-sem-email",
+        message: supportMessage
+      });
+      setSupportMessage("");
+      setSupportStatus("Mensagem enviada para o admin.");
+    } catch (error) {
+      setSupportStatus(error instanceof Error ? error.message : "Não consegui enviar a mensagem.");
+    }
+  }
 
   return (
     <section className="settings-grid">
@@ -44,16 +53,20 @@ export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onCl
           </span>
           <p className="panel-label">Suporte</p>
           <h2>Precisa de ajuda?</h2>
-          <p>Se o bot não conectar, não enviar rota ou aparecer algum erro, chama o suporte com uma foto da tela.</p>
+          <p>Envie uma mensagem direto para o painel do admin. Não precisa sair daqui.</p>
         </div>
-        {supportChatUrl ? (
-          <a className="button primary" href={supportChatUrl} target="_blank" rel="noreferrer">
+        <div className="support-form">
+          <textarea
+            value={supportMessage}
+            onChange={(event) => setSupportMessage(event.target.value)}
+            placeholder="Descreva o erro ou pedido para o admin"
+          />
+          <button className="button primary" disabled={busy || !supportMessage.trim()} type="button" onClick={sendMessage}>
             <MessageCircle size={18} />
-            Abrir chat
-          </a>
-        ) : (
-          <span className="mini-badge">Chat indisponível</span>
-        )}
+            Enviar
+          </button>
+          {supportStatus ? <span>{supportStatus}</span> : null}
+        </div>
       </article>
 
       <article className="panel option-panel">

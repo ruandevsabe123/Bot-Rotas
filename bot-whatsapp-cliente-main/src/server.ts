@@ -7,7 +7,8 @@ import QRCode from "qrcode";
 import qrcodeTerminal from "qrcode-terminal";
 import { BotService } from "./bot/connection";
 import { PanelUserStore, StoredPanelUser } from "./panelUserStore";
-import { AdminRoutesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole } from "./shared/types";
+import { SupportMessageStore } from "./supportMessageStore";
+import { AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
 const dataDir = path.resolve(process.env.DATA_DIR || process.cwd());
@@ -16,7 +17,6 @@ const panelPassword = String(process.env.PANEL_PASSWORD || "");
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
-const supportChatUrl = String(process.env.SUPPORT_CHAT_URL || process.env.ADMIN_CHAT_URL || "").trim();
 
 type PanelUserRecord = {
   password: string;
@@ -83,6 +83,7 @@ const adminPhoneNumbers = parseList(process.env.ADMIN_PHONE_NUMBERS || process.e
   .map(normalizePhone)
   .filter(Boolean);
 const panelUserStore = new PanelUserStore(path.join(dataDir, "panel_users.json"));
+const supportMessageStore = new SupportMessageStore(path.join(dataDir, "support_messages.json"));
 const panelUsers = mergeStoredUsers(parsePanelUsers(
   process.env.PANEL_USERS || process.env.PANEL_USER || process.env.PAINEL_USER,
   panelEmail,
@@ -371,6 +372,14 @@ function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
   };
 }
 
+function getAdminSupportMessagesSnapshot(): AdminSupportMessagesSnapshot {
+  const messages = supportMessageStore.all();
+  return {
+    messages,
+    unread: messages.filter((message) => !message.read).length
+  };
+}
+
 function broadcastSnapshot(email: string) {
   const snapshot = getBotForEmail(email).getSnapshot();
   const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
@@ -550,8 +559,14 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
-    if (request.method === "GET" && url.pathname === "/api/support") {
-      sendJson(response, 200, { chatUrl: supportChatUrl });
+    if (request.method === "POST" && url.pathname === "/api/support/messages") {
+      const body = await readJsonBody(request);
+      const message = supportMessageStore.create({
+        email: String(body.email || ""),
+        message: String(body.message || ""),
+        userAgent: String(request.headers["user-agent"] || "")
+      });
+      sendJson(response, 200, { ok: true, message });
       return;
     }
 
@@ -623,6 +638,20 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/admin/users") {
       if (!requireAdmin(authorizedEmail, response)) return;
       sendJson(response, 200, getAdminUsersSnapshot());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/support/messages") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      sendJson(response, 200, getAdminSupportMessagesSnapshot());
+      return;
+    }
+
+    if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/support/messages/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const id = decodeURIComponent(url.pathname.replace("/api/admin/support/messages/", ""));
+      supportMessageStore.markRead(id);
+      sendJson(response, 200, getAdminSupportMessagesSnapshot());
       return;
     }
 

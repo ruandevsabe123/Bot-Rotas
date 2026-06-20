@@ -22,7 +22,17 @@ import {
   X,
   Zap
 } from "lucide-react";
-import { AdminRoutesSnapshot, AdminUserDetail, AdminUserSummary, AdminUsersSnapshot, BotSnapshot, PanelUserRole, RouteDispatch } from "../../shared/types";
+import {
+  AdminRoutesSnapshot,
+  AdminSupportMessagesSnapshot,
+  AdminUserDetail,
+  AdminUserSummary,
+  AdminUsersSnapshot,
+  BotSnapshot,
+  PanelUserRole,
+  RouteDispatch,
+  SupportMessage
+} from "../../shared/types";
 import { ControlButtons } from "./components/ControlButtons";
 import { GroupMessageCard } from "./components/GroupMessageCard";
 import { LogsPanel } from "./components/LogsPanel";
@@ -31,16 +41,18 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import {
   botApi,
   getAdminRoutes,
+  getAdminSupportMessages,
   getAdminUserDetail,
   getAdminUsers,
   getPanelMe,
   getPanelToken,
   getPanelUserEmail,
   getPanelUserRole,
-  getSupportInfo,
   isAuthError,
+  markSupportMessageRead,
   panelLogin,
   saveAdminUser,
+  sendSupportMessage,
   setPanelPassword,
   setPanelToken,
   setPanelUserEmail,
@@ -126,19 +138,23 @@ function MessagePreviewStrip({
 function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: string, password: string) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [supportChatUrl, setSupportChatUrl] = useState("");
+  const [supportMessage, setSupportMessage] = useState("Meu acesso está bloqueado. Pode liberar minha conta?");
+  const [supportStatus, setSupportStatus] = useState("");
   const blocked = Boolean(error && /bloquead/i.test(error));
-
-  useEffect(() => {
-    if (!blocked) return;
-    getSupportInfo()
-      .then((info) => setSupportChatUrl(info.chatUrl || ""))
-      .catch(() => setSupportChatUrl(""));
-  }, [blocked]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
     onSubmit(email.trim(), password);
+  }
+
+  async function requestSupport() {
+    setSupportStatus("");
+    try {
+      await sendSupportMessage({ email: email.trim(), message: supportMessage });
+      setSupportStatus("Mensagem enviada para o admin pelo painel.");
+    } catch (supportError) {
+      setSupportStatus(supportError instanceof Error ? supportError.message : "Não consegui enviar a mensagem.");
+    }
   }
 
   return (
@@ -174,15 +190,17 @@ function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: st
         {blocked ? (
           <section className="blocked-access-card">
             <strong>Acesso pausado</strong>
-            <p>Seu usuário está bloqueado no momento. Fale com o suporte para solicitar a liberação.</p>
-            {supportChatUrl ? (
-              <a className="button primary" href={supportChatUrl} target="_blank" rel="noreferrer">
-                <MessageSquareText size={18} />
-                Abrir chat
-              </a>
-            ) : (
-              <span className="support-unavailable">Peça ao administrador para configurar o chat de suporte.</span>
-            )}
+            <p>Seu usuário está bloqueado no momento. Envie uma mensagem interna para o admin solicitar liberação.</p>
+            <textarea
+              value={supportMessage}
+              onChange={(event) => setSupportMessage(event.target.value)}
+              placeholder="Escreva sua mensagem para o admin"
+            />
+            <button className="button primary" disabled={!email.trim() || !supportMessage.trim()} type="button" onClick={requestSupport}>
+              <MessageSquareText size={18} />
+              Enviar para o admin
+            </button>
+            {supportStatus ? <span className="support-unavailable">{supportStatus}</span> : null}
           </section>
         ) : error ? <p className="login-error">{error}</p> : null}
         <button className="button primary" disabled={!email.trim() || !password} type="submit">
@@ -561,22 +579,43 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
   );
 }
 
+function SupportMessageRow({ message, onMarkRead }: { message: SupportMessage; onMarkRead: () => void }) {
+  return (
+    <article className={message.read ? "support-message-row" : "support-message-row unread"}>
+      <div>
+        <p className="panel-label">{message.read ? "Lida" : "Nova mensagem"}</p>
+        <h2>{message.email}</h2>
+        <small>{formatDate(message.createdAt)}</small>
+      </div>
+      <p>{message.message}</p>
+      {!message.read ? (
+        <button className="button" type="button" onClick={onMarkRead}>
+          Marcar como lida
+        </button>
+      ) : null}
+    </article>
+  );
+}
+
 function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: () => void }) {
   const [dashboard, setDashboard] = useState<AdminRoutesSnapshot>({
     routes: [],
     totals: { routes: 0, validated: 0, reactions: 0, clients: 0 }
   });
   const [usersDashboard, setUsersDashboard] = useState<AdminUsersSnapshot>({ users: [] });
+  const [supportDashboard, setSupportDashboard] = useState<AdminSupportMessagesSnapshot>({ messages: [], unread: 0 });
   const [editor, setEditor] = useState<UserEditorState>();
   const [detail, setDetail] = useState<AdminUserDetail>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [lastNotifiedSupportId, setLastNotifiedSupportId] = useState("");
 
   function refresh() {
-    Promise.all([getAdminRoutes(), getAdminUsers()])
-      .then(([nextRoutes, nextUsers]) => {
+    Promise.all([getAdminRoutes(), getAdminUsers(), getAdminSupportMessages()])
+      .then(([nextRoutes, nextUsers, nextSupport]) => {
         setDashboard(nextRoutes);
         setUsersDashboard(nextUsers);
+        setSupportDashboard(nextSupport);
         setError("");
       })
       .catch((nextError) => {
@@ -593,6 +632,38 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     const interval = window.setInterval(refresh, 3000);
     return () => window.clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const latestUnread = supportDashboard.messages.find((message) => !message.read);
+    if (!latestUnread || latestUnread.id === lastNotifiedSupportId) return;
+    setLastNotifiedSupportId(latestUnread.id);
+
+    try {
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioContextClass) {
+        const audio = new AudioContextClass();
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        oscillator.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0001, audio.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.1, audio.currentTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.28);
+        oscillator.connect(gain);
+        gain.connect(audio.destination);
+        oscillator.start();
+        oscillator.stop(audio.currentTime + 0.3);
+        window.setTimeout(() => void audio.close(), 360);
+      }
+
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("Nova mensagem no painel", {
+          body: `${latestUnread.email}: ${latestUnread.message.slice(0, 90)}`
+        });
+      }
+    } catch {
+      // O navegador pode bloquear áudio/notificações antes de interação do admin.
+    }
+  }, [lastNotifiedSupportId, supportDashboard.messages]);
 
   async function saveUser(nextEditor = editor) {
     if (!nextEditor) return;
@@ -626,6 +697,23 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     }
   }
 
+  async function enableNotifications() {
+    if (!("Notification" in window)) {
+      setError("Este navegador não suporta notificações.");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setError(permission === "granted" ? "" : "Permissão de notificação não liberada no navegador.");
+  }
+
+  async function readSupportMessage(id: string) {
+    try {
+      setSupportDashboard(await markSupportMessageRead(id));
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui marcar a mensagem.");
+    }
+  }
+
   return (
     <main className="app-shell admin-shell">
       <section className="topbar app-topbar">
@@ -644,6 +732,24 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
         <AdminMetric title="Validadas" value={dashboard.totals.validated} detail="por reação admin" />
         <AdminMetric title="Reações" value={dashboard.totals.reactions} detail="recebidas no WhatsApp" />
         <AdminMetric title="Usuários" value={usersDashboard.users.length} detail={`${dashboard.totals.clients} com rotas`} />
+        <AdminMetric title="Mensagens" value={supportDashboard.unread} detail="não lidas" />
+      </section>
+
+      <section className={supportDashboard.unread ? "quick-panel admin-list-panel support-inbox has-unread" : "quick-panel admin-list-panel support-inbox"}>
+        <div className="panel-heading">
+          <div>
+            <p className="panel-label">Chat interno</p>
+            <h2>Mensagens dos clientes</h2>
+          </div>
+          <button className="button" type="button" onClick={enableNotifications}>
+            Ativar notificação
+          </button>
+        </div>
+        <div className="support-message-list">
+          {supportDashboard.messages.length ? supportDashboard.messages.slice(0, 8).map((message) => (
+            <SupportMessageRow key={message.id} message={message} onMarkRead={() => readSupportMessage(message.id)} />
+          )) : <p className="qr-empty">Nenhuma mensagem de cliente ainda.</p>}
+        </div>
       </section>
 
       <section className="quick-panel admin-list-panel">

@@ -1,5 +1,6 @@
 import {
   AdminRoutesSnapshot,
+  AdminSupportMessagesSnapshot,
   AdminUserDetail,
   AdminUsersSnapshot,
   BotSnapshot,
@@ -124,8 +125,22 @@ export function saveAdminUser(payload: {
   );
 }
 
-export function getSupportInfo() {
-  return fetchJson<{ chatUrl: string }>("/api/support");
+export function sendSupportMessage(payload: { email: string; message: string }) {
+  return fetchJson<{ ok: boolean }>("/api/support/messages", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function getAdminSupportMessages() {
+  return fetchJson<AdminSupportMessagesSnapshot>("/api/admin/support/messages");
+}
+
+export function markSupportMessageRead(id: string) {
+  return fetchJson<AdminSupportMessagesSnapshot>(`/api/admin/support/messages/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({})
+  });
 }
 
 async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {

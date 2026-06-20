@@ -176,6 +176,19 @@ button {
   line-height: 1.45;
 }
 
+.blocked-access-card textarea,
+.support-form textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  border: 1px solid rgba(245, 247, 248, 0.12);
+  border-radius: 8px;
+  color: #f4f7f8;
+  background: #050607;
+  padding: 10px;
+  outline: none;
+}
+
 .support-unavailable {
   color: #ffb8b2;
   font-size: 0.9rem;
@@ -351,7 +364,7 @@ h2 {
 
 .admin-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -620,7 +633,7 @@ h2 {
 
 .support-card {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 0.8fr) minmax(240px, 1fr);
   gap: 14px;
   align-items: center;
   padding: 18px;
@@ -657,6 +670,61 @@ h2 {
   gap: 14px;
   align-items: start;
   padding: 18px;
+}
+
+.support-form {
+  display: grid;
+  gap: 8px;
+}
+
+.support-form span {
+  color: #8e99a3;
+  font-size: 0.86rem;
+}
+
+.support-inbox {
+  border-color: rgba(126, 182, 255, 0.16);
+}
+
+.support-inbox.has-unread {
+  border-color: rgba(245, 197, 66, 0.34);
+  box-shadow:
+    0 22px 70px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(245, 197, 66, 0.08);
+}
+
+.support-message-list {
+  display: grid;
+  gap: 10px;
+}
+
+.support-message-row {
+  display: grid;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-left: 5px solid #7eb6ff;
+  border-radius: 8px;
+  background: #080a0c;
+}
+
+.support-message-row.unread {
+  border-left-color: #f5c542;
+  background:
+    linear-gradient(135deg, rgba(245, 197, 66, 0.08), transparent 42%),
+    #080a0c;
+}
+
+.support-message-row h2 {
+  font-size: 1.05rem;
+}
+
+.support-message-row small,
+.support-message-row p {
+  margin: 0;
+  color: #a9b2bb;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
 }
 
 .mini-badge {

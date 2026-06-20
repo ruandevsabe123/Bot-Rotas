@@ -103,6 +103,21 @@ export type AdminUsersSnapshot = {
   users: AdminUserSummary[];
 };
 
+export type SupportMessage = {
+  id: string;
+  email: string;
+  message: string;
+  createdAt: string;
+  read: boolean;
+  readAt?: string;
+  userAgent?: string;
+};
+
+export type AdminSupportMessagesSnapshot = {
+  messages: SupportMessage[];
+  unread: number;
+};
+
 export type RouteReaction = {
   id: string;
   timestamp: string;
