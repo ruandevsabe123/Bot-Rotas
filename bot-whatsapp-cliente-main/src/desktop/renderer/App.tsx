@@ -480,6 +480,18 @@ export default function App() {
     });
   }
 
+  function confirmFactoryReset() {
+    setConfirmation({
+      title: "Resetar tudo",
+      message: "Deseja apagar sessão do WhatsApp e todas as configurações salvas?",
+      details: ["O bot vai voltar zerado, com grupos, nome e mensagens em branco.", "Depois do reset será necessário conectar o WhatsApp novamente."],
+      confirmLabel: "Resetar tudo",
+      onConfirm: async () => {
+        await runAction(botApi.factoryReset);
+      }
+    });
+  }
+
   function saveGeneralSettings(nuclearMode: boolean) {
     void runAction(() => botApi.saveGeneralSettings({ nuclearMode }));
   }
@@ -624,6 +636,7 @@ export default function App() {
             monitoringEnabled={Boolean(snapshot.monitoringEnabled)}
             userEmail={userEmail}
             onClearLogs={confirmClearLogs}
+            onFactoryReset={confirmFactoryReset}
             onToggleNuclearMode={saveGeneralSettings}
             onLogout={() => {
               setPanelToken("");
@@ -702,4 +715,3 @@ export default function App() {
     </main>
   );
 }
-

@@ -98,6 +98,7 @@ export type DesktopApi = {
   stopBot: () => Promise<BotSnapshot>;
   restartBot: () => Promise<BotSnapshot>;
   clearSession: () => Promise<BotSnapshot>;
+  factoryReset: () => Promise<BotSnapshot>;
   clearLogs: () => Promise<BotSnapshot>;
   refreshGroups: () => Promise<BotSnapshot>;
   startMonitoring: () => Promise<BotSnapshot>;

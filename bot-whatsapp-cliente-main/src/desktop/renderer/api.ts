@@ -99,6 +99,7 @@ function createWebApi(): DesktopApi {
     stopBot: () => action("stop"),
     restartBot: () => action("restart"),
     clearSession: () => action("clear-session"),
+    factoryReset: () => action("factory-reset"),
     clearLogs: () => action("clear-logs"),
     refreshGroups: () => action("refresh-groups"),
     startMonitoring: () => action("start-monitoring"),

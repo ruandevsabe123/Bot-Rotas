@@ -9,27 +9,22 @@ import { BotService } from "./bot/connection";
 
 const port = Number(process.env.PORT || 3000);
 const dataDir = path.resolve(process.env.DATA_DIR || process.cwd());
-const panelEmail = String(process.env.PANEL_EMAIL || "alanrobot@gmail.com").trim().toLowerCase();
-const panelPassword = String(process.env.PANEL_PASSWORD || "senhanova");
+const panelEmail = String(process.env.PANEL_EMAIL || "").trim().toLowerCase();
+const panelPassword = String(process.env.PANEL_PASSWORD || "");
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
-const TEST_PANEL_EMAIL = "teste@bot.local";
-const TEST_PANEL_PASSWORD = "teste123";
 
 function parsePanelUsers(envUsers: string | undefined, defaultEmail: string, defaultPassword: string) {
   const users = new Map<string, string>();
-  const raw = String(envUsers || `${defaultEmail}:${defaultPassword}`).trim();
+  const raw = String(envUsers || "").trim();
   for (const part of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
     const [email, password] = part.split(":").map((item) => item.trim());
     if (!email || !password) continue;
     users.set(email.toLowerCase(), password);
   }
-  if (users.size === 0) {
+  if (defaultEmail && defaultPassword) {
     users.set(defaultEmail.toLowerCase(), defaultPassword);
-  }
-  if (!users.has(TEST_PANEL_EMAIL)) {
-    users.set(TEST_PANEL_EMAIL, TEST_PANEL_PASSWORD);
   }
   return users;
 }
@@ -160,7 +155,7 @@ function verifySessionToken(token: string): string | undefined {
 }
 
 function getAuthorizedEmail(request: http.IncomingMessage) {
-  if (!panelUsers.size) return panelEmail;
+  if (!panelUsers.size) return undefined;
   const token = String(request.headers["x-panel-token"] || "").trim();
   const password = String(request.headers["x-panel-password"] || "").trim();
   const tokenEmail = verifySessionToken(token);
@@ -230,6 +225,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
       break;
     case "clear-session":
       await bot.clearSession();
+      break;
+    case "factory-reset":
+      await bot.factoryReset();
       break;
     case "clear-logs":
       bot.clearLogs();
@@ -353,7 +351,7 @@ const server = http.createServer(async (request, response) => {
 
   try {
     if (request.method === "GET" && url.pathname === "/api/ping") {
-      sendJson(response, 200, { ok: true, protected: Boolean(panelPassword), login: "email" });
+      sendJson(response, 200, { ok: true, protected: Boolean(panelUsers.size), login: "email" });
       return;
     }
 
@@ -361,6 +359,10 @@ const server = http.createServer(async (request, response) => {
       const body = await readJsonBody(request);
       const email = String(body.email || "").trim().toLowerCase();
       const password = String(body.password || "");
+      if (!panelUsers.size) {
+        sendJson(response, 503, { error: "Configure PANEL_EMAIL e PANEL_PASSWORD ou PANEL_USERS no Render." });
+        return;
+      }
       const expectedPassword = panelUsers.get(email);
       if (!email || !expectedPassword || password !== expectedPassword) {
         sendJson(response, 401, { error: "Email ou senha invalidos." });
@@ -444,8 +446,8 @@ server.listen(port, "0.0.0.0", () => {
     console.log(`Na rede local: ${address}`);
   }
   console.log(`Dados persistentes: ${dataDir}`);
-  if (!panelPassword) {
-    console.log("Aviso: defina PANEL_PASSWORD no Render para proteger o painel publico.");
+  if (!panelUsers.size) {
+    console.log("Aviso: defina PANEL_EMAIL e PANEL_PASSWORD ou PANEL_USERS no Render para liberar e proteger o painel publico.");
   }
   startKeepAlive();
 });

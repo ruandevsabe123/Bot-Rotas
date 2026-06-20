@@ -6,11 +6,12 @@ type Props = {
   monitoringEnabled: boolean;
   userEmail?: string;
   onClearLogs: () => void;
+  onFactoryReset: () => void;
   onToggleNuclearMode: (enabled: boolean) => void;
   onLogout?: () => void;
 };
 
-export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onToggleNuclearMode, onLogout }: Props) {
+export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onToggleNuclearMode, onLogout }: Props) {
   return (
     <section className="settings-grid">
       <article className="panel option-panel account-panel">
@@ -33,6 +34,17 @@ export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onCl
         </div>
         <button className="button danger" disabled={busy} type="button" onClick={onClearLogs}>
           Limpar logs
+        </button>
+      </article>
+
+      <article className="panel option-panel">
+        <div>
+          <p className="panel-label">Reset</p>
+          <h2>Padrão de fábrica</h2>
+          <p>Apaga sessão, grupos, nome e mensagens salvas.</p>
+        </div>
+        <button className="button danger" disabled={busy} type="button" onClick={onFactoryReset}>
+          Resetar tudo
         </button>
       </article>
 

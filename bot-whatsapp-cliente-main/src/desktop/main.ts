@@ -86,6 +86,10 @@ function registerIpc() {
     await bot.clearSession();
     return bot.getSnapshot();
   });
+  ipcMain.handle("bot:factoryReset", async () => {
+    await bot.factoryReset();
+    return bot.getSnapshot();
+  });
   ipcMain.handle("bot:clearLogs", async () => {
     bot.clearLogs();
     return bot.getSnapshot();

@@ -22,6 +22,7 @@ const api: DesktopApi = {
   simulateOpening: () => ipcRenderer.invoke("bot:simulateOpening"),
   restartBot: () => ipcRenderer.invoke("bot:restart"),
   clearSession: () => ipcRenderer.invoke("bot:clearSession"),
+  factoryReset: () => ipcRenderer.invoke("bot:factoryReset"),
   clearLogs: () => ipcRenderer.invoke("bot:clearLogs"),
   refreshGroups: () => ipcRenderer.invoke("bot:refreshGroups"),
   saveGroup: (payload: SaveGroupPayload) => ipcRenderer.invoke("bot:saveGroup", payload),
