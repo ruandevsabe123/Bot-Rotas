@@ -10,6 +10,7 @@ type Props = {
 
 export function QrCodeBox({ qrCode, pairingCode, status }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const formattedPairingCode = pairingCode ? pairingCode.replace(/(.{4})(.{1,4})/, "$1-$2") : "";
 
   useEffect(() => {
     if (!qrCode || !canvasRef.current) return;
@@ -33,7 +34,7 @@ export function QrCodeBox({ qrCode, pairingCode, status }: Props) {
         {pairingCode ? (
           <div className="pairing-code-box">
             <span>Código de pareamento</span>
-            <strong>{pairingCode}</strong>
+            <strong>{formattedPairingCode}</strong>
             <small>WhatsApp &gt; Aparelhos conectados &gt; Conectar com número de telefone</small>
           </div>
         ) : qrCode ? (

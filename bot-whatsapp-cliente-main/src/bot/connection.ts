@@ -696,7 +696,7 @@ export class BotService extends EventEmitter {
       this.handleMessages(messages, connectionId)
     );
 
-    // Baileys requires waiting for the QR event before requesting a pairing code.
+    void this.requestPairingCodeIfNeeded(connectionId);
   }
 
   private async requestPairingCodeIfNeeded(connectionId: number): Promise<void> {
@@ -704,7 +704,6 @@ export class BotService extends EventEmitter {
     if (connectionId !== this.activeConnectionId) return;
     if (!this.pairingPhoneNumber) return;
     if (this.pairingCodeRequested) return;
-    if (!this.qrReceivedInCurrentConnection) return;
     if (this.sock.authState?.creds?.registered) return;
 
     const phone = this.pairingPhoneNumber.replace(/\D/g, "");
@@ -718,7 +717,7 @@ export class BotService extends EventEmitter {
 
     this.pairingCodeRequested = true;
     try {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await new Promise((resolve) => setTimeout(resolve, 500));
       if (!this.sock || connectionId !== this.activeConnectionId) return;
 
       const code = await this.sock.requestPairingCode(phone);
@@ -746,7 +745,6 @@ export class BotService extends EventEmitter {
       this.qrCode = qr;
       this.setStatus("waiting_qr");
       this.logger.info("QR Code gerado.");
-      void this.requestPairingCodeIfNeeded(connectionId);
     }
 
     if (connection === "open") {

@@ -459,7 +459,7 @@ export default function App() {
               inputMode="tel"
               placeholder="5511999999999"
               value={pairingPhoneNumber}
-              onChange={(event) => setPairingPhoneNumber(event.target.value)}
+              onChange={(event) => setPairingPhoneNumber(event.target.value.replace(/\D/g, ""))}
             />
           </section>
 
