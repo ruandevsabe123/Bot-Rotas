@@ -31,12 +31,18 @@ function parsePanelUsers(envUsers: string | undefined, defaultEmail: string, def
   return users;
 }
 
-const panelUsers = parsePanelUsers(process.env.PANEL_USERS || process.env.PANEL_USER, panelEmail, panelPassword);
+const panelUsers = parsePanelUsers(
+  process.env.PANEL_USERS || process.env.PANEL_USER || process.env.PAINEL_USER,
+  panelEmail,
+  panelPassword
+);
 const panelSessionSecret = process.env.PANEL_SESSION_SECRET || Array.from(panelUsers.values())[0] || panelPassword;
 const keepAliveUrl =
   process.env.KEEP_ALIVE_URL ||
   process.env.RENDER_EXTERNAL_URL ||
   (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : "");
+
+console.log("Painel de usuários habilitados:", Array.from(panelUsers.keys()).join(", "));
 
 fs.mkdirSync(dataDir, { recursive: true });
 
