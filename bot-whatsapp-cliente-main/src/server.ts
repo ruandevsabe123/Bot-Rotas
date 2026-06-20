@@ -9,13 +9,13 @@ import { BotService } from "./bot/connection";
 
 const port = Number(process.env.PORT || 3000);
 const dataDir = path.resolve(process.env.DATA_DIR || process.cwd());
-const authDir = path.join(dataDir, "auth_info");
-const configPath = path.join(dataDir, "config.json");
 const panelEmail = String(process.env.PANEL_EMAIL || "alanrobot@gmail.com").trim().toLowerCase();
 const panelPassword = String(process.env.PANEL_PASSWORD || "senhanova");
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
+const TEST_PANEL_EMAIL = "teste@bot.local";
+const TEST_PANEL_PASSWORD = "teste123";
 
 function parsePanelUsers(envUsers: string | undefined, defaultEmail: string, defaultPassword: string) {
   const users = new Map<string, string>();
@@ -27,6 +27,9 @@ function parsePanelUsers(envUsers: string | undefined, defaultEmail: string, def
   }
   if (users.size === 0) {
     users.set(defaultEmail.toLowerCase(), defaultPassword);
+  }
+  if (!users.has(TEST_PANEL_EMAIL)) {
+    users.set(TEST_PANEL_EMAIL, TEST_PANEL_PASSWORD);
   }
   return users;
 }
@@ -42,20 +45,60 @@ const keepAliveUrl =
   process.env.RENDER_EXTERNAL_URL ||
   (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : "");
 
-console.log("Painel de usuários habilitados:", Array.from(panelUsers.keys()).join(", "));
+console.log("Painel de usuarios habilitados:", Array.from(panelUsers.keys()).join(", "));
 
 fs.mkdirSync(dataDir, { recursive: true });
 
-const bot = new BotService({
-  authDir,
-  configPath,
-  pairingPhoneNumber: process.env.BOT_PHONE_NUMBER || "",
-  autoClearInvalidSession: true
-});
+type Client = {
+  email: string;
+  response: http.ServerResponse;
+};
 
-const clients = new Set<http.ServerResponse>();
-let lastQrCode = "";
-let lastLogId = "";
+const bots = new Map<string, BotService>();
+const clients = new Set<Client>();
+const lastSnapshotState = new Map<string, { qrCode: string; logId: string }>();
+
+function getUserStorageKey(email: string) {
+  return email.toLowerCase().replace(/[^a-z0-9._-]+/g, "_");
+}
+
+function getBotForEmail(email: string) {
+  const normalizedEmail = email.toLowerCase();
+  const existing = bots.get(normalizedEmail);
+  if (existing) return existing;
+
+  const userDir = path.join(dataDir, "users", getUserStorageKey(normalizedEmail));
+  const userAuthDir = path.join(userDir, "auth_info");
+  const userConfigPath = path.join(userDir, "config.json");
+
+  if (normalizedEmail === panelEmail) {
+    const legacyAuthDir = path.join(dataDir, "auth_info");
+    const legacyConfigPath = path.join(dataDir, "config.json");
+    if (!fs.existsSync(userAuthDir) && fs.existsSync(legacyAuthDir)) {
+      fs.mkdirSync(userDir, { recursive: true });
+      fs.cpSync(legacyAuthDir, userAuthDir, { recursive: true });
+    }
+    if (!fs.existsSync(userConfigPath) && fs.existsSync(legacyConfigPath)) {
+      fs.mkdirSync(userDir, { recursive: true });
+      fs.copyFileSync(legacyConfigPath, userConfigPath);
+    }
+  }
+
+  const nextBot = new BotService({
+    authDir: userAuthDir,
+    configPath: userConfigPath,
+    pairingPhoneNumber: process.env.BOT_PHONE_NUMBER || "",
+    autoClearInvalidSession: true
+  });
+
+  nextBot.on("snapshot", () => {
+    broadcastSnapshot(normalizedEmail);
+    logSnapshot(normalizedEmail);
+  });
+
+  bots.set(normalizedEmail, nextBot);
+  return nextBot;
+}
 
 function sendJson(response: http.ServerResponse, statusCode: number, data: unknown) {
   response.writeHead(statusCode, {
@@ -100,78 +143,81 @@ function createSessionToken(email: string) {
   return `${payload}.${signPayload(payload)}`;
 }
 
-function verifySessionToken(token: string) {
+function verifySessionToken(token: string): string | undefined {
   const [payload, signature] = token.split(".");
-  if (!payload || !signature) return false;
+  if (!payload || !signature) return undefined;
   const expected = signPayload(payload);
-  if (signature.length !== expected.length) return false;
+  if (signature.length !== expected.length) return undefined;
 
   try {
-    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return false;
+    if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return undefined;
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
-    return parsed.email && panelUsers.has(parsed.email.toLowerCase()) && Number(parsed.exp) > Date.now();
+    const email = String(parsed.email || "").toLowerCase();
+    return email && panelUsers.has(email) && Number(parsed.exp) > Date.now() ? email : undefined;
   } catch {
-    return false;
+    return undefined;
   }
 }
 
-function isAuthorized(request: http.IncomingMessage) {
-  if (!panelUsers.size) return true;
+function getAuthorizedEmail(request: http.IncomingMessage) {
+  if (!panelUsers.size) return panelEmail;
   const token = String(request.headers["x-panel-token"] || "").trim();
   const password = String(request.headers["x-panel-password"] || "").trim();
-  return (
-    verifySessionToken(token) ||
-    (password ? Array.from(panelUsers.values()).some((expected) => expected === password) : false)
-  );
+  const tokenEmail = verifySessionToken(token);
+  if (tokenEmail) return tokenEmail;
+
+  if (password) {
+    for (const [email, expected] of panelUsers.entries()) {
+      if (expected === password) return email;
+    }
+  }
+
+  return undefined;
 }
 
 function requireAuth(request: http.IncomingMessage, response: http.ServerResponse) {
-  if (isAuthorized(request)) return false;
+  const email = getAuthorizedEmail(request);
+  if (email) return email;
   sendJson(response, 401, { error: "Login obrigatório." });
-  return true;
+  return undefined;
 }
-
-function broadcastSnapshot() {
-  const snapshot = bot.getSnapshot();
+function broadcastSnapshot(email: string) {
+  const snapshot = getBotForEmail(email).getSnapshot();
   const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
   for (const client of clients) {
-    client.write(payload);
+    if (client.email === email) client.response.write(payload);
   }
 }
 
-function logSnapshot() {
-  const snapshot = bot.getSnapshot();
+function logSnapshot(email: string) {
+  const snapshot = getBotForEmail(email).getSnapshot();
   const lastLog = snapshot.logs[snapshot.logs.length - 1];
   const logId = lastLog?.id || "";
-  const shouldPrint = snapshot.qrCode !== lastQrCode || logId !== lastLogId;
+  const lastState = lastSnapshotState.get(email) || { qrCode: "", logId: "" };
+  const shouldPrint = snapshot.qrCode !== lastState.qrCode || logId !== lastState.logId;
 
   if (!shouldPrint) return;
-  lastQrCode = snapshot.qrCode;
-  lastLogId = logId;
+  lastSnapshotState.set(email, { qrCode: snapshot.qrCode, logId });
 
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("------------------------------------");
   console.log("Bot WhatsApp - Render/Web");
+  console.log("Usuario:", email);
   console.log("Status:", snapshot.status);
   console.log("Monitoramento:", snapshot.monitoringEnabled ? "ativado" : "desativado");
   if (snapshot.config.grupoAlvoNome || snapshot.config.grupoAlvoJid) {
     console.log("Grupo alvo:", snapshot.config.grupoAlvoNome || snapshot.config.grupoAlvoJid);
   }
-  if (snapshot.pairingCode) console.log("Código de pareamento:", snapshot.pairingCode);
+  if (snapshot.pairingCode) console.log("Codigo de pareamento:", snapshot.pairingCode);
   if (snapshot.error) console.log("Erro:", snapshot.error);
-  if (lastLog) console.log("Último log:", lastLog.message);
+  if (lastLog) console.log("Ultimo log:", lastLog.message);
   if (snapshot.qrCode) {
-    console.log("QR Code disponível no painel web.");
+    console.log("QR Code disponivel no painel web.");
     qrcodeTerminal.generate(snapshot.qrCode, { small: true });
   }
-  console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  console.log("------------------------------------");
 }
 
-bot.on("snapshot", () => {
-  broadcastSnapshot();
-  logSnapshot();
-});
-
-async function handleAction(action: string, body: any) {
+async function handleAction(bot: BotService, action: string, body: any) {
   switch (action) {
     case "start":
       await bot.start(typeof body.pairingPhoneNumber === "string" ? body.pairingPhoneNumber : undefined);
@@ -229,7 +275,7 @@ async function handleAction(action: string, body: any) {
       bot.setGeneralSettings({ nuclearMode: Boolean(body.nuclearMode) });
       break;
     default:
-      throw new Error(`Ação desconhecida: ${action}`);
+      throw new Error(`Acao desconhecida: ${action}`);
   }
 
   return bot.getSnapshot();
@@ -254,7 +300,7 @@ function serveStatic(urlPath: string, response: http.ServerResponse) {
 
   if (!fs.existsSync(filePath)) {
     response.writeHead(404);
-    response.end("Painel web ainda não foi compilado. Rode npm run build.");
+    response.end("Painel web ainda nao foi compilado. Rode npm run build.");
     return;
   }
 
@@ -284,8 +330,11 @@ function startKeepAlive() {
   console.log(`Keep-alive armado para monitoramento: ${pingUrl}`);
 
   setInterval(() => {
-    const snapshot = bot.getSnapshot();
-    if (!snapshot.monitoringEnabled || snapshot.status !== "connected") return;
+    const hasActiveMonitoring = Array.from(bots.values()).some((item) => {
+      const snapshot = item.getSnapshot();
+      return snapshot.monitoringEnabled && snapshot.status === "connected";
+    });
+    if (!hasActiveMonitoring) return;
 
     fetch(pingUrl)
       .then((response) => {
@@ -314,7 +363,7 @@ const server = http.createServer(async (request, response) => {
       const password = String(body.password || "");
       const expectedPassword = panelUsers.get(email);
       if (!email || !expectedPassword || password !== expectedPassword) {
-        sendJson(response, 401, { error: "Email ou senha inválidos." });
+        sendJson(response, 401, { error: "Email ou senha invalidos." });
         return;
       }
 
@@ -326,12 +375,17 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    let authorizedEmail = "";
     if (url.pathname.startsWith("/api/") || url.pathname === "/events" || url.pathname === "/qr.svg") {
-      if (requireAuth(request, response)) return;
+      const email = requireAuth(request, response);
+      if (!email) return;
+      authorizedEmail = email;
     }
 
+    const activeBot = authorizedEmail ? getBotForEmail(authorizedEmail) : undefined;
+
     if (request.method === "GET" && url.pathname === "/api/snapshot") {
-      sendJson(response, 200, bot.getSnapshot());
+      sendJson(response, 200, activeBot!.getSnapshot());
       return;
     }
 
@@ -341,17 +395,18 @@ const server = http.createServer(async (request, response) => {
         "Cache-Control": "no-store",
         Connection: "keep-alive"
       });
-      clients.add(response);
-      response.write(`data: ${JSON.stringify(bot.getSnapshot())}\n\n`);
-      request.on("close", () => clients.delete(response));
+      const client = { email: authorizedEmail, response };
+      clients.add(client);
+      response.write(`data: ${JSON.stringify(activeBot!.getSnapshot())}\n\n`);
+      request.on("close", () => clients.delete(client));
       return;
     }
 
     if (request.method === "GET" && url.pathname === "/qr.svg") {
-      const snapshot = bot.getSnapshot();
+      const snapshot = activeBot!.getSnapshot();
       if (!snapshot.qrCode) {
         response.writeHead(404);
-        response.end("QR indisponível");
+        response.end("QR indisponivel");
         return;
       }
 
@@ -367,7 +422,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname.startsWith("/api/action/")) {
       const action = decodeURIComponent(url.pathname.replace("/api/action/", ""));
       const body = await readJsonBody(request);
-      sendJson(response, 200, await handleAction(action, body));
+      sendJson(response, 200, await handleAction(activeBot!, action, body));
       return;
     }
 
@@ -390,14 +445,14 @@ server.listen(port, "0.0.0.0", () => {
   }
   console.log(`Dados persistentes: ${dataDir}`);
   if (!panelPassword) {
-    console.log("Aviso: defina PANEL_PASSWORD no Render para proteger o painel público.");
+    console.log("Aviso: defina PANEL_PASSWORD no Render para proteger o painel publico.");
   }
   startKeepAlive();
 });
 
 async function shutdown() {
-  console.log("Encerrando bot...");
-  await bot.stop();
+  console.log("Encerrando bots...");
+  await Promise.all(Array.from(bots.values()).map((item) => item.stop().catch(() => undefined)));
   server.close(() => process.exit(0));
 }
 
