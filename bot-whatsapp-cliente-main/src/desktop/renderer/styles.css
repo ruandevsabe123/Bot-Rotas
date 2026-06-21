@@ -421,15 +421,19 @@ h2 {
 
 .admin-metric {
   display: grid;
-  gap: 6px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
   min-height: 108px;
   padding: 16px;
   border: 1px solid rgba(245, 247, 248, 0.09);
   border-radius: 8px;
-  background: linear-gradient(180deg, rgba(20, 24, 28, 0.98), rgba(7, 9, 11, 0.98));
+  background:
+    linear-gradient(135deg, rgba(245, 197, 66, 0.08), transparent 45%),
+    linear-gradient(180deg, rgba(20, 24, 28, 0.98), rgba(7, 9, 11, 0.98));
 }
 
-.admin-metric span,
+.admin-metric > div > span,
 .admin-metric small,
 .route-meta,
 .reaction-line span {
@@ -437,7 +441,39 @@ h2 {
   font-size: 0.84rem;
 }
 
+.admin-metric-icon,
+.route-state-icon,
+.user-state-icon {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 8px;
+  color: #f5c542;
+  background: rgba(245, 197, 66, 0.1);
+}
+
+.admin-metric-green .admin-metric-icon,
+.route-state-icon.ok,
+.user-state-icon {
+  color: #35d07f;
+  background: rgba(53, 208, 127, 0.1);
+}
+
+.admin-metric-blue .admin-metric-icon {
+  color: #7eb6ff;
+  background: rgba(126, 182, 255, 0.1);
+}
+
+.admin-metric-red .admin-metric-icon,
+.user-state-icon.blocked {
+  color: #ff7a70;
+  background: rgba(255, 81, 72, 0.1);
+}
+
 .admin-metric strong {
+  display: block;
+  margin: 3px 0;
   color: #ffffff;
   font-size: 1.7rem;
 }
@@ -445,6 +481,17 @@ h2 {
 .admin-list-panel {
   display: grid;
   gap: 14px;
+}
+
+.admin-workspace {
+  display: grid;
+  grid-template-columns: minmax(340px, 0.9fr) minmax(420px, 1.1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.admin-routes-panel {
+  grid-column: 1 / -1;
 }
 
 .route-list {
@@ -469,8 +516,12 @@ h2 {
 .route-row-main {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 12px;
+}
+
+.route-row-main > div {
+  flex: 1;
+  min-width: 0;
 }
 
 .route-row-main h2 {
@@ -621,8 +672,8 @@ h2 {
 
 .user-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  gap: 12px;
   align-items: center;
   padding: 14px;
   border: 1px solid rgba(245, 247, 248, 0.09);
@@ -1496,6 +1547,10 @@ h2 {
   }
 
   .review-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-workspace {
     grid-template-columns: 1fr;
   }
 

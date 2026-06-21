@@ -404,12 +404,31 @@ function LaunchReviewPanel({
   );
 }
 
-function AdminMetric({ title, value, detail }: { title: string; value: string | number; detail: string }) {
+function AdminMetric({
+  title,
+  value,
+  detail,
+  Icon,
+  tone = "yellow"
+}: {
+  title: string;
+  value: string | number;
+  detail: string;
+  Icon?: typeof Home;
+  tone?: "yellow" | "green" | "blue" | "red";
+}) {
   return (
-    <article className="admin-metric">
-      <span>{title}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
+    <article className={`admin-metric admin-metric-${tone}`}>
+      {Icon ? (
+        <span className="admin-metric-icon">
+          <Icon size={19} />
+        </span>
+      ) : null}
+      <div>
+        <span>{title}</span>
+        <strong>{value}</strong>
+        <small>{detail}</small>
+      </div>
     </article>
   );
 }
@@ -421,6 +440,9 @@ function RouteRow({ route }: { route: RouteDispatch }) {
   return (
     <article className={route.validated ? "route-row validated" : "route-row"}>
       <div className="route-row-main">
+        <span className={route.validated ? "route-state-icon ok" : "route-state-icon"}>
+          {route.validated ? <CheckCircle2 size={19} /> : <Clock3 size={19} />}
+        </span>
         <div>
           <p className="panel-label">{route.clientEmail || "Cliente"}</p>
           <h2>{route.groupName || route.groupJid || "Grupo sem nome"}</h2>
@@ -532,6 +554,9 @@ function AdminUserRow({
 }) {
   return (
     <article className={user.blocked ? "user-row blocked" : "user-row"}>
+      <span className={user.blocked ? "user-state-icon blocked" : "user-state-icon"}>
+        {user.blocked ? <Ban size={19} /> : <CheckCircle2 size={19} />}
+      </span>
       <div>
         <p className="panel-label">{user.role === "admin" ? "Admin" : "Cliente"}</p>
         <h2>{user.email}</h2>
@@ -571,10 +596,10 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
         </div>
 
         <section className="detail-grid">
-          <AdminMetric title="Uso" value={formatDuration(detail.totalUsageMs)} detail={`${detail.loginCount} login(s)`} />
-          <AdminMetric title="Bot" value={detail.botStatus} detail={detail.monitoringEnabled ? "monitorando" : "parado"} />
-          <AdminMetric title="Zap" value={formatDate(detail.lastWhatsAppConnectionAt)} detail="última conexão detectada" />
-          <AdminMetric title="Rotas" value={detail.routes.length} detail="histórico salvo" />
+          <AdminMetric Icon={Clock3} tone="blue" title="Uso" value={formatDuration(detail.totalUsageMs)} detail={`${detail.loginCount} login(s)`} />
+          <AdminMetric Icon={Bot} tone={detail.monitoringEnabled ? "green" : "yellow"} title="Bot" value={detail.botStatus} detail={detail.monitoringEnabled ? "monitorando" : "parado"} />
+          <AdminMetric Icon={Wifi} tone="blue" title="Zap" value={formatDate(detail.lastWhatsAppConnectionAt)} detail="última conexão detectada" />
+          <AdminMetric Icon={Route} tone="green" title="Rotas" value={detail.routes.length} detail="histórico salvo" />
         </section>
 
         <section className="detail-section">
@@ -759,82 +784,84 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       </section>
 
       <section className="admin-grid">
-        <AdminMetric title="Rotas" value={dashboard.totals.routes} detail="disparos registrados" />
-        <AdminMetric title="Validadas" value={dashboard.totals.validated} detail="por reação admin" />
-        <AdminMetric title="Reações" value={dashboard.totals.reactions} detail="recebidas no WhatsApp" />
-        <AdminMetric title="Usuários" value={usersDashboard.users.length} detail={`${dashboard.totals.clients} com rotas`} />
-        <AdminMetric title="Mensagens" value={supportDashboard.unread} detail="não lidas" />
+        <AdminMetric Icon={Route} tone="blue" title="Rotas" value={dashboard.totals.routes} detail="disparos registrados" />
+        <AdminMetric Icon={CheckCircle2} tone="green" title="Validadas" value={dashboard.totals.validated} detail="por reação admin" />
+        <AdminMetric Icon={Zap} tone="yellow" title="Reações" value={dashboard.totals.reactions} detail="recebidas no WhatsApp" />
+        <AdminMetric Icon={ShieldCheck} tone="blue" title="Usuários" value={usersDashboard.users.length} detail={`${dashboard.totals.clients} com rotas`} />
+        <AdminMetric Icon={MessageSquareText} tone={supportDashboard.unread ? "red" : "green"} title="Mensagens" value={supportDashboard.unread} detail="não lidas" />
       </section>
 
-      <section className={supportDashboard.unread ? "quick-panel admin-list-panel support-inbox has-unread" : "quick-panel admin-list-panel support-inbox"}>
-        <div className="panel-heading">
-          <div>
-            <p className="panel-label">Chat interno</p>
-            <h2>Mensagens dos clientes</h2>
+      <section className="admin-workspace">
+        <section className={supportDashboard.unread ? "quick-panel admin-list-panel support-inbox has-unread" : "quick-panel admin-list-panel support-inbox"}>
+          <div className="panel-heading">
+            <div>
+              <p className="panel-label">Chat interno</p>
+              <h2>Mensagens dos clientes</h2>
+            </div>
+            <button className="button" type="button" onClick={enableNotifications}>
+              Ativar notificação
+            </button>
           </div>
-          <button className="button" type="button" onClick={enableNotifications}>
-            Ativar notificação
-          </button>
-        </div>
-        <div className="support-message-list">
-          {supportDashboard.messages.length ? supportDashboard.messages.slice(0, 8).map((message) => (
-            <SupportMessageRow key={message.id} message={message} onMarkRead={() => readSupportMessage(message.id)} />
-          )) : <p className="qr-empty">Nenhuma mensagem de cliente ainda.</p>}
-        </div>
-      </section>
+          <div className="support-message-list">
+            {supportDashboard.messages.length ? supportDashboard.messages.slice(0, 8).map((message) => (
+              <SupportMessageRow key={message.id} message={message} onMarkRead={() => readSupportMessage(message.id)} />
+            )) : <p className="qr-empty">Nenhuma mensagem de cliente ainda.</p>}
+          </div>
+        </section>
 
-      <section className="quick-panel admin-list-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="panel-label">Acessos</p>
-            <h2>Usuários do painel</h2>
+        <section className="quick-panel admin-list-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="panel-label">Acessos</p>
+              <h2>Usuários do painel</h2>
+            </div>
+            <button className="button primary" type="button" onClick={() => setEditor(emptyUserEditor)}>
+              <UserPlus size={18} />
+              Adicionar
+            </button>
           </div>
-          <button className="button primary" type="button" onClick={() => setEditor(emptyUserEditor)}>
-            <UserPlus size={18} />
-            Adicionar
-          </button>
-        </div>
-        {editor ? (
-          <UserEditor
-            value={editor}
-            onChange={setEditor}
-            onCancel={() => setEditor(undefined)}
-            onSave={() => saveUser()}
-            busy={busy}
-          />
-        ) : null}
-        <div className="user-list">
-          {usersDashboard.users.map((user) => (
-            <AdminUserRow
-              key={user.email}
-              user={user}
-              onDetails={() => openDetails(user.email)}
-              onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked })}
-              onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked })}
+          {editor ? (
+            <UserEditor
+              value={editor}
+              onChange={setEditor}
+              onCancel={() => setEditor(undefined)}
+              onSave={() => saveUser()}
+              busy={busy}
             />
-          ))}
-        </div>
-      </section>
-
-      <section className="quick-panel admin-list-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="panel-label">Histórico</p>
-            <h2>Rotas enviadas pelos clientes</h2>
+          ) : null}
+          <div className="user-list">
+            {usersDashboard.users.map((user) => (
+              <AdminUserRow
+                key={user.email}
+                user={user}
+                onDetails={() => openDetails(user.email)}
+                onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked })}
+                onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked })}
+              />
+            ))}
           </div>
-          <button className="button" type="button" onClick={onLogout}>
-            <Route size={18} />
-            Sair
-          </button>
-        </div>
-        {error ? <p className="login-error">{error}</p> : null}
-        <div className="route-list">
-          {dashboard.routes.length ? (
-            dashboard.routes.map((route) => <RouteRow key={route.id} route={route} />)
-          ) : (
-            <p className="qr-empty">Nenhuma rota enviada ainda.</p>
-          )}
-        </div>
+        </section>
+
+        <section className="quick-panel admin-list-panel admin-routes-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="panel-label">Histórico</p>
+              <h2>Rotas enviadas pelos clientes</h2>
+            </div>
+            <button className="button" type="button" onClick={onLogout}>
+              <Route size={18} />
+              Sair
+            </button>
+          </div>
+          {error ? <p className="login-error">{error}</p> : null}
+          <div className="route-list">
+            {dashboard.routes.length ? (
+              dashboard.routes.map((route) => <RouteRow key={route.id} route={route} />)
+            ) : (
+              <p className="qr-empty">Nenhuma rota enviada ainda.</p>
+            )}
+          </div>
+        </section>
       </section>
 
       {detail ? <UserDetailModal detail={detail} onClose={() => setDetail(undefined)} /> : null}
