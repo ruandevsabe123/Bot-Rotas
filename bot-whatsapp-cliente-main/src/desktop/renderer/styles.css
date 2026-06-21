@@ -455,7 +455,18 @@ h2 {
 }
 
 .admin-shell {
+  width: min(1220px, calc(100vw - 40px));
   padding-bottom: 36px;
+}
+
+.admin-shell .quick-panel,
+.admin-shell .panel,
+.admin-shell .message-strip {
+  border-color: rgba(245, 247, 248, 0.07);
+  background: linear-gradient(180deg, rgba(11, 13, 15, 0.99), rgba(3, 4, 5, 0.99));
+  box-shadow:
+    0 18px 50px rgba(0, 0, 0, 0.48),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 .admin-grid {
@@ -552,7 +563,7 @@ h2 {
   border: 1px solid rgba(245, 247, 248, 0.09);
   border-left: 5px solid #f5c542;
   border-radius: 8px;
-  background: #080a0c;
+  background: #030405;
 }
 
 .route-row.validated {
@@ -616,16 +627,27 @@ h2 {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-radius: 8px;
+  background: #07090b;
 }
 
 .reaction-line b {
   display: grid;
-  min-width: 32px;
-  height: 32px;
+  min-width: 38px;
+  height: 38px;
   place-items: center;
+  border: 1px solid rgba(245, 197, 66, 0.28);
   border-radius: 8px;
-  color: #050607;
-  background: #f5c542;
+  color: #ffffff;
+  background: #11151a;
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.route-validate-button {
+  justify-self: start;
 }
 
 .launch-review-panel {

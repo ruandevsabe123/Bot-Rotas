@@ -39,6 +39,25 @@ export class RouteStore {
     );
   }
 
+  validate(id: string, validatedBy: string) {
+    let changed = false;
+    const now = new Date().toISOString();
+    this.save(
+      this.load().map((route) => {
+        if (route.id !== id) return route;
+        changed = true;
+        return {
+          ...route,
+          validated: true,
+          validatedAt: route.validatedAt || now,
+          validatedBy,
+          updatedAt: now
+        };
+      })
+    );
+    return changed;
+  }
+
   addReaction(messageId: string, reaction: RouteReaction) {
     let changed = false;
     const routes = this.load().map((route) => {
@@ -105,6 +124,9 @@ export class RouteStore {
             emoji: typeof item.emoji === "string" ? item.emoji : "",
             senderJid: typeof item.senderJid === "string" ? item.senderJid : "",
             senderPhone: typeof item.senderPhone === "string" ? item.senderPhone : "",
+            senderIdentifiers: Array.isArray(item.senderIdentifiers)
+              ? item.senderIdentifiers.filter((identifier: unknown) => typeof identifier === "string")
+              : undefined,
             isAdmin: Boolean(item.isAdmin)
           })).filter((item: RouteReaction) => item.id)
         : []

@@ -124,6 +124,7 @@ export type RouteReaction = {
   emoji: string;
   senderJid: string;
   senderPhone: string;
+  senderIdentifiers?: string[];
   isAdmin: boolean;
 };
 

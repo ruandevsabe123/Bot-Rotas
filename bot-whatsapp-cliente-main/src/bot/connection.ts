@@ -158,6 +158,12 @@ export class BotService extends EventEmitter {
   getRoutes() {
     return this.routeStore.all();
   }
+
+  validateRoute(routeId: string, validatedBy: string) {
+    const changed = this.routeStore.validate(routeId, validatedBy);
+    if (changed) this.emitSnapshot();
+    return changed;
+  }
   isMonitoringEnabled(): boolean {
     return this.monitoringEnabled;
   }
@@ -1111,8 +1117,9 @@ export class BotService extends EventEmitter {
       const reactedMessageId = reaction?.key?.id;
       if (!reaction || !reactedMessageId) continue;
 
-      const senderJid = String(msg.key?.participant || msg.key?.remoteJid || reaction.key?.participant || "");
-      const senderPhone = this.normalizePhone(senderJid);
+      const senderIdentifiers = this.getReactionSenderIdentifiers(msg, reaction);
+      const senderJid = senderIdentifiers[0] || "";
+      const senderPhone = senderIdentifiers.find((identifier) => identifier.startsWith("55")) || senderIdentifiers[0] || "";
       const emoji = String(reaction.text || "");
       const timestampMs = Number(reaction.senderTimestampMs || msg.messageTimestamp || Date.now());
       const timestamp = new Date(timestampMs > 9999999999 ? timestampMs : timestampMs * 1000).toISOString();
@@ -1122,7 +1129,8 @@ export class BotService extends EventEmitter {
         emoji,
         senderJid,
         senderPhone,
-        isAdmin: Boolean(senderPhone && this.adminPhoneNumbers.has(senderPhone))
+        senderIdentifiers,
+        isAdmin: senderIdentifiers.some((identifier) => this.adminPhoneNumbers.has(identifier))
       };
 
       if (this.routeStore.addReaction(String(reactedMessageId), routeReaction)) {
@@ -1134,6 +1142,30 @@ export class BotService extends EventEmitter {
         this.emitSnapshot();
       }
     }
+  }
+
+  private getReactionSenderIdentifiers(msg: any, reaction: any) {
+    const candidates = [
+      msg?.key?.participant,
+      msg?.key?.participantPn,
+      msg?.key?.participantLid,
+      msg?.key?.senderPn,
+      msg?.key?.remoteJid,
+      msg?.participant,
+      msg?.sender,
+      msg?.author,
+      reaction?.key?.participant,
+      reaction?.key?.participantPn,
+      reaction?.key?.participantLid,
+      reaction?.senderJid,
+      reaction?.participant
+    ];
+
+    const identifiers = candidates
+      .map((item) => this.normalizePhone(String(item || "")))
+      .filter(Boolean);
+
+    return Array.from(new Set(identifiers));
   }
 
   private enviarMensagensRapidas(cycleId: number) {

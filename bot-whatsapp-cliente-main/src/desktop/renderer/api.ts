@@ -100,6 +100,13 @@ export function getAdminRoutes() {
   return fetchJson<AdminRoutesSnapshot>("/api/admin/routes");
 }
 
+export function validateAdminRoute(routeId: string) {
+  return fetchJson<AdminRoutesSnapshot>(`/api/admin/routes/${encodeURIComponent(routeId)}/validate`, {
+    method: "PATCH",
+    body: JSON.stringify({})
+  });
+}
+
 export function getAdminUsers() {
   return fetchJson<AdminUsersSnapshot>("/api/admin/users");
 }

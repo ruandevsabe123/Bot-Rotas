@@ -61,7 +61,8 @@ import {
   setPanelPassword,
   setPanelToken,
   setPanelUserEmail,
-  setPanelUserRole
+  setPanelUserRole,
+  validateAdminRoute
 } from "./api";
 import "./styles.css";
 
@@ -452,9 +453,10 @@ function AdminMetric({
   );
 }
 
-function RouteRow({ route }: { route: RouteDispatch }) {
+function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: () => void }) {
   const createdAt = new Date(route.createdAt).toLocaleString("pt-BR");
   const lastReaction = route.reactions[0];
+  const identifiers = lastReaction?.senderIdentifiers?.length ? lastReaction.senderIdentifiers : lastReaction?.senderPhone ? [lastReaction.senderPhone] : [];
 
   return (
     <article className={route.validated ? "route-row validated" : "route-row"}>
@@ -480,9 +482,18 @@ function RouteRow({ route }: { route: RouteDispatch }) {
       </div>
       {lastReaction ? (
         <div className="reaction-line">
-          <b>{lastReaction.emoji || "Reação"}</b>
-          <span>{lastReaction.senderPhone || "sem telefone"}{lastReaction.isAdmin ? " · admin" : ""}</span>
+          <b>{lastReaction.emoji || "?"}</b>
+          <span>
+            {lastReaction.isAdmin ? "Admin detectado" : "Reação de ID interno"}
+            {identifiers.length ? ` · ${identifiers.join(" / ")}` : ""}
+          </span>
         </div>
+      ) : null}
+      {!route.validated && onValidate ? (
+        <button className="button accent route-validate-button" type="button" onClick={onValidate}>
+          <CheckCircle2 size={18} />
+          Validar rota
+        </button>
       ) : null}
     </article>
   );
@@ -789,6 +800,15 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     }
   }
 
+  async function validateRoute(routeId: string) {
+    try {
+      setDashboard(await validateAdminRoute(routeId));
+      setError("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui validar a rota.");
+    }
+  }
+
   return (
     <main className="app-shell admin-shell">
       <section className="topbar app-topbar">
@@ -875,7 +895,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
           {error ? <p className="login-error">{error}</p> : null}
           <div className="route-list">
             {dashboard.routes.length ? (
-              dashboard.routes.map((route) => <RouteRow key={route.id} route={route} />)
+              dashboard.routes.map((route) => <RouteRow key={route.id} route={route} onValidate={() => validateRoute(route.id)} />)
             ) : (
               <p className="qr-empty">Nenhuma rota enviada ainda.</p>
             )}

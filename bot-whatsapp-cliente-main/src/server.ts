@@ -396,6 +396,13 @@ function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
   };
 }
 
+function validateAdminRoute(routeId: string, adminEmail: string) {
+  for (const email of getClientEmails()) {
+    if (getBotForEmail(email).validateRoute(routeId, adminEmail)) return true;
+  }
+  return false;
+}
+
 function getAdminSupportMessagesSnapshot(): AdminSupportMessagesSnapshot {
   const messages = supportMessageStore.all();
   return {
@@ -681,6 +688,17 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/admin/routes") {
       if (!requireAdmin(authorizedEmail, response)) return;
+      sendJson(response, 200, getAdminRoutesSnapshot());
+      return;
+    }
+
+    if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/routes/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const routeId = decodeURIComponent(url.pathname.replace("/api/admin/routes/", "").replace(/\/validate$/, ""));
+      if (!url.pathname.endsWith("/validate") || !validateAdminRoute(routeId, authorizedEmail)) {
+        sendJson(response, 404, { error: "Rota não encontrada." });
+        return;
+      }
       sendJson(response, 200, getAdminRoutesSnapshot());
       return;
     }
