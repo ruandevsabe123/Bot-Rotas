@@ -11,12 +11,38 @@ import { SupportMessageStore } from "./supportMessageStore";
 import { AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
-const dataDir = path.resolve(process.env.DATA_DIR || process.cwd());
 const panelEmail = String(process.env.PANEL_EMAIL || "").trim().toLowerCase();
 const panelPassword = String(process.env.PANEL_PASSWORD || "");
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
+const DAILY_SESSION_RESET_HOUR = Number(process.env.DAILY_SESSION_RESET_HOUR || 0);
+const DAILY_SESSION_RESET_MINUTE = Number(process.env.DAILY_SESSION_RESET_MINUTE || 0);
+
+function ensureWritableDir(dir: string) {
+  fs.mkdirSync(dir, { recursive: true });
+  const testFile = path.join(dir, `.write-test-${process.pid}`);
+  fs.writeFileSync(testFile, "ok");
+  fs.rmSync(testFile, { force: true });
+}
+
+function resolveDataDir() {
+  const requested = path.resolve(process.env.DATA_DIR || process.cwd());
+
+  try {
+    ensureWritableDir(requested);
+    return requested;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const fallback = path.join(os.tmpdir(), "bot-whatsapp");
+    console.error(`DATA_DIR sem permissão: ${requested}. Erro: ${message}`);
+    console.error(`Usando fallback temporário: ${fallback}. Atenção: sem Persistent Disk, usuários e sessões podem sumir em deploy/restart.`);
+    ensureWritableDir(fallback);
+    return fallback;
+  }
+}
+
+const dataDir = resolveDataDir();
 
 type PanelUserRecord = {
   password: string;
@@ -98,8 +124,6 @@ const keepAliveUrl =
 
 console.log("Painel de usuarios habilitados:", Array.from(panelUsers.keys()).join(", "));
 console.log("Administradores do painel:", Array.from(panelUsers.entries()).filter(([, user]) => user.role === "admin").map(([email]) => email).join(", ") || "nenhum");
-
-fs.mkdirSync(dataDir, { recursive: true });
 
 type Client = {
   email: string;
@@ -550,6 +574,32 @@ function startKeepAlive() {
   }, KEEP_ALIVE_INTERVAL_MS);
 }
 
+function getNextDailyResetDelay() {
+  const now = new Date();
+  const next = new Date(now);
+  next.setHours(DAILY_SESSION_RESET_HOUR, DAILY_SESSION_RESET_MINUTE, 0, 0);
+  if (next.getTime() <= now.getTime()) {
+    next.setDate(next.getDate() + 1);
+  }
+  return next.getTime() - now.getTime();
+}
+
+function startDailySessionReset() {
+  const scheduleNext = () => {
+    const delay = getNextDailyResetDelay();
+    const nextRun = new Date(Date.now() + delay).toLocaleString("pt-BR", { timeZone: "America/Belem" });
+    console.log(`Reset diário de segurança agendado para: ${nextRun}`);
+
+    setTimeout(async () => {
+      console.log("Reset diário de segurança: parando conexões e monitoramentos ativos. Auth do WhatsApp preservado.");
+      await Promise.all(Array.from(bots.values()).map((bot) => bot.shutdownAndClearSession().catch(() => undefined)));
+      scheduleNext();
+    }, delay);
+  };
+
+  scheduleNext();
+}
+
 const server = http.createServer(async (request, response) => {
   const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
 
@@ -775,6 +825,7 @@ server.listen(port, "0.0.0.0", () => {
     console.log("Aviso: defina PANEL_EMAIL e PANEL_PASSWORD ou PANEL_USERS no Render para liberar e proteger o painel publico.");
   }
   startKeepAlive();
+  startDailySessionReset();
 });
 
 async function shutdown() {
