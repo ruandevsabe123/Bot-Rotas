@@ -739,9 +739,9 @@ export class BotService extends EventEmitter {
     this.sock.ev.on("groups.update", (updates: any[]) =>
       this.handleGroupsUpdate(updates, connectionId)
     );
-    this.sock.ev.on("messages.upsert", ({ messages }: any) =>
-      this.handleMessages(messages, connectionId)
-    );
+    this.sock.ev.on("messages.upsert", ({ messages }: any) => {
+      void this.handleMessages(messages, connectionId);
+    });
 
     void this.requestPairingCodeIfNeeded(connectionId);
   }
@@ -1059,9 +1059,9 @@ export class BotService extends EventEmitter {
       }
     }
   }
-  private handleMessages(messages: any[], connectionId: number) {
+  private async handleMessages(messages: any[], connectionId: number) {
     if (connectionId !== this.activeConnectionId) return;
-    this.handleReactions(messages);
+    await this.handleReactions(messages);
     if (!this.monitoringEnabled) return;
 
     const activeGroup = this.getActiveMonitoringGroup();
@@ -1111,13 +1111,13 @@ export class BotService extends EventEmitter {
     }
   }
 
-  private handleReactions(messages: any[]) {
+  private async handleReactions(messages: any[]) {
     for (const msg of messages || []) {
       const reaction = msg?.message?.reactionMessage;
       const reactedMessageId = reaction?.key?.id;
       if (!reaction || !reactedMessageId) continue;
 
-      const senderIdentifiers = this.getReactionSenderIdentifiers(msg, reaction);
+      const senderIdentifiers = await this.getReactionSenderIdentifiers(msg, reaction);
       const senderJid = senderIdentifiers[0] || "";
       const senderPhone = senderIdentifiers.find((identifier) => identifier.startsWith("55")) || senderIdentifiers[0] || "";
       const emoji = String(reaction.text || "");
@@ -1130,7 +1130,7 @@ export class BotService extends EventEmitter {
         senderJid,
         senderPhone,
         senderIdentifiers,
-        isAdmin: senderIdentifiers.some((identifier) => this.adminPhoneNumbers.has(identifier))
+        isAdmin: senderIdentifiers.some((identifier) => this.isAdminPhoneIdentifier(identifier))
       };
 
       if (this.routeStore.addReaction(String(reactedMessageId), routeReaction)) {
@@ -1144,7 +1144,7 @@ export class BotService extends EventEmitter {
     }
   }
 
-  private getReactionSenderIdentifiers(msg: any, reaction: any) {
+  private async getReactionSenderIdentifiers(msg: any, reaction: any) {
     const candidates = [
       msg?.key?.participant,
       msg?.key?.participantPn,
@@ -1161,11 +1161,105 @@ export class BotService extends EventEmitter {
       reaction?.participant
     ];
 
-    const identifiers = candidates
-      .map((item) => this.normalizePhone(String(item || "")))
+    const identifiers = new Set<string>();
+
+    for (const item of candidates) {
+      const raw = String(item || "");
+      const normalized = this.normalizePhone(raw);
+      if (normalized) identifiers.add(normalized);
+
+      const phoneFromLid = await this.resolvePhoneFromLid(raw);
+      if (phoneFromLid) identifiers.add(phoneFromLid);
+    }
+
+    const groupPhone = await this.getReactionPhoneFromGroupMetadata(msg, reaction);
+    if (groupPhone) identifiers.add(groupPhone);
+
+    return Array.from(identifiers);
+  }
+
+  private async getReactionPhoneFromGroupMetadata(msg: any, reaction: any) {
+    const groupJid = String(msg?.key?.remoteJid || reaction?.key?.remoteJid || "");
+    const participantIds = [
+      msg?.key?.participant,
+      msg?.key?.participantLid,
+      reaction?.key?.participant,
+      reaction?.key?.participantLid,
+      reaction?.senderJid,
+      reaction?.participant
+    ]
+      .map((item) => String(item || ""))
       .filter(Boolean);
 
-    return Array.from(new Set(identifiers));
+    if (!groupJid.endsWith("@g.us") || !participantIds.length) return "";
+
+    try {
+      const metadata = this.groupMetadataCache.get(groupJid) || (await this.refreshGroupMetadata(groupJid));
+      const participants = Array.isArray(metadata?.participants) ? metadata.participants : [];
+
+      for (const participant of participants) {
+        const knownIds = [
+          participant?.id,
+          participant?.jid,
+          participant?.lid,
+          participant?.lidJid,
+          participant?.phoneNumber,
+          participant?.phone_number,
+          participant?.pn
+        ]
+          .map((item) => String(item || ""))
+          .filter(Boolean);
+
+        const matches = participantIds.some((incomingId) => {
+          const incomingPhone = this.normalizePhone(incomingId);
+          return knownIds.some((knownId) => {
+            const knownPhone = this.normalizePhone(knownId);
+            return knownId === incomingId || Boolean(incomingPhone && knownPhone && incomingPhone === knownPhone);
+          });
+        });
+
+        if (!matches) continue;
+
+        const phone = [
+          participant?.phoneNumber,
+          participant?.phone_number,
+          participant?.pn,
+          participant?.jid,
+          participant?.id
+        ]
+          .map((item) => this.normalizePhone(String(item || "")))
+          .find((item) => item.startsWith("55") && item.length >= 12);
+
+        if (phone) return phone;
+      }
+    } catch (error) {
+      this.logger.warning(`Não consegui resolver telefone da reação pelo grupo: ${this.getErrorMessage(error)}`);
+    }
+
+    return "";
+  }
+
+  private async resolvePhoneFromLid(value: string) {
+    if (!value || !value.includes("@lid")) return "";
+
+    const lidJid = value.includes("@") ? value : `${this.normalizePhone(value)}@lid`;
+
+    try {
+      const mappedPhone = await this.sock?.signalRepository?.lidMapping?.getPNForLID?.(lidJid);
+      return this.normalizePhone(String(mappedPhone || ""));
+    } catch (error) {
+      this.logger.warning(`Não consegui traduzir ID interno do WhatsApp para telefone: ${this.getErrorMessage(error)}`);
+      return "";
+    }
+  }
+
+  private isAdminPhoneIdentifier(value: string) {
+    const phone = this.normalizePhone(value);
+    if (!phone) return false;
+    if (this.adminPhoneNumbers.has(phone)) return true;
+    if (phone.startsWith("55") && this.adminPhoneNumbers.has(phone.slice(2))) return true;
+    if (!phone.startsWith("55") && this.adminPhoneNumbers.has(`55${phone}`)) return true;
+    return false;
   }
 
   private enviarMensagensRapidas(cycleId: number) {

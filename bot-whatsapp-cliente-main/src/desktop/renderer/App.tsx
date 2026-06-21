@@ -279,6 +279,17 @@ function formatDate(value?: string) {
   return value ? new Date(value).toLocaleString("pt-BR") : "Sem registro";
 }
 
+function formatShortDate(value?: string) {
+  return value
+    ? new Date(value).toLocaleString("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit"
+      })
+    : "Sem registro";
+}
+
 function formatDuration(ms: number) {
   const totalMinutes = Math.floor(ms / 60000);
   const hours = Math.floor(totalMinutes / 60);
@@ -628,7 +639,7 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
         <section className="detail-grid">
           <AdminMetric Icon={Clock3} tone="blue" title="Uso" value={formatDuration(detail.totalUsageMs)} detail={`${detail.loginCount} login(s)`} />
           <AdminMetric Icon={Bot} tone={detail.monitoringEnabled ? "green" : "yellow"} title="Bot" value={detail.botStatus} detail={detail.monitoringEnabled ? "monitorando" : "parado"} />
-          <AdminMetric Icon={Wifi} tone="blue" title="Zap" value={formatDate(detail.lastWhatsAppConnectionAt)} detail="última conexão detectada" />
+          <AdminMetric Icon={Wifi} tone="blue" title="Zap" value={formatShortDate(detail.lastWhatsAppConnectionAt)} detail="última conexão" />
           <AdminMetric Icon={Route} tone="green" title="Rotas" value={detail.routes.length} detail="histórico salvo" />
         </section>
 
@@ -715,7 +726,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
 
   useEffect(() => {
     refresh();
-    const interval = window.setInterval(refresh, 3000);
+    const interval = window.setInterval(refresh, 1000);
     return () => window.clearInterval(interval);
   }, []);
 
