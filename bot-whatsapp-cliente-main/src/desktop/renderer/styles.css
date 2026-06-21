@@ -71,6 +71,52 @@ button {
   padding: 20px;
 }
 
+.loading-shell {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 20px;
+}
+
+.loading-panel {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+  width: min(100%, 390px);
+  padding: 28px;
+  border: 1px solid rgba(245, 197, 66, 0.18);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(18, 21, 24, 0.98), rgba(8, 10, 12, 0.98));
+  box-shadow:
+    0 22px 70px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  text-align: center;
+}
+
+.loading-panel h1 {
+  font-size: 2rem;
+}
+
+.loading-panel p:last-child {
+  margin: 8px 0 0;
+  color: #8e99a3;
+}
+
+.loading-spinner {
+  width: 42px;
+  height: 42px;
+  border: 3px solid rgba(245, 197, 66, 0.18);
+  border-top-color: #f5c542;
+  border-radius: 999px;
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .login-panel,
 .panel,
 .quick-panel,

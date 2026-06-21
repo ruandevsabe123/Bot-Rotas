@@ -216,6 +216,25 @@ function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: st
   );
 }
 
+function LoadingScreen() {
+  return (
+    <main className="loading-shell">
+      <section className="loading-panel">
+        <div className="brand-logo" aria-hidden="true">
+          <Bot size={31} />
+          <span>BR</span>
+        </div>
+        <span className="loading-spinner" aria-hidden="true" />
+        <div>
+          <p className="panel-label">Abrindo painel</p>
+          <h1>Validando sessão</h1>
+          <p>Carregando seu acesso salvo.</p>
+        </div>
+      </section>
+    </main>
+  );
+}
+
 function ConfigStrip({
   kind,
   title,
@@ -1181,12 +1200,12 @@ export default function App() {
     }
   }
 
-  if (!authenticated) {
-    return <LoginScreen error={loginError} onSubmit={login} />;
+  if (!sessionChecked) {
+    return <LoadingScreen />;
   }
 
-  if (!sessionChecked) {
-    return <LoginScreen error="Validando sessão..." onSubmit={login} />;
+  if (!authenticated) {
+    return <LoginScreen error={loginError} onSubmit={login} />;
   }
 
   if (userRole === "admin") {
