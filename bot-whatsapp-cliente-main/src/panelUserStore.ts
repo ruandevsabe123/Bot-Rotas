@@ -7,6 +7,7 @@ export type StoredPanelUser = {
   password: string;
   role: PanelUserRole;
   blocked: boolean;
+  color: string;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -30,6 +31,7 @@ export class PanelUserStore {
     password?: string;
     role?: PanelUserRole;
     blocked?: boolean;
+    color?: string;
   }) {
     const email = input.email.trim().toLowerCase();
     if (!email) throw new Error("Email obrigatório.");
@@ -41,6 +43,7 @@ export class PanelUserStore {
       if (input.password !== undefined && input.password.trim()) existing.password = input.password;
       if (input.role) existing.role = input.role;
       if (input.blocked !== undefined) existing.blocked = input.blocked;
+      if (input.color !== undefined) existing.color = normalizeUserColor(input.color, existing.email);
       existing.updatedAt = now;
       this.save(users);
       return existing;
@@ -53,6 +56,7 @@ export class PanelUserStore {
       password: input.password,
       role: input.role || "client",
       blocked: Boolean(input.blocked),
+      color: normalizeUserColor(input.color, email),
       createdAt: now,
       updatedAt: now,
       totalUsageMs: 0,
@@ -134,6 +138,7 @@ export class PanelUserStore {
       password: input.password,
       role: input.role === "admin" ? "admin" : "client",
       blocked: Boolean(input.blocked),
+      color: normalizeUserColor(input.color, input.email),
       createdAt: typeof input.createdAt === "string" ? input.createdAt : now,
       updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : now,
       lastLoginAt: typeof input.lastLoginAt === "string" ? input.lastLoginAt : undefined,
@@ -149,4 +154,17 @@ export class PanelUserStore {
         : []
     };
   }
+}
+
+const USER_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#06b6d4", "#f97316", "#ec4899"];
+
+export function defaultUserColor(email: string) {
+  const normalized = String(email || "").toLowerCase();
+  const hash = normalized.split("").reduce((total, char) => total + char.charCodeAt(0), 0);
+  return USER_COLORS[hash % USER_COLORS.length];
+}
+
+export function normalizeUserColor(value: string | undefined, email: string) {
+  const color = String(value || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : defaultUserColor(email);
 }

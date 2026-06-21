@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { CSSProperties, FormEvent, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -299,6 +299,23 @@ function formatDuration(ms: number) {
   return `${minutes}min`;
 }
 
+function getPresenceCopy(user: AdminUserSummary) {
+  if (user.blocked) return "bloqueado";
+  if (user.presenceStatus === "online") return "online agora";
+  if (user.presenceStatus === "recent") return "ativo recente";
+  return "offline";
+}
+
+function getBotOpenCopy(user: AdminUserSummary) {
+  if (user.botOpen && user.monitoringEnabled) return "bot ligado";
+  if (user.botOpen) return "painel do bot aberto";
+  return "bot fechado";
+}
+
+function colorStyle(color?: string): CSSProperties {
+  return { "--client-color": color || "#7eb6ff" } as CSSProperties;
+}
+
 function OperationStep({
   title,
   detail,
@@ -470,13 +487,16 @@ function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: ()
   const identifiers = lastReaction?.senderIdentifiers?.length ? lastReaction.senderIdentifiers : lastReaction?.senderPhone ? [lastReaction.senderPhone] : [];
 
   return (
-    <article className={route.validated ? "route-row validated" : "route-row"}>
+    <article className={route.validated ? "route-row validated" : "route-row"} style={colorStyle(route.clientColor)}>
       <div className="route-row-main">
         <span className={route.validated ? "route-state-icon ok" : "route-state-icon"}>
           {route.validated ? <CheckCircle2 size={19} /> : <Clock3 size={19} />}
         </span>
         <div>
-          <p className="panel-label">{route.clientEmail || "Cliente"}</p>
+          <p className="panel-label client-label">
+            <span className="client-color-dot" />
+            {route.clientEmail || "Cliente"}
+          </p>
           <h2>{route.groupName || route.groupJid || "Grupo sem nome"}</h2>
         </div>
         <span className={route.validated ? "route-status ok" : "route-status"}>{route.validated ? "Validada" : "Pendente"}</span>
@@ -516,13 +536,15 @@ type UserEditorState = {
   password: string;
   role: PanelUserRole;
   blocked: boolean;
+  color: string;
 };
 
 const emptyUserEditor: UserEditorState = {
   email: "",
   password: "",
   role: "client",
-  blocked: false
+  blocked: false,
+  color: "#3b82f6"
 };
 
 function UserEditor({
@@ -568,6 +590,15 @@ function UserEditor({
         <input type="checkbox" checked={value.blocked} onChange={(event) => onChange({ ...value, blocked: event.target.checked })} />
         Bloqueado
       </label>
+      <label className="color-picker-row" title="Cor do usuário no histórico">
+        <span className="color-orb" style={{ background: value.color }} />
+        <input
+          aria-label="Cor do usuário"
+          type="color"
+          value={value.color}
+          onChange={(event) => onChange({ ...value, color: event.target.value })}
+        />
+      </label>
       <div className="user-editor-actions">
         <button className="button" type="button" onClick={onCancel}>
           <X size={18} />
@@ -594,15 +625,19 @@ function AdminUserRow({
   onDetails: () => void;
 }) {
   return (
-    <article className={user.blocked ? "user-row blocked" : "user-row"}>
+    <article className={user.blocked ? "user-row blocked" : `user-row presence-${user.presenceStatus}`} style={colorStyle(user.color)}>
       <span className={user.blocked ? "user-state-icon blocked" : "user-state-icon"}>
-        {user.blocked ? <Ban size={19} /> : <CheckCircle2 size={19} />}
+        {user.blocked ? <Ban size={19} /> : user.panelOnline ? <Activity size={19} /> : <CheckCircle2 size={19} />}
       </span>
       <div>
-        <p className="panel-label">{user.role === "admin" ? "Admin" : "Cliente"}</p>
+        <p className="panel-label client-label">
+          <span className="client-color-dot" />
+          {user.role === "admin" ? "Admin" : "Cliente"} · {getPresenceCopy(user)}
+        </p>
         <h2>{user.email}</h2>
         <div className="route-meta">
           <span>Último login: {formatDate(user.lastLoginAt)}</span>
+          <span>{getBotOpenCopy(user)}</span>
           <span>Uso: {formatDuration(user.totalUsageMs)}</span>
           <span>{user.loginCount} login(s)</span>
         </div>
@@ -638,6 +673,7 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
 
         <section className="detail-grid">
           <AdminMetric Icon={Clock3} tone="blue" title="Uso" value={formatDuration(detail.totalUsageMs)} detail={`${detail.loginCount} login(s)`} />
+          <AdminMetric Icon={Activity} tone={detail.panelOnline ? "green" : detail.presenceStatus === "recent" ? "yellow" : "blue"} title="Painel" value={getPresenceCopy(detail)} detail={getBotOpenCopy(detail)} />
           <AdminMetric Icon={Bot} tone={detail.monitoringEnabled ? "green" : "yellow"} title="Bot" value={detail.botStatus} detail={detail.monitoringEnabled ? "monitorando" : "parado"} />
           <AdminMetric Icon={Wifi} tone="blue" title="Zap" value={formatShortDate(detail.lastWhatsAppConnectionAt)} detail="última conexão" />
           <AdminMetric Icon={Route} tone="green" title="Rotas" value={detail.routes.length} detail="histórico salvo" />
@@ -678,9 +714,12 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
 
 function SupportMessageRow({ message, onMarkRead }: { message: SupportMessage; onMarkRead: () => void }) {
   return (
-    <article className={message.read ? "support-message-row" : "support-message-row unread"}>
+    <article className={message.read ? "support-message-row" : "support-message-row unread"} style={colorStyle(message.clientColor)}>
       <div>
-        <p className="panel-label">{message.read ? "Lida" : "Nova mensagem"}</p>
+        <p className="panel-label client-label">
+          <span className="client-color-dot" />
+          {message.read ? "Lida" : "Nova mensagem"}
+        </p>
         <h2>{message.email}</h2>
         <small>{formatDate(message.createdAt)}</small>
       </div>
@@ -885,8 +924,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                 key={user.email}
                 user={user}
                 onDetails={() => openDetails(user.email)}
-                onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked })}
-                onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked })}
+                onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color })}
+                onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color })}
               />
             ))}
           </div>

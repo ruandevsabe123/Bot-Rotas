@@ -6,9 +6,9 @@ import crypto from "crypto";
 import QRCode from "qrcode";
 import qrcodeTerminal from "qrcode-terminal";
 import { BotService } from "./bot/connection";
-import { PanelUserStore, StoredPanelUser } from "./panelUserStore";
+import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
-import { AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole } from "./shared/types";
+import { AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
 const panelEmail = String(process.env.PANEL_EMAIL || "").trim().toLowerCase();
@@ -48,6 +48,7 @@ type PanelUserRecord = {
   password: string;
   role: PanelUserRole;
   blocked: boolean;
+  color: string;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -73,6 +74,7 @@ function createUserRecord(email: string, password: string, role: PanelUserRole, 
     password,
     role,
     blocked: false,
+    color: defaultUserColor(email),
     createdAt: now,
     updatedAt: now,
     totalUsageMs: 0,
@@ -85,10 +87,12 @@ function parsePanelUsers(envUsers: string | undefined, defaultEmail: string, def
   const users = new Map<string, PanelUserRecord>();
   const raw = String(envUsers || "").trim();
   for (const part of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
-    const [email, password, role] = part.split(":").map((item) => item.trim());
+    const [email, password, role, color] = part.split(":").map((item) => item.trim());
     if (!email || !password) continue;
     const normalizedEmail = email.toLowerCase();
-    users.set(normalizedEmail, createUserRecord(normalizedEmail, password, role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "client"));
+    users.set(normalizedEmail, createUserRecord(normalizedEmail, password, role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "client", {
+      color: normalizeUserColor(color, normalizedEmail)
+    }));
   }
   if (defaultEmail && defaultPassword) {
     const normalizedEmail = defaultEmail.toLowerCase();
@@ -333,10 +337,21 @@ function getClientEmails() {
 }
 
 function toUserSummary(email: string, user: PanelUserRecord) {
+  const botSnapshot = bots.get(email)?.getSnapshot();
+  const lastSeenMs = user.lastSeenAt ? new Date(user.lastSeenAt).getTime() : 0;
+  const ageMs = lastSeenMs ? Date.now() - lastSeenMs : Number.POSITIVE_INFINITY;
+  const presenceStatus: UserPresenceStatus = ageMs <= 1000 * 45 ? "online" : ageMs <= 1000 * 60 * 5 ? "recent" : "offline";
+
   return {
     email,
     role: user.role,
     blocked: user.blocked,
+    color: user.color || defaultUserColor(email),
+    presenceStatus,
+    panelOnline: presenceStatus === "online",
+    botOpen: Boolean(botSnapshot && ["connected", "connecting", "waiting_qr", "reconnecting"].includes(botSnapshot.status)),
+    botStatus: botSnapshot?.status,
+    monitoringEnabled: botSnapshot?.monitoringEnabled,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     lastLoginAt: user.lastLoginAt,
@@ -380,8 +395,10 @@ function getAdminUserDetail(email: string): AdminUserDetail | undefined {
 }
 
 function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
+  const colorByEmail = new Map(Array.from(panelUsers.entries()).map(([email, user]) => [email, user.color || defaultUserColor(email)]));
   const routes = getClientEmails()
     .flatMap((email) => getBotForEmail(email).getRoutes())
+    .map((route) => ({ ...route, clientColor: colorByEmail.get(route.clientEmail) || defaultUserColor(route.clientEmail) }))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const clients = new Set(routes.map((route) => route.clientEmail).filter(Boolean));
@@ -404,7 +421,10 @@ function validateAdminRoute(routeId: string, adminEmail: string) {
 }
 
 function getAdminSupportMessagesSnapshot(): AdminSupportMessagesSnapshot {
-  const messages = supportMessageStore.all();
+  const messages = supportMessageStore.all().map((message) => ({
+    ...message,
+    clientColor: panelUsers.get(message.email)?.color || defaultUserColor(message.email)
+  }));
   return {
     messages,
     unread: messages.filter((message) => !message.read).length
@@ -651,7 +671,8 @@ const server = http.createServer(async (request, response) => {
         email,
         password: expectedPassword.password,
         role: expectedPassword.role,
-        blocked: expectedPassword.blocked
+        blocked: expectedPassword.blocked,
+        color: expectedPassword.color
       }));
       expectedPassword.lastLoginAt = new Date().toISOString();
       expectedPassword.lastSeenAt = expectedPassword.lastLoginAt;
@@ -669,7 +690,7 @@ const server = http.createServer(async (request, response) => {
       sendJson(response, 200, {
         ok: true,
         token: createSessionToken(email),
-        user: { email, role: expectedPassword.role, blocked: expectedPassword.blocked }
+        user: { email, role: expectedPassword.role, blocked: expectedPassword.blocked, color: expectedPassword.color }
       });
       return;
     }
@@ -682,7 +703,12 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/me") {
-      sendJson(response, 200, { email: authorizedEmail, role: getUserRole(authorizedEmail) });
+      sendJson(response, 200, {
+        email: authorizedEmail,
+        role: getUserRole(authorizedEmail),
+        blocked: panelUsers.get(authorizedEmail)?.blocked,
+        color: panelUsers.get(authorizedEmail)?.color
+      });
       return;
     }
 
@@ -742,7 +768,8 @@ const server = http.createServer(async (request, response) => {
         email: String(body.email || ""),
         password: String(body.password || ""),
         role: body.role === "admin" ? "admin" : "client",
-        blocked: Boolean(body.blocked)
+        blocked: Boolean(body.blocked),
+        color: normalizeUserColor(String(body.color || ""), String(body.email || ""))
       });
       syncPanelUser(user);
       sendJson(response, 200, getAdminUsersSnapshot());
@@ -770,7 +797,8 @@ const server = http.createServer(async (request, response) => {
         email: nextEmail,
         password: typeof body.password === "string" && body.password.trim() ? body.password : currentUser.password,
         role: body.role === "admin" ? "admin" : "client",
-        blocked: Boolean(body.blocked)
+        blocked: Boolean(body.blocked),
+        color: normalizeUserColor(String(body.color || currentUser.color || ""), nextEmail)
       });
       syncPanelUser(user);
       sendJson(response, 200, getAdminUsersSnapshot());

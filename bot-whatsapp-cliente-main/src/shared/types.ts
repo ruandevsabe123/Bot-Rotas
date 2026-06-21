@@ -66,7 +66,10 @@ export type PanelUser = {
   email: string;
   role: PanelUserRole;
   blocked?: boolean;
+  color?: string;
 };
+
+export type UserPresenceStatus = "online" | "recent" | "offline";
 
 export type LoginEvent = {
   id: string;
@@ -79,6 +82,12 @@ export type AdminUserSummary = {
   email: string;
   role: PanelUserRole;
   blocked: boolean;
+  color: string;
+  presenceStatus: UserPresenceStatus;
+  panelOnline: boolean;
+  botOpen: boolean;
+  botStatus?: BotStatus;
+  monitoringEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -106,6 +115,7 @@ export type AdminUsersSnapshot = {
 export type SupportMessage = {
   id: string;
   email: string;
+  clientColor?: string;
   message: string;
   createdAt: string;
   read: boolean;
@@ -131,6 +141,7 @@ export type RouteReaction = {
 export type RouteDispatch = {
   id: string;
   clientEmail: string;
+  clientColor?: string;
   groupJid: string;
   groupName: string;
   mode: "target" | "test";
