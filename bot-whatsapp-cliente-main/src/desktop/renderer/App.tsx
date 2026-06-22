@@ -80,6 +80,7 @@ type GroupEditor = "target" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
 type RouteStatusFilter = "all" | "pending" | "validated" | "leader";
 type RouteKindFilter = "all" | "automatic" | "manual" | "test";
+type RouteHistoryTab = "automatic" | "manual" | "test";
 
 const emptySnapshot: BotSnapshot = {
   status: "disconnected",
@@ -505,6 +506,70 @@ function getRouteTriggerLabel(route: RouteDispatch) {
   return "Automático";
 }
 
+function AdminRouteHistory({
+  automaticRoutes,
+  manualRoutes,
+  testRoutes,
+  activeTab,
+  onTabChange,
+  onValidate,
+  compact = false
+}: {
+  automaticRoutes: RouteDispatch[];
+  manualRoutes: RouteDispatch[];
+  testRoutes: RouteDispatch[];
+  activeTab: RouteHistoryTab;
+  onTabChange: (tab: RouteHistoryTab) => void;
+  onValidate?: (routeId: string) => void;
+  compact?: boolean;
+}) {
+  const tabs: Array<{ id: RouteHistoryTab; title: string; detail: string; routes: RouteDispatch[]; Icon: typeof Home }> = [
+    { id: "automatic", title: "Alvo automático", detail: "Abertura real do grupo alvo", routes: automaticRoutes, Icon: Zap },
+    { id: "manual", title: "Manual / simulação", detail: "Clique manual e simulação", routes: manualRoutes, Icon: Send },
+    { id: "test", title: "Teste / 15 mensagens", detail: "Aquecimento e simulação alvo", routes: testRoutes, Icon: TestTube2 }
+  ];
+  const active = tabs.find((tab) => tab.id === activeTab) || tabs[0];
+
+  return (
+    <section className={compact ? "admin-route-history compact" : "admin-route-history"}>
+      <aside className="admin-route-tabs">
+        {tabs.map(({ id, title, detail, routes, Icon }) => (
+          <button className={id === active.id ? "active" : ""} key={id} type="button" onClick={() => onTabChange(id)}>
+            <Icon size={18} />
+            <span>
+              <strong>{title}</strong>
+              <small>{detail}</small>
+            </span>
+            <b>{routes.length}</b>
+          </button>
+        ))}
+      </aside>
+      <div className="admin-route-history-list">
+        <div className="admin-route-history-heading">
+          <div>
+            <p className="panel-label">Histórico de disparo</p>
+            <h2>{active.title}</h2>
+          </div>
+          <span>{active.routes.length} registro(s)</span>
+        </div>
+        <div className={compact ? "admin-route-scroll compact" : "admin-route-scroll"}>
+          {active.routes.length ? active.routes.map((route) => (
+            compact ? (
+              <button className="admin-route-feed-item" key={`route-feed-${route.id}`} type="button">
+                <span className={route.validated ? "mini-badge ok" : "mini-badge"}>{getRouteTriggerLabel(route)}</span>
+                <strong>{route.groupName}</strong>
+                <small>{route.clientEmail} · {route.confirmedCount}/{route.totalCount} enviadas · {route.reactions.length} reação(ões)</small>
+              </button>
+            ) : (
+              <RouteRow key={route.id} route={route} onValidate={onValidate ? () => onValidate(route.id) : undefined} />
+            )
+          )) : <p className="qr-empty">Nenhum disparo nesse histórico.</p>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: () => void }) {
   const createdAt = new Date(route.createdAt).toLocaleString("pt-BR");
 
@@ -860,6 +925,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [clientFilter, setClientFilter] = useState("all");
   const [routeStatusFilter, setRouteStatusFilter] = useState<RouteStatusFilter>("all");
   const [routeKindFilter, setRouteKindFilter] = useState<RouteKindFilter>("all");
+  const [routeHistoryTab, setRouteHistoryTab] = useState<RouteHistoryTab>("automatic");
   const [lastSeenLogAt, setLastSeenLogAt] = useState(() => new Date().toISOString());
   const [logToast, setLogToast] = useState<AdminLogEntry>();
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -1199,32 +1265,19 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             <article className="admin-preview-panel">
               <div className="admin-preview-heading">
                 <div>
-                  <p className="panel-label">Disparos</p>
-                  <h2>Fila por tipo</h2>
+                  <p className="panel-label">Histórico de disparo</p>
+                  <h2>Separado por origem</h2>
                 </div>
                 <button className="button" type="button" onClick={() => setActiveSection("routes")}>Ver tudo</button>
               </div>
-              <div className="admin-mini-list scrollable">
-                {[
-                  { title: "Alvo automático", routes: automaticRoutes },
-                  { title: "Manual / simulação", routes: manualRoutes },
-                  { title: "Teste / 15 mensagens", routes: testRoutes }
-                ].map((group) => (
-                  <section className="admin-route-bucket" key={group.title}>
-                    <header>
-                      <span>{group.title}</span>
-                      <strong>{group.routes.length}</strong>
-                    </header>
-                    {group.routes.length ? group.routes.map((route) => (
-                      <button key={`preview-${route.id}`} type="button" onClick={() => setActiveSection("routes")}>
-                        <span className={route.validated ? "mini-badge ok" : "mini-badge"}>{getRouteTriggerLabel(route)}</span>
-                        <strong>{route.groupName}</strong>
-                        <small>{route.clientEmail} · {route.confirmedCount}/{route.totalCount} enviadas · {route.reactions.length} reação(ões)</small>
-                      </button>
-                    )) : <p className="admin-bucket-empty">Nenhum neste tipo.</p>}
-                  </section>
-                ))}
-              </div>
+              <AdminRouteHistory
+                automaticRoutes={automaticRoutes}
+                manualRoutes={manualRoutes}
+                testRoutes={testRoutes}
+                activeTab={routeHistoryTab}
+                onTabChange={setRouteHistoryTab}
+                compact
+              />
             </article>
 
             <article className="admin-preview-panel live">
@@ -1286,15 +1339,16 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
         <AdminSectionModal eyebrow="Histórico" title="Últimos 100 disparos" onClose={() => setActiveSection(undefined)}>
           <div className="admin-section-summary">
             <strong>{filteredRoutes.length}</strong>
-            <span>disparos encontrados com cliente: {activeClientLabel}.</span>
+            <span>histórico separado por origem com cliente: {activeClientLabel}.</span>
           </div>
-          <div className="route-list">
-            {filteredRoutes.length ? (
-              filteredRoutes.map((route) => <RouteRow key={route.id} route={route} onValidate={() => validateRoute(route.id)} />)
-            ) : (
-              <p className="qr-empty">Nenhuma rota enviada ainda.</p>
-            )}
-          </div>
+          <AdminRouteHistory
+            automaticRoutes={automaticRoutes}
+            manualRoutes={manualRoutes}
+            testRoutes={testRoutes}
+            activeTab={routeHistoryTab}
+            onTabChange={setRouteHistoryTab}
+            onValidate={validateRoute}
+          />
         </AdminSectionModal>
       ) : null}
 

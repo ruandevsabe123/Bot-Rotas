@@ -827,6 +827,156 @@ h2 {
   background: rgba(0, 0, 0, 0.15);
 }
 
+.admin-route-history {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.admin-route-history.compact {
+  height: 100%;
+}
+
+.admin-route-tabs {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  min-height: 0;
+}
+
+.admin-route-tabs button {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 76px;
+  padding: 12px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-left: 4px solid rgba(126, 182, 255, 0.7);
+  border-radius: 8px;
+  color: inherit;
+  text-align: left;
+  background: #030405;
+}
+
+.admin-route-tabs button:hover,
+.admin-route-tabs button.active {
+  border-color: rgba(245, 197, 66, 0.28);
+  border-left-color: #f5c542;
+  background: rgba(245, 197, 66, 0.08);
+}
+
+.admin-route-tabs svg {
+  color: #f5c542;
+}
+
+.admin-route-tabs span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.admin-route-tabs strong {
+  color: #ffffff;
+  line-height: 1.15;
+  overflow-wrap: anywhere;
+}
+
+.admin-route-tabs small {
+  color: #8e99a3;
+  font-size: 0.76rem;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.admin-route-tabs b {
+  display: grid;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  place-items: center;
+  border-radius: 999px;
+  color: #050607;
+  background: #f5c542;
+  font-size: 0.78rem;
+}
+
+.admin-route-history-list {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.admin-route-history-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.admin-route-history-heading h2 {
+  color: #ffffff;
+  font-size: 1.08rem;
+}
+
+.admin-route-history-heading span {
+  color: #a9b2bb;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.admin-route-scroll {
+  display: grid;
+  gap: 10px;
+  max-height: min(620px, calc(100vh - 260px));
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 5px;
+}
+
+.admin-route-scroll.compact {
+  max-height: none;
+}
+
+.admin-route-feed-item {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-radius: 8px;
+  color: inherit;
+  text-align: left;
+  background: #030405;
+}
+
+.admin-route-feed-item:hover {
+  border-color: rgba(245, 197, 66, 0.3);
+  background: #0b0e11;
+}
+
+.admin-route-feed-item strong,
+.admin-route-feed-item small {
+  overflow-wrap: anywhere;
+}
+
+.admin-route-feed-item strong {
+  color: #ffffff;
+}
+
+.admin-route-feed-item small {
+  color: #8e99a3;
+}
+
 .admin-mini-list button,
 .admin-mini-log button {
   display: grid;
@@ -2475,7 +2625,8 @@ h2 {
 
   .admin-studio,
   .admin-hero-board,
-  .admin-panorama {
+  .admin-panorama,
+  .admin-route-history {
     grid-template-columns: 1fr;
   }
 
@@ -2505,6 +2656,15 @@ h2 {
 
   .admin-kpi-strip {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-route-tabs {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .admin-route-tabs button {
+    grid-template-columns: 1fr;
+    justify-items: start;
   }
 
   .group-pill {
@@ -2566,6 +2726,7 @@ h2 {
   }
 
   .admin-action-rail,
+  .admin-route-tabs,
   .admin-filter-dock,
   .admin-kpi-strip {
     grid-template-columns: 1fr 1fr;
