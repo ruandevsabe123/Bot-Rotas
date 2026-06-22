@@ -11,6 +11,10 @@ export class RouteStore {
     return this.load();
   }
 
+  clear() {
+    this.save([]);
+  }
+
   create(input: Omit<RouteDispatch, "createdAt" | "updatedAt" | "validated" | "reactions">) {
     const now = new Date().toISOString();
     const route: RouteDispatch = {

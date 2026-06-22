@@ -774,9 +774,16 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  clearLogs() {
+  clearLogs(silent = false) {
     this.logger.clear();
-    this.logger.info("Logs limpos.");
+    if (!silent) this.logger.info("Logs limpos.");
+    this.emitSnapshot();
+  }
+
+  clearRouteHistory(silent = false) {
+    this.routeStore.clear();
+    this.activeRouteByCycle.clear();
+    if (!silent) this.logger.info("Histórico de disparos limpo.");
     this.emitSnapshot();
   }
 

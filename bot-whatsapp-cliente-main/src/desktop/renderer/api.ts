@@ -175,6 +175,13 @@ export function markSupportMessageRead(id: string) {
   });
 }
 
+export function clearAdminMaintenance(payload: { target: "logs" | "routes" | "support" | "all"; clientEmail?: string }) {
+  return fetchJson<AdminMonitorSnapshot>("/api/admin/maintenance/clear", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
 async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");

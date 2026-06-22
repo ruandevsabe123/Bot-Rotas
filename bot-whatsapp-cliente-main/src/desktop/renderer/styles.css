@@ -964,6 +964,19 @@ h2 {
   background: #0b0e11;
 }
 
+.admin-route-feed-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.admin-route-feed-top small {
+  color: #8e99a3;
+  font-size: 0.78rem;
+}
+
 .admin-route-feed-item strong,
 .admin-route-feed-item small {
   overflow-wrap: anywhere;
@@ -975,6 +988,51 @@ h2 {
 
 .admin-route-feed-item small {
   color: #8e99a3;
+}
+
+.admin-route-feed-messages {
+  display: grid;
+  gap: 5px;
+}
+
+.admin-route-feed-messages span {
+  padding: 7px 9px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-radius: 8px;
+  color: #d4dbe0;
+  background: #050607;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.admin-route-feed-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.admin-route-feed-reactions span {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-radius: 8px;
+  color: #a9b2bb;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+
+.admin-route-feed-reactions span.leader {
+  border-color: rgba(53, 208, 127, 0.26);
+  color: #35d07f;
+  background: rgba(53, 208, 127, 0.08);
+}
+
+.admin-route-feed-reactions b {
+  color: #ffffff;
 }
 
 .admin-mini-list button,
@@ -1472,6 +1530,16 @@ h2 {
 .admin-settings-panel.danger {
   border-color: rgba(255, 81, 72, 0.2);
   background: linear-gradient(135deg, rgba(255, 81, 72, 0.08), transparent 46%), #07090b;
+}
+
+.cleanup-panel {
+  grid-column: 1 / -1;
+}
+
+.cleanup-actions {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .admin-log-toast {
@@ -2667,6 +2735,10 @@ h2 {
     justify-items: start;
   }
 
+  .cleanup-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .group-pill {
     max-width: none;
   }
@@ -2734,8 +2806,13 @@ h2 {
 
   .admin-filter-title,
   .admin-filter-dock label:first-of-type,
-  .admin-filter-dock .button {
+  .admin-filter-dock .button,
+  .cleanup-actions {
     grid-column: 1 / -1;
+  }
+
+  .cleanup-actions {
+    grid-template-columns: 1fr;
   }
 
   .admin-hero-board {

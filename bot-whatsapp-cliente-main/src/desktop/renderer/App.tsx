@@ -47,6 +47,7 @@ import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
 import {
   botApi,
+  clearAdminMaintenance,
   getAdminMonitor,
   getAdminUserDetail,
   getPanelMe,
@@ -81,6 +82,7 @@ type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "su
 type RouteStatusFilter = "all" | "pending" | "validated" | "leader";
 type RouteKindFilter = "all" | "automatic" | "manual" | "test";
 type RouteHistoryTab = "automatic" | "manual" | "test";
+type CleanupTarget = "logs" | "routes" | "support" | "all";
 
 const emptySnapshot: BotSnapshot = {
   status: "disconnected",
@@ -556,9 +558,29 @@ function AdminRouteHistory({
           {active.routes.length ? active.routes.map((route) => (
             compact ? (
               <button className="admin-route-feed-item" key={`route-feed-${route.id}`} type="button">
-                <span className={route.validated ? "mini-badge ok" : "mini-badge"}>{getRouteTriggerLabel(route)}</span>
-                <strong>{route.groupName}</strong>
+                <div className="admin-route-feed-top">
+                  <span className={route.validated ? "mini-badge ok" : "mini-badge"}>{getRouteTriggerLabel(route)}</span>
+                  <small>{new Date(route.createdAt).toLocaleString("pt-BR")}</small>
+                </div>
+                <strong>{route.groupName || route.groupJid || "Grupo sem nome"}</strong>
                 <small>{route.clientEmail} · {route.confirmedCount}/{route.totalCount} enviadas · {route.reactions.length} reação(ões)</small>
+                <div className="admin-route-feed-messages">
+                  {route.messages.map((message, index) => (
+                    <span key={`${route.id}-compact-message-${index}`}>{message}</span>
+                  ))}
+                </div>
+                {route.reactions.length ? (
+                  <div className="admin-route-feed-reactions">
+                    {route.reactions.map((reaction) => (
+                      <span className={reaction.isAdmin ? "leader" : ""} key={`${route.id}-compact-reaction-${reaction.id}`}>
+                        <b>{reaction.emoji || "?"}</b>
+                        {reaction.isAdmin
+                          ? `Líder${reaction.leaderName ? ` - ${reaction.leaderName}` : ""}`
+                          : getReactionDisplayPhone(reaction)}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
               </button>
             ) : (
               <RouteRow key={route.id} route={route} onValidate={onValidate ? () => onValidate(route.id) : undefined} />
@@ -929,6 +951,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [lastSeenLogAt, setLastSeenLogAt] = useState(() => new Date().toISOString());
   const [logToast, setLogToast] = useState<AdminLogEntry>();
   const [confirmLogout, setConfirmLogout] = useState(false);
+  const [confirmCleanup, setConfirmCleanup] = useState<CleanupTarget>();
+  const [cleanupBusy, setCleanupBusy] = useState(false);
 
   const clientOptions = useMemo(
     () => usersDashboard.users.filter((user) => user.role === "client"),
@@ -1137,6 +1161,32 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       setError("");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui validar a rota.");
+    }
+  }
+
+  async function runCleanup(target: CleanupTarget) {
+    if (confirmCleanup !== target) {
+      setConfirmCleanup(target);
+      return;
+    }
+
+    setCleanupBusy(true);
+    try {
+      const snapshot = await clearAdminMaintenance({
+        target,
+        clientEmail: clientFilter === "all" ? undefined : clientFilter
+      });
+      applyMonitorSnapshot(snapshot);
+      setConfirmCleanup(undefined);
+      setError("");
+    } catch (nextError) {
+      if (isAuthError(nextError)) {
+        onLogout();
+        return;
+      }
+      setError(nextError instanceof Error ? nextError.message : "Não consegui apagar os dados.");
+    } finally {
+      setCleanupBusy(false);
     }
   }
 
@@ -1407,7 +1457,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       ) : null}
 
       {activeSection === "settings" ? (
-        <AdminSectionModal eyebrow="Configurações" title="Preferências do admin" onClose={() => { setActiveSection(undefined); setConfirmLogout(false); }}>
+        <AdminSectionModal eyebrow="Configurações" title="Preferências do admin" onClose={() => { setActiveSection(undefined); setConfirmLogout(false); setConfirmCleanup(undefined); }}>
           <section className="admin-settings-grid">
             <div className="admin-settings-panel">
               <p className="panel-label">Notificações</p>
@@ -1439,6 +1489,29 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                   Confirmar saída
                 </button>
               )}
+            </div>
+            <div className="admin-settings-panel danger cleanup-panel">
+              <p className="panel-label">Limpeza</p>
+              <h2>Apagar históricos</h2>
+              <p>Escopo: {activeClientLabel}. Use um filtro de cliente antes se quiser apagar só um cliente.</p>
+              <div className="cleanup-actions">
+                {[
+                  { target: "logs" as CleanupTarget, label: "Logs do bot" },
+                  { target: "routes" as CleanupTarget, label: "Histórico de disparos" },
+                  { target: "support" as CleanupTarget, label: "Mensagens suporte" },
+                  { target: "all" as CleanupTarget, label: "Tudo acima" }
+                ].map((item) => (
+                  <button
+                    className={confirmCleanup === item.target ? "button danger" : "button"}
+                    disabled={cleanupBusy}
+                    key={item.target}
+                    type="button"
+                    onClick={() => runCleanup(item.target)}
+                  >
+                    {confirmCleanup === item.target ? `Confirmar: ${item.label}` : `Apagar ${item.label}`}
+                  </button>
+                ))}
+              </div>
             </div>
           </section>
         </AdminSectionModal>

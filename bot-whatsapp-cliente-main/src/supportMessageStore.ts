@@ -45,6 +45,15 @@ export class SupportMessageStore {
     );
   }
 
+  clear(email?: string) {
+    const normalizedEmail = String(email || "").trim().toLowerCase();
+    if (!normalizedEmail) {
+      this.save([]);
+      return;
+    }
+    this.save(this.load().filter((message) => message.email !== normalizedEmail));
+  }
+
   private load(): SupportMessage[] {
     if (!fs.existsSync(this.filePath)) return [];
 

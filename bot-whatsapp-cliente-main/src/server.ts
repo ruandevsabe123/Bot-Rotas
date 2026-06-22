@@ -477,6 +477,36 @@ function getAdminMonitorSnapshot(): AdminMonitorSnapshot {
   };
 }
 
+function getMaintenanceEmails(clientEmail?: string) {
+  const normalizedEmail = String(clientEmail || "").trim().toLowerCase();
+  if (normalizedEmail && panelUsers.has(normalizedEmail)) return [normalizedEmail];
+  return getClientEmails();
+}
+
+function clearAdminMaintenanceData(target: string, clientEmail?: string) {
+  const emails = getMaintenanceEmails(clientEmail);
+  const clearLogs = target === "logs" || target === "all";
+  const clearRoutes = target === "routes" || target === "all";
+  const clearSupport = target === "support" || target === "all";
+
+  if (!clearLogs && !clearRoutes && !clearSupport) {
+    throw new Error("Tipo de limpeza inválido.");
+  }
+
+  if (clearLogs || clearRoutes) {
+    for (const email of emails) {
+      const bot = getBotForEmail(email);
+      if (clearLogs) bot.clearLogs(true);
+      if (clearRoutes) bot.clearRouteHistory(true);
+    }
+  }
+
+  if (clearSupport) {
+    const normalizedEmail = String(clientEmail || "").trim().toLowerCase();
+    supportMessageStore.clear(normalizedEmail || undefined);
+  }
+}
+
 function broadcastAdminSnapshot() {
   if (!adminClients.size) return;
   const payload = `data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`;
@@ -796,6 +826,15 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/admin/monitor") {
       if (!requireAdmin(authorizedEmail, response)) return;
+      sendJson(response, 200, getAdminMonitorSnapshot());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/admin/maintenance/clear") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const body = await readJsonBody<{ target?: string; clientEmail?: string }>(request);
+      clearAdminMaintenanceData(String(body.target || ""), body.clientEmail);
+      broadcastAdminSnapshot();
       sendJson(response, 200, getAdminMonitorSnapshot());
       return;
     }
