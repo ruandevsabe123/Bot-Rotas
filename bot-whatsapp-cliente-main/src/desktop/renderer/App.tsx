@@ -521,8 +521,12 @@ function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: ()
             <div className={reaction.isAdmin ? "reaction-line leader" : "reaction-line"} key={reaction.id}>
               <b>{reaction.emoji || "?"}</b>
               <span>
-                {reaction.isAdmin ? `Reação do líder${reaction.leaderName ? ` (${reaction.leaderName})` : ""} encontrada` : "Reação recebida"}
-                {` · ${getReactionDisplayPhone(reaction)}`}
+                <strong>
+                  {reaction.isAdmin
+                    ? `REAÇÃO DE LÍDER CONFIRMADA${reaction.leaderName ? ` - ${reaction.leaderName}` : ""}`
+                    : "Reação comum - não é líder"}
+                </strong>
+                <small>{getReactionDisplayPhone(reaction)}</small>
               </span>
             </div>
           ))}

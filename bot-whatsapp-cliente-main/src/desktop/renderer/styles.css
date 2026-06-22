@@ -645,6 +645,25 @@ h2 {
   background: rgba(53, 208, 127, 0.08);
 }
 
+.reaction-line span {
+  display: grid;
+  gap: 3px;
+}
+
+.reaction-line strong {
+  color: #d4dbe0;
+  font-size: 0.86rem;
+}
+
+.reaction-line.leader strong {
+  color: #35d07f;
+}
+
+.reaction-line small {
+  color: #8e99a3;
+  font-size: 0.8rem;
+}
+
 .reaction-line b {
   display: grid;
   min-width: 38px;
