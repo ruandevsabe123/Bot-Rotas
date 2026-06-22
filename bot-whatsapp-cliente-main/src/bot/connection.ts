@@ -83,8 +83,7 @@ const DEFAULT_LEADER_CONTACTS = [
   { name: "Renato Balbino", phone: "5511945113460" },
   { name: "flávia barreto", phone: "5511992561962" },
   { name: "Thalles Lunga", phone: "5521967843028" },
-  { name: "Renato Balbino", phone: "5522998677384" },
-  { name: "Admin do painel", phone: "5522997005493" }
+  { name: "Renato Balbino", phone: "5522998677384" }
 ];
 
 export class BotService extends EventEmitter {
