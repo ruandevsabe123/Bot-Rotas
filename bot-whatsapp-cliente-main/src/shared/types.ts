@@ -146,6 +146,7 @@ export type RouteDispatch = {
   groupJid: string;
   groupName: string;
   mode: "target" | "test";
+  trigger?: "automatic" | "manual" | "warmup" | "target-simulation" | "simulation";
   messages: string[];
   sentMessageIds: string[];
   confirmedCount: number;

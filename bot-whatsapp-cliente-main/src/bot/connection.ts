@@ -8,7 +8,7 @@ import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { RouteStore } from "./routeStore";
-import { BotConfig, BotGroup, BotGroupState, BotReadinessCheck, BotSnapshot, BotStatus, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotReadinessCheck, BotSnapshot, BotStatus, RouteDispatch, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -304,7 +304,7 @@ export class BotService extends EventEmitter {
     this.groupState = "open";
     this.grupoJaFechouDepoisDoInicio = false;
     this.logger.warning("Simulação de abertura acionada pelo painel.");
-    this.enviarMensagensRapidas(cycleId);
+    this.enviarMensagensRapidas(cycleId, "simulation");
     this.logger.info("⚡ Abertura simulada. Disparo acionado.");
     this.emitSnapshot();
     return true;
@@ -352,7 +352,7 @@ export class BotService extends EventEmitter {
 
     const cycleId = ++this.sendCycleId;
     this.grupoJaFechouDepoisDoInicio = false;
-    this.enviarMensagensRapidas(cycleId);
+    this.enviarMensagensRapidas(cycleId, "manual");
     this.logger.info("Disparo manual acionado pelo painel.");
     this.emitSnapshot();
     return true;
@@ -393,7 +393,7 @@ export class BotService extends EventEmitter {
     this.preparedTargetJid = testGroup.jid;
     this.preparedMessages = mensagens;
     this.rebuildPreparedRelayMessages(testGroup.jid, mensagens);
-    this.registerRouteDispatch(cycleId, testGroup.jid, mensagens);
+    this.registerRouteDispatch(cycleId, testGroup.jid, mensagens, "target-simulation");
 
     const sendCycle = this.sendFastSequence(testGroup.jid, mensagens, cycleId).finally(() => {
       this.targetSimulationCycles.delete(cycleId);
@@ -1173,7 +1173,7 @@ export class BotService extends EventEmitter {
 
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
-        this.enviarMensagensRapidas(cycleId);
+        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic");
         this.logger.info(`⚡ ${activeGroup.label} ABRIU! Disparo acionado.`);
         return;
       }
@@ -1224,7 +1224,7 @@ export class BotService extends EventEmitter {
 
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
-        this.enviarMensagensRapidas(cycleId);
+        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic");
         this.logger.info("Palavra de abertura detectada. Rajada instantânea acionada.");
         return;
       }
@@ -1425,7 +1425,7 @@ export class BotService extends EventEmitter {
     return aTail.length >= 10 && bTail.length >= 10 && aTail === bTail;
   }
 
-  private enviarMensagensRapidas(cycleId: number) {
+  private enviarMensagensRapidas(cycleId: number, trigger: RouteDispatch["trigger"] = this.monitoringMode === "test" ? "warmup" : "automatic") {
     if (!this.preparedTargetJid || !this.preparedMessages.length) {
       this.prepareSendPlan();
     }
@@ -1455,7 +1455,7 @@ export class BotService extends EventEmitter {
 
     const config = this.configStore.load();
     this.ensurePreparedRelayMessages(this.preparedTargetJid, mensagens);
-    this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens);
+    this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
     const sendCycle =
       this.monitoringMode === "test"
         ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId)
@@ -1495,7 +1495,7 @@ export class BotService extends EventEmitter {
     return `${jid}::${mensagens.join("\u001f")}`;
   }
 
-  private registerRouteDispatch(cycleId: number, jid: string, mensagens: string[]) {
+  private registerRouteDispatch(cycleId: number, jid: string, mensagens: string[], trigger: RouteDispatch["trigger"] = this.monitoringMode === "test" ? "warmup" : "automatic") {
     const config = this.configStore.load();
     const route = this.routeStore.create({
       id: `${Date.now()}-${cycleId}`,
@@ -1503,6 +1503,7 @@ export class BotService extends EventEmitter {
       groupJid: jid,
       groupName: this.monitoringMode === "test" ? config.grupoTesteNome || jid : config.grupoAlvoNome || jid,
       mode: this.monitoringMode,
+      trigger,
       messages: mensagens,
       sentMessageIds: this.preparedRelayMessages.map((item) => String(item?.key?.id || "")).filter(Boolean),
       confirmedCount: 0,

@@ -652,23 +652,50 @@ h2 {
 
 .admin-filter-dock {
   display: grid;
-  grid-template-columns: minmax(260px, 1.2fr) minmax(180px, 0.75fr) auto;
+  grid-template-columns: auto minmax(240px, 1.1fr) minmax(180px, 0.72fr) minmax(190px, 0.72fr) auto;
   gap: 10px;
   align-items: end;
-  padding: 12px;
-  border: 1px solid rgba(245, 247, 248, 0.08);
+  padding: 14px;
+  border: 1px solid rgba(245, 197, 66, 0.12);
   border-radius: 8px;
-  background: #050607;
+  background:
+    linear-gradient(135deg, rgba(245, 197, 66, 0.08), transparent 38%),
+    #050607;
+}
+
+.admin-filter-title {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  border: 1px solid rgba(245, 197, 66, 0.18);
+  border-radius: 8px;
+  color: #f5c542;
+  background: rgba(245, 197, 66, 0.08);
+  font-weight: 950;
 }
 
 .admin-filter-dock label {
   display: grid;
   gap: 6px;
-  color: #8e99a3;
-  font-size: 0.78rem;
+  min-width: 0;
+}
+
+.admin-filter-dock label > span {
+  color: #a9b2bb;
+  font-size: 0.76rem;
   font-weight: 900;
   text-transform: uppercase;
   letter-spacing: 0;
+}
+
+.admin-filter-dock select {
+  min-height: 42px;
+  border-color: rgba(245, 247, 248, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent),
+    #0b0f13;
 }
 
 .admin-kpi-strip {
@@ -708,9 +735,11 @@ h2 {
 
 .admin-preview-panel {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   align-content: start;
-  min-height: 310px;
+  height: min(560px, 66vh);
+  min-height: 390px;
   padding: 16px;
   border: 1px solid rgba(245, 247, 248, 0.08);
   border-radius: 8px;
@@ -746,6 +775,56 @@ h2 {
 .admin-mini-log {
   display: grid;
   gap: 8px;
+}
+
+.admin-mini-list.scrollable,
+.admin-mini-log.scrollable {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 5px;
+}
+
+.admin-route-bucket {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.admin-route-bucket header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.admin-route-bucket header span {
+  color: #ffffff;
+  font-weight: 950;
+}
+
+.admin-route-bucket header strong {
+  display: grid;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  place-items: center;
+  border-radius: 999px;
+  color: #050607;
+  background: #f5c542;
+  font-size: 0.78rem;
+}
+
+.admin-bucket-empty {
+  margin: 0;
+  padding: 10px;
+  border: 1px dashed rgba(245, 247, 248, 0.1);
+  border-radius: 8px;
+  color: #8e99a3;
+  background: rgba(0, 0, 0, 0.15);
 }
 
 .admin-mini-list button,
@@ -2416,6 +2495,10 @@ h2 {
     grid-template-columns: 1fr 1fr;
   }
 
+  .admin-filter-title {
+    grid-column: 1 / -1;
+  }
+
   .admin-filter-dock .button {
     grid-column: 1 / -1;
   }
@@ -2486,6 +2569,12 @@ h2 {
   .admin-filter-dock,
   .admin-kpi-strip {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-filter-title,
+  .admin-filter-dock label:first-of-type,
+  .admin-filter-dock .button {
+    grid-column: 1 / -1;
   }
 
   .admin-hero-board {

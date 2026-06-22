@@ -79,6 +79,7 @@ type AppTab = "home" | "messages" | "logs" | "settings";
 type GroupEditor = "target" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
 type RouteStatusFilter = "all" | "pending" | "validated" | "leader";
+type RouteKindFilter = "all" | "automatic" | "manual" | "test";
 
 const emptySnapshot: BotSnapshot = {
   status: "disconnected",
@@ -490,6 +491,20 @@ function getReactionDisplayPhone(reaction: RouteDispatch["reactions"][number]) {
   return phone || reaction.senderPhone || "Número não identificado";
 }
 
+function getRouteTrigger(route: RouteDispatch) {
+  if (route.trigger) return route.trigger;
+  return route.mode === "test" ? "warmup" : "automatic";
+}
+
+function getRouteTriggerLabel(route: RouteDispatch) {
+  const trigger = getRouteTrigger(route);
+  if (trigger === "manual") return "Manual";
+  if (trigger === "warmup") return "Teste 15 msgs";
+  if (trigger === "target-simulation") return "Simulação alvo";
+  if (trigger === "simulation") return "Simulação abertura";
+  return "Automático";
+}
+
 function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: () => void }) {
   const createdAt = new Date(route.createdAt).toLocaleString("pt-BR");
 
@@ -509,6 +524,7 @@ function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: ()
         <span className={route.validated ? "route-status ok" : "route-status"}>{route.validated ? "Validada" : "Pendente"}</span>
       </div>
       <div className="route-meta">
+        <span>{getRouteTriggerLabel(route)}</span>
         <span>{createdAt}</span>
         <span>{route.confirmedCount}/{route.totalCount} enviadas</span>
         <span>{route.reactions.length} reações</span>
@@ -843,6 +859,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [lastLeaderReactionId, setLastLeaderReactionId] = useState("");
   const [clientFilter, setClientFilter] = useState("all");
   const [routeStatusFilter, setRouteStatusFilter] = useState<RouteStatusFilter>("all");
+  const [routeKindFilter, setRouteKindFilter] = useState<RouteKindFilter>("all");
   const [lastSeenLogAt, setLastSeenLogAt] = useState(() => new Date().toISOString());
   const [logToast, setLogToast] = useState<AdminLogEntry>();
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -855,14 +872,20 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     return dashboard.routes.filter((route) => {
       const matchesClient = clientFilter === "all" || route.clientEmail === clientFilter;
       const hasLeaderReaction = route.reactions.some((reaction) => reaction.isAdmin);
+      const trigger = getRouteTrigger(route);
       const matchesStatus =
         routeStatusFilter === "all" ||
         (routeStatusFilter === "pending" && !route.validated) ||
         (routeStatusFilter === "validated" && route.validated) ||
         (routeStatusFilter === "leader" && hasLeaderReaction);
-      return matchesClient && matchesStatus;
+      const matchesKind =
+        routeKindFilter === "all" ||
+        (routeKindFilter === "automatic" && route.mode === "target" && trigger === "automatic") ||
+        (routeKindFilter === "manual" && ["manual", "simulation"].includes(trigger)) ||
+        (routeKindFilter === "test" && (route.mode === "test" || ["warmup", "target-simulation"].includes(trigger)));
+      return matchesClient && matchesStatus && matchesKind;
     });
-  }, [clientFilter, dashboard.routes, routeStatusFilter]);
+  }, [clientFilter, dashboard.routes, routeKindFilter, routeStatusFilter]);
   const filteredPendingRoutes = useMemo(
     () => dashboard.pendingReactionRoutes.filter((route) => clientFilter === "all" || route.clientEmail === clientFilter),
     [clientFilter, dashboard.pendingReactionRoutes]
@@ -1053,9 +1076,10 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
 
   const activeClientLabel = clientFilter === "all" ? "Todos os clientes" : clientFilter;
   const filteredUnreadSupport = filteredSupportMessages.filter((message) => !message.read).length;
-  const latestLogs = filteredLogs.slice(0, 5);
-  const latestRoutes = filteredRoutes.slice(0, 3);
   const onlineClients = usersDashboard.users.filter((user) => user.role === "client" && user.presenceStatus === "online").length;
+  const automaticRoutes = filteredRoutes.filter((route) => route.mode === "target" && getRouteTrigger(route) === "automatic");
+  const manualRoutes = filteredRoutes.filter((route) => ["manual", "simulation"].includes(getRouteTrigger(route)));
+  const testRoutes = filteredRoutes.filter((route) => route.mode === "test" || ["warmup", "target-simulation"].includes(getRouteTrigger(route)));
 
   return (
     <main className="app-shell admin-shell admin-console">
@@ -1127,8 +1151,12 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
           </section>
 
           <section className="admin-filter-dock">
+            <div className="admin-filter-title">
+              <SlidersHorizontal size={18} />
+              <span>Filtros</span>
+            </div>
             <label>
-              Cliente
+              <span>Cliente</span>
               <select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
                 <option value="all">Todos os clientes</option>
                 {clientOptions.map((user) => (
@@ -1137,15 +1165,24 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
               </select>
             </label>
             <label>
-              Status
+              <span>Tipo</span>
+              <select value={routeKindFilter} onChange={(event) => setRouteKindFilter(event.target.value as RouteKindFilter)}>
+                <option value="all">Todos os tipos</option>
+                <option value="automatic">Alvo automático</option>
+                <option value="manual">Manual / simulação</option>
+                <option value="test">Teste / 15 mensagens</option>
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
               <select value={routeStatusFilter} onChange={(event) => setRouteStatusFilter(event.target.value as RouteStatusFilter)}>
-                <option value="all">Todos os disparos</option>
+                <option value="all">Todos os status</option>
                 <option value="pending">Pendentes</option>
                 <option value="leader">Com reação de líder</option>
                 <option value="validated">Validados</option>
               </select>
             </label>
-            <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("all"); }}>
+            <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteKindFilter("all"); setRouteStatusFilter("all"); }}>
               Limpar
             </button>
           </section>
@@ -1162,19 +1199,31 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             <article className="admin-preview-panel">
               <div className="admin-preview-heading">
                 <div>
-                  <p className="panel-label">Disparos recentes</p>
-                  <h2>Últimas rotas</h2>
+                  <p className="panel-label">Disparos</p>
+                  <h2>Fila por tipo</h2>
                 </div>
                 <button className="button" type="button" onClick={() => setActiveSection("routes")}>Ver tudo</button>
               </div>
-              <div className="admin-mini-list">
-                {latestRoutes.length ? latestRoutes.map((route) => (
-                  <button key={`preview-${route.id}`} type="button" onClick={() => setActiveSection("routes")}>
-                    <span className={route.validated ? "mini-badge ok" : "mini-badge"}>{route.validated ? "Validada" : route.status}</span>
-                    <strong>{route.groupName}</strong>
-                    <small>{route.clientEmail} · {route.reactions.length} reação(ões)</small>
-                  </button>
-                )) : <p className="qr-empty">Nenhum disparo para esse filtro.</p>}
+              <div className="admin-mini-list scrollable">
+                {[
+                  { title: "Alvo automático", routes: automaticRoutes },
+                  { title: "Manual / simulação", routes: manualRoutes },
+                  { title: "Teste / 15 mensagens", routes: testRoutes }
+                ].map((group) => (
+                  <section className="admin-route-bucket" key={group.title}>
+                    <header>
+                      <span>{group.title}</span>
+                      <strong>{group.routes.length}</strong>
+                    </header>
+                    {group.routes.length ? group.routes.map((route) => (
+                      <button key={`preview-${route.id}`} type="button" onClick={() => setActiveSection("routes")}>
+                        <span className={route.validated ? "mini-badge ok" : "mini-badge"}>{getRouteTriggerLabel(route)}</span>
+                        <strong>{route.groupName}</strong>
+                        <small>{route.clientEmail} · {route.confirmedCount}/{route.totalCount} enviadas · {route.reactions.length} reação(ões)</small>
+                      </button>
+                    )) : <p className="admin-bucket-empty">Nenhum neste tipo.</p>}
+                  </section>
+                ))}
               </div>
             </article>
 
@@ -1186,8 +1235,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                 </div>
                 {unreadLogCount ? <span className="admin-live-pill">{unreadLogCount} novo(s)</span> : null}
               </div>
-              <div className="admin-mini-log">
-                {latestLogs.length ? latestLogs.map((log) => (
+              <div className="admin-mini-log scrollable">
+                {filteredLogs.length ? filteredLogs.map((log) => (
                   <button key={`feed-${log.clientEmail}-${log.id}`} type="button" onClick={() => setActiveSection("logs")}>
                     <span style={colorStyle(log.clientColor)}><i /></span>
                     <div>
@@ -1317,8 +1366,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             <div className="admin-settings-panel">
               <p className="panel-label">Filtro padrão</p>
               <h2>Visão atual</h2>
-              <p>{activeClientLabel} · {routeStatusFilter === "all" ? "todos os disparos" : "disparos filtrados"}</p>
-              <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("all"); }}>
+              <p>{activeClientLabel} · {routeKindFilter === "all" ? "todos os tipos" : "tipo filtrado"} · {routeStatusFilter === "all" ? "todos os status" : "status filtrado"}</p>
+              <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteKindFilter("all"); setRouteStatusFilter("all"); }}>
                 Resetar filtros
               </button>
             </div>

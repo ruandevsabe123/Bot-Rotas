@@ -101,6 +101,11 @@ export class RouteStore {
       groupJid: typeof input.groupJid === "string" ? input.groupJid : "",
       groupName: typeof input.groupName === "string" ? input.groupName : "",
       mode: input.mode === "test" ? "test" : "target",
+      trigger: ["automatic", "manual", "warmup", "target-simulation", "simulation"].includes(input.trigger)
+        ? input.trigger
+        : input.mode === "test"
+        ? "warmup"
+        : "automatic",
       messages: Array.isArray(input.messages) ? input.messages.filter((item: unknown) => typeof item === "string") : [],
       sentMessageIds: Array.isArray(input.sentMessageIds)
         ? input.sentMessageIds.filter((item: unknown) => typeof item === "string")
