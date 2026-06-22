@@ -542,6 +542,39 @@ h2 {
   gap: 14px;
 }
 
+.admin-command-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.1fr) minmax(180px, 0.8fr) auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px;
+  border: 1px solid rgba(245, 247, 248, 0.09);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(126, 182, 255, 0.08), transparent 48%), #07090b;
+}
+
+.admin-command-bar > div {
+  min-width: 0;
+}
+
+.admin-command-bar strong {
+  display: block;
+  margin-top: 4px;
+  color: #ffffff;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.admin-command-bar label {
+  display: grid;
+  gap: 6px;
+  color: #8e99a3;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
 .admin-workspace {
   display: grid;
   grid-template-columns: minmax(340px, 0.9fr) minmax(420px, 1.1fr);
@@ -560,6 +593,7 @@ h2 {
 }
 
 .admin-section-card {
+  position: relative;
   display: flex;
   min-height: 138px;
   align-items: flex-start;
@@ -605,6 +639,24 @@ h2 {
   font-size: clamp(1.35rem, 3vw, 2rem);
   line-height: 1.1;
   overflow-wrap: anywhere;
+}
+
+.admin-section-badge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 8px;
+  place-items: center;
+  border: 1px solid rgba(255, 81, 72, 0.38);
+  border-radius: 999px;
+  color: #ffffff;
+  background: #ff5148;
+  font-size: 0.78rem;
+  font-weight: 950;
+  box-shadow: 0 10px 28px rgba(255, 81, 72, 0.2);
 }
 
 .admin-section-card-green .admin-section-icon {
@@ -780,6 +832,117 @@ h2 {
 .admin-log-success {
   border-color: rgba(53, 208, 127, 0.22);
   border-left-color: #35d07f;
+}
+
+.admin-section-summary {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 13px 14px;
+  border: 1px solid rgba(126, 182, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(126, 182, 255, 0.07);
+}
+
+.admin-section-summary strong {
+  display: grid;
+  min-width: 42px;
+  height: 42px;
+  place-items: center;
+  border-radius: 8px;
+  color: #7eb6ff;
+  background: rgba(126, 182, 255, 0.12);
+  font-size: 1.25rem;
+}
+
+.admin-section-summary span {
+  color: #d4dbe0;
+  line-height: 1.45;
+}
+
+.admin-settings-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-settings-panel {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 16px;
+  border: 1px solid rgba(245, 247, 248, 0.09);
+  border-radius: 8px;
+  background: #07090b;
+}
+
+.admin-settings-panel h2 {
+  color: #ffffff;
+  font-size: 1.08rem;
+}
+
+.admin-settings-panel p {
+  margin: 0;
+  color: #a9b2bb;
+  line-height: 1.48;
+}
+
+.admin-settings-panel.danger {
+  border-color: rgba(255, 81, 72, 0.2);
+  background: linear-gradient(135deg, rgba(255, 81, 72, 0.08), transparent 46%), #07090b;
+}
+
+.admin-log-toast {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  width: min(390px, calc(100vw - 28px));
+  padding: 14px;
+  border: 1px solid rgba(245, 197, 66, 0.34);
+  border-radius: 8px;
+  color: inherit;
+  text-align: left;
+  background: #090c0f;
+  box-shadow: 0 20px 70px rgba(0, 0, 0, 0.52);
+}
+
+.admin-log-toast > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 999px;
+  color: #050607;
+  background: #f5c542;
+  font-size: 0.8rem;
+  font-weight: 950;
+}
+
+.admin-log-toast strong,
+.admin-log-toast small,
+.admin-log-toast p {
+  display: block;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.admin-log-toast strong {
+  color: #ffffff;
+}
+
+.admin-log-toast small {
+  margin-top: 2px;
+  color: #8e99a3;
+}
+
+.admin-log-toast p {
+  margin-top: 7px;
+  color: #d4dbe0;
+  line-height: 1.35;
 }
 
 .reaction-line b {
@@ -1870,8 +2033,10 @@ h2 {
   }
 
   .operation-steps,
+  .admin-command-bar,
   .admin-grid,
   .admin-control-grid,
+  .admin-settings-grid,
   .detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1916,8 +2081,10 @@ h2 {
   .readiness-list,
     .button-grid,
     .operation-steps,
+    .admin-command-bar,
     .admin-grid,
     .admin-control-grid,
+    .admin-settings-grid,
     .detail-grid,
   .user-editor,
   .user-row {

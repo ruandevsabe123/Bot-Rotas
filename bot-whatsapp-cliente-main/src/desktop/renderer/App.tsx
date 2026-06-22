@@ -77,7 +77,8 @@ type PendingConfirmation = {
 
 type AppTab = "home" | "messages" | "logs" | "settings";
 type GroupEditor = "target" | "test" | undefined;
-type AdminSection = "reactions" | "logs" | "routes" | "users" | "support" | undefined;
+type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
+type RouteStatusFilter = "all" | "pending" | "validated" | "leader";
 
 const emptySnapshot: BotSnapshot = {
   status: "disconnected",
@@ -753,6 +754,7 @@ function AdminSectionCard({
   value,
   tone,
   Icon,
+  badge,
   onOpen
 }: {
   title: string;
@@ -760,10 +762,12 @@ function AdminSectionCard({
   value: string | number;
   tone: "yellow" | "green" | "blue" | "red";
   Icon: typeof Home;
+  badge?: number;
   onOpen: () => void;
 }) {
   return (
     <button className={`admin-section-card admin-section-card-${tone}`} type="button" onClick={onOpen}>
+      {badge ? <span className="admin-section-badge">{badge}</span> : null}
       <span className="admin-section-icon">
         <Icon size={22} />
       </span>
@@ -837,6 +841,41 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [lastNotifiedSupportId, setLastNotifiedSupportId] = useState("");
   const [leaderAlert, setLeaderAlert] = useState("");
   const [lastLeaderReactionId, setLastLeaderReactionId] = useState("");
+  const [clientFilter, setClientFilter] = useState("all");
+  const [routeStatusFilter, setRouteStatusFilter] = useState<RouteStatusFilter>("all");
+  const [lastSeenLogAt, setLastSeenLogAt] = useState(() => new Date().toISOString());
+  const [logToast, setLogToast] = useState<AdminLogEntry>();
+  const [confirmLogout, setConfirmLogout] = useState(false);
+
+  const clientOptions = useMemo(
+    () => usersDashboard.users.filter((user) => user.role === "client"),
+    [usersDashboard.users]
+  );
+  const filteredRoutes = useMemo(() => {
+    return dashboard.routes.filter((route) => {
+      const matchesClient = clientFilter === "all" || route.clientEmail === clientFilter;
+      const hasLeaderReaction = route.reactions.some((reaction) => reaction.isAdmin);
+      const matchesStatus =
+        routeStatusFilter === "all" ||
+        (routeStatusFilter === "pending" && !route.validated) ||
+        (routeStatusFilter === "validated" && route.validated) ||
+        (routeStatusFilter === "leader" && hasLeaderReaction);
+      return matchesClient && matchesStatus;
+    });
+  }, [clientFilter, dashboard.routes, routeStatusFilter]);
+  const filteredPendingRoutes = useMemo(
+    () => dashboard.pendingReactionRoutes.filter((route) => clientFilter === "all" || route.clientEmail === clientFilter),
+    [clientFilter, dashboard.pendingReactionRoutes]
+  );
+  const filteredLogs = useMemo(
+    () => adminLogs.filter((log) => clientFilter === "all" || log.clientEmail === clientFilter),
+    [adminLogs, clientFilter]
+  );
+  const filteredSupportMessages = useMemo(
+    () => supportDashboard.messages.filter((message) => clientFilter === "all" || message.email === clientFilter),
+    [clientFilter, supportDashboard.messages]
+  );
+  const unreadLogCount = adminLogs.filter((log) => new Date(log.timestamp).getTime() > new Date(lastSeenLogAt).getTime()).length;
 
   function applyMonitorSnapshot(snapshot: Awaited<ReturnType<typeof getAdminMonitor>>) {
     setDashboard(snapshot.routes);
@@ -873,6 +912,23 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       document.body.style.overflow = previousOverflow;
     };
   }, [activeSection, detail, leaderAlert]);
+
+  useEffect(() => {
+    if (activeSection !== "logs") return;
+    const newestLog = adminLogs[0];
+    if (newestLog) setLastSeenLogAt(newestLog.timestamp);
+    setLogToast(undefined);
+  }, [activeSection, adminLogs]);
+
+  useEffect(() => {
+    if (activeSection === "logs") return;
+    const newestLog = adminLogs[0];
+    if (!newestLog) return;
+    if (new Date(newestLog.timestamp).getTime() <= new Date(lastSeenLogAt).getTime()) return;
+    setLogToast(newestLog);
+    const timer = window.setTimeout(() => setLogToast(undefined), 5200);
+    return () => window.clearTimeout(timer);
+  }, [activeSection, adminLogs, lastSeenLogAt]);
 
   useEffect(() => {
     const latestUnread = supportDashboard.messages.find((message) => !message.read);
@@ -995,12 +1051,15 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     }
   }
 
+  const activeClientLabel = clientFilter === "all" ? "Todos os clientes" : clientFilter;
+  const filteredUnreadSupport = filteredSupportMessages.filter((message) => !message.read).length;
+
   return (
     <main className="app-shell admin-shell">
       <section className="topbar app-topbar">
         <div>
-          <p className="eyebrow">Monitoramento admin</p>
-          <h1>Rotas</h1>
+          <p className="eyebrow">Painel admin</p>
+          <h1>Controle do bot</h1>
         </div>
         <div className="group-pill">
           <span>Administrador</span>
@@ -1008,37 +1067,66 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
         </div>
       </section>
 
+      <section className="admin-command-bar">
+        <div>
+          <p className="panel-label">Filtro ativo</p>
+          <strong>{activeClientLabel}</strong>
+        </div>
+        <label>
+          Cliente
+          <select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
+            <option value="all">Todos os clientes</option>
+            {clientOptions.map((user) => (
+              <option key={user.email} value={user.email}>{user.email}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Disparos
+          <select value={routeStatusFilter} onChange={(event) => setRouteStatusFilter(event.target.value as RouteStatusFilter)}>
+            <option value="all">Todos os status</option>
+            <option value="pending">Pendentes</option>
+            <option value="leader">Com reação de líder</option>
+            <option value="validated">Validados</option>
+          </select>
+        </label>
+        <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("all"); }}>
+          Limpar filtros
+        </button>
+      </section>
+
       <section className="admin-grid">
-        <AdminMetric Icon={Route} tone="blue" title="Rotas" value={dashboard.totals.routes} detail="disparos registrados" />
-        <AdminMetric Icon={CheckCircle2} tone="green" title="Validadas" value={dashboard.totals.validated} detail="por reação admin" />
-        <AdminMetric Icon={Zap} tone="yellow" title="Reações" value={dashboard.totals.reactions} detail="recebidas no WhatsApp" />
+        <AdminMetric Icon={Route} tone="blue" title="Rotas" value={filteredRoutes.length} detail="disparos no filtro" />
+        <AdminMetric Icon={CheckCircle2} tone="green" title="Validadas" value={filteredRoutes.filter((route) => route.validated).length} detail="confirmadas por você" />
+        <AdminMetric Icon={Zap} tone="yellow" title="Reações" value={filteredRoutes.reduce((total, route) => total + route.reactions.length, 0)} detail="recebidas no filtro" />
         <AdminMetric Icon={ShieldCheck} tone="blue" title="Usuários" value={usersDashboard.users.length} detail={`${dashboard.totals.clients} com rotas`} />
-        <AdminMetric Icon={MessageSquareText} tone={supportDashboard.unread ? "red" : "green"} title="Mensagens" value={supportDashboard.unread} detail="não lidas" />
+        <AdminMetric Icon={MessageSquareText} tone={filteredUnreadSupport ? "red" : "green"} title="Mensagens" value={filteredUnreadSupport} detail="não lidas no filtro" />
       </section>
 
       <section className="admin-control-grid">
         <AdminSectionCard
           Icon={AlertTriangle}
-          tone={dashboard.pendingReactionRoutes.length ? "red" : "green"}
+          tone={filteredPendingRoutes.length ? "red" : "green"}
           title="Validação"
-          value={dashboard.pendingReactionRoutes.length}
+          value={filteredPendingRoutes.length}
           detail="reações aguardando análise"
           onOpen={() => setActiveSection("reactions")}
         />
         <AdminSectionCard
           Icon={Activity}
-          tone="blue"
+          tone={unreadLogCount ? "red" : "blue"}
           title="Tempo real"
-          value={adminLogs.length}
-          detail="eventos recentes dos bots"
+          value={filteredLogs.length}
+          detail="logs ao vivo dos bots"
+          badge={unreadLogCount}
           onOpen={() => setActiveSection("logs")}
         />
         <AdminSectionCard
           Icon={Route}
           tone="yellow"
           title="Disparos"
-          value={dashboard.routes.length}
-          detail="últimos 100 registros"
+          value={filteredRoutes.length}
+          detail="histórico filtrável"
           onOpen={() => setActiveSection("routes")}
         />
         <AdminSectionCard
@@ -1051,31 +1139,34 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
         />
         <AdminSectionCard
           Icon={MessageSquareText}
-          tone={supportDashboard.unread ? "red" : "green"}
+          tone={filteredUnreadSupport ? "red" : "green"}
           title="Mensagens"
-          value={supportDashboard.unread}
+          value={filteredUnreadSupport}
           detail="chamados internos"
+          badge={filteredUnreadSupport}
           onOpen={() => setActiveSection("support")}
         />
-        <button className="admin-section-card admin-section-card-blue" type="button" onClick={onLogout}>
-          <span className="admin-section-icon">
-            <LogOut size={22} />
-          </span>
-          <span>
-            <small>Sessão</small>
-            <strong>Sair</strong>
-            <em>{userEmail}</em>
-          </span>
-        </button>
+        <AdminSectionCard
+          Icon={Settings}
+          tone="blue"
+          title="Configurações"
+          value="Ajustes"
+          detail="notificações, filtros e sessão"
+          onOpen={() => setActiveSection("settings")}
+        />
       </section>
 
       {error ? <p className="login-error">{error}</p> : null}
 
       {activeSection === "reactions" ? (
         <AdminSectionModal eyebrow="Validação" title="Reações para validar" onClose={() => setActiveSection(undefined)}>
+          <div className="admin-section-summary">
+            <strong>{filteredPendingRoutes.length}</strong>
+            <span>rotas com reação aguardando sua confirmação em {activeClientLabel}.</span>
+          </div>
           <div className="route-list">
-            {dashboard.pendingReactionRoutes.length ? (
-              dashboard.pendingReactionRoutes.map((route) => <RouteRow key={`pending-${route.id}`} route={route} onValidate={() => validateRoute(route.id)} />)
+            {filteredPendingRoutes.length ? (
+              filteredPendingRoutes.map((route) => <RouteRow key={`pending-${route.id}`} route={route} onValidate={() => validateRoute(route.id)} />)
             ) : (
               <p className="qr-empty">Nenhuma reação pendente de validação.</p>
             )}
@@ -1085,17 +1176,25 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
 
       {activeSection === "logs" ? (
         <AdminSectionModal eyebrow="Tempo real" title="Logs dos bots" onClose={() => setActiveSection(undefined)}>
+          <div className="admin-section-summary">
+            <strong>{filteredLogs.length}</strong>
+            <span>eventos em tempo real para {activeClientLabel}. Abrir esta tela marca os logs como vistos.</span>
+          </div>
           <div className="admin-log-list">
-            {adminLogs.length ? adminLogs.map((log) => <AdminLogRow key={`${log.clientEmail}-${log.id}`} log={log} />) : <p className="qr-empty">Nenhum log recebido ainda.</p>}
+            {filteredLogs.length ? filteredLogs.map((log) => <AdminLogRow key={`${log.clientEmail}-${log.id}`} log={log} />) : <p className="qr-empty">Nenhum log recebido ainda.</p>}
           </div>
         </AdminSectionModal>
       ) : null}
 
       {activeSection === "routes" ? (
         <AdminSectionModal eyebrow="Histórico" title="Últimos 100 disparos" onClose={() => setActiveSection(undefined)}>
+          <div className="admin-section-summary">
+            <strong>{filteredRoutes.length}</strong>
+            <span>disparos encontrados com cliente: {activeClientLabel}.</span>
+          </div>
           <div className="route-list">
-            {dashboard.routes.length ? (
-              dashboard.routes.map((route) => <RouteRow key={route.id} route={route} onValidate={() => validateRoute(route.id)} />)
+            {filteredRoutes.length ? (
+              filteredRoutes.map((route) => <RouteRow key={route.id} route={route} onValidate={() => validateRoute(route.id)} />)
             ) : (
               <p className="qr-empty">Nenhuma rota enviada ainda.</p>
             )}
@@ -1143,21 +1242,69 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
           <div className="panel-heading">
             <div>
               <p className="panel-label">Notificações</p>
-              <h2>{supportDashboard.unread} não lida(s)</h2>
+              <h2>{filteredUnreadSupport} não lida(s)</h2>
             </div>
             <button className="button" type="button" onClick={enableNotifications}>
               Ativar notificação
             </button>
           </div>
           <div className="support-message-list">
-            {supportDashboard.messages.length ? supportDashboard.messages.map((message) => (
+            {filteredSupportMessages.length ? filteredSupportMessages.map((message) => (
               <SupportMessageRow key={message.id} message={message} onMarkRead={() => readSupportMessage(message.id)} />
             )) : <p className="qr-empty">Nenhuma mensagem de cliente ainda.</p>}
           </div>
         </AdminSectionModal>
       ) : null}
 
+      {activeSection === "settings" ? (
+        <AdminSectionModal eyebrow="Configurações" title="Preferências do admin" onClose={() => { setActiveSection(undefined); setConfirmLogout(false); }}>
+          <section className="admin-settings-grid">
+            <div className="admin-settings-panel">
+              <p className="panel-label">Notificações</p>
+              <h2>Alertas do navegador</h2>
+              <p>Use isso para receber aviso quando cliente chamar no painel ou quando aparecer reação importante.</p>
+              <button className="button primary" type="button" onClick={enableNotifications}>
+                Ativar notificações
+              </button>
+            </div>
+            <div className="admin-settings-panel">
+              <p className="panel-label">Filtro padrão</p>
+              <h2>Visão atual</h2>
+              <p>{activeClientLabel} · {routeStatusFilter === "all" ? "todos os disparos" : "disparos filtrados"}</p>
+              <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("all"); }}>
+                Resetar filtros
+              </button>
+            </div>
+            <div className="admin-settings-panel danger">
+              <p className="panel-label">Sessão</p>
+              <h2>Sair do painel</h2>
+              <p>A saída fica aqui para evitar clique sem querer durante monitoramento de rota.</p>
+              {!confirmLogout ? (
+                <button className="button" type="button" onClick={() => setConfirmLogout(true)}>
+                  <LogOut size={18} />
+                  Mostrar botão de sair
+                </button>
+              ) : (
+                <button className="button danger" type="button" onClick={onLogout}>
+                  Confirmar saída
+                </button>
+              )}
+            </div>
+          </section>
+        </AdminSectionModal>
+      ) : null}
+
       {detail ? <UserDetailModal detail={detail} onClose={() => setDetail(undefined)} /> : null}
+      {logToast ? (
+        <button className="admin-log-toast" type="button" onClick={() => setActiveSection("logs")}>
+          <span>{unreadLogCount}</span>
+          <div>
+            <strong>Novo log</strong>
+            <small>{logToast.clientEmail}</small>
+            <p>{logToast.message}</p>
+          </div>
+        </button>
+      ) : null}
       {leaderAlert ? (
         <div className="modal-backdrop" role="presentation">
           <section className="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="leader-alert-title">
