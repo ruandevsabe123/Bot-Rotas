@@ -1330,27 +1330,6 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
               />
             </article>
 
-            <article className="admin-preview-panel live">
-              <div className="admin-preview-heading">
-                <div>
-                  <p className="panel-label">Tempo real</p>
-                  <h2>Últimos logs</h2>
-                </div>
-                {unreadLogCount ? <span className="admin-live-pill">{unreadLogCount} novo(s)</span> : null}
-              </div>
-              <div className="admin-mini-log scrollable">
-                {filteredLogs.length ? filteredLogs.map((log) => (
-                  <button key={`feed-${log.clientEmail}-${log.id}`} type="button" onClick={() => setActiveSection("logs")}>
-                    <span style={colorStyle(log.clientColor)}><i /></span>
-                    <div>
-                      <strong>{log.clientEmail}</strong>
-                      <small>{formatDate(log.timestamp)}</small>
-                      <p>{log.message}</p>
-                    </div>
-                  </button>
-                )) : <p className="qr-empty">Nenhum log recebido ainda.</p>}
-              </div>
-            </article>
           </section>
         </section>
       </section>

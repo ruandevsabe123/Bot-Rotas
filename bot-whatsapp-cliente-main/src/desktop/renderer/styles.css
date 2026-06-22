@@ -729,7 +729,7 @@ h2 {
 
 .admin-panorama {
   display: grid;
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  grid-template-columns: 1fr;
   gap: 14px;
 }
 
@@ -738,8 +738,8 @@ h2 {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   align-content: start;
-  height: min(560px, 66vh);
-  min-height: 390px;
+  height: min(760px, 78vh);
+  min-height: 520px;
   padding: 16px;
   border: 1px solid rgba(245, 247, 248, 0.08);
   border-radius: 8px;
@@ -829,7 +829,8 @@ h2 {
 
 .admin-route-history {
   display: grid;
-  grid-template-columns: 250px minmax(0, 1fr);
+  grid-template-columns: 1fr;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
   min-height: 0;
 }
@@ -840,6 +841,7 @@ h2 {
 
 .admin-route-tabs {
   display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-content: start;
   gap: 8px;
   min-height: 0;
@@ -850,7 +852,7 @@ h2 {
   grid-template-columns: 28px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
-  min-height: 76px;
+  min-height: 68px;
   padding: 12px;
   border: 1px solid rgba(245, 247, 248, 0.08);
   border-left: 4px solid rgba(126, 182, 255, 0.7);
@@ -2731,8 +2733,8 @@ h2 {
   }
 
   .admin-route-tabs button {
-    grid-template-columns: 1fr;
-    justify-items: start;
+    grid-template-columns: 28px minmax(0, 1fr) auto;
+    justify-items: stretch;
   }
 
   .cleanup-actions {
@@ -2802,6 +2804,20 @@ h2 {
   .admin-filter-dock,
   .admin-kpi-strip {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-preview-panel {
+    height: min(760px, 82vh);
+    min-height: 560px;
+  }
+
+  .admin-route-tabs button {
+    grid-template-columns: 1fr auto;
+    min-height: 72px;
+  }
+
+  .admin-route-tabs button svg {
+    display: none;
   }
 
   .admin-filter-title,
