@@ -1,5 +1,5 @@
-import { LogOut, Play, QrCode, Square } from "lucide-react";
-import { BotStatus } from "../../../shared/types";
+import { Flame, LogOut, Play, QrCode, Send, Square } from "lucide-react";
+import { BotGroupState, BotStatus } from "../../../shared/types";
 
 type Props = {
   busy: boolean;
@@ -8,8 +8,11 @@ type Props = {
   onStop: () => void;
   onStartMonitoring: () => void;
   onStopMonitoring: () => void;
+  onManualDispatch: () => void;
+  onWarmup: () => void;
   monitoringEnabled?: boolean;
   monitoringMode?: "target" | "test";
+  groupState?: BotGroupState;
 };
 
 export function ControlButtons({
@@ -19,8 +22,11 @@ export function ControlButtons({
   onStop,
   onStartMonitoring,
   onStopMonitoring,
+  onManualDispatch,
+  onWarmup,
   monitoringEnabled,
-  monitoringMode
+  monitoringMode,
+  groupState
 }: Props) {
   const isConnectingFlow = status === "connecting" || status === "waiting_qr" || status === "reconnecting";
   const isConnected = status === "connected";
@@ -32,6 +38,8 @@ export function ControlButtons({
   const canStop = !busy && isRunning;
   const canStartMonitoring = !busy && isConnected && !Boolean(monitoringEnabled);
   const canStopMonitoring = !busy && isConnected && Boolean(monitoringEnabled);
+  const canWarmup = !busy && isConnected;
+  const canManualDispatch = !busy && isConnected;
 
   return (
     <article className="panel">
@@ -53,8 +61,15 @@ export function ControlButtons({
           <Square size={18} />
           Parar bot{monitoringMode === "test" ? " teste" : ""}
         </button>
+        <button className="button accent" disabled={!canManualDispatch} onClick={onManualDispatch}>
+          <Send size={18} />
+          Disparo manual{groupState === "closed" ? " (fechado)" : ""}
+        </button>
+        <button className="button" disabled={!canWarmup} onClick={onWarmup}>
+          <Flame size={18} />
+          Aquecer 15 msg
+        </button>
       </div>
     </article>
   );
 }
-

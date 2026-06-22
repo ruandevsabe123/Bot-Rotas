@@ -1,4 +1,4 @@
-import { HelpCircle, LogOut, MessageCircle, Trash2 } from "lucide-react";
+import { HelpCircle, LogOut, MessageCircle, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { BotConfig } from "../../../shared/types";
 import { sendSupportMessage } from "../api";
@@ -9,10 +9,11 @@ type Props = {
   monitoringEnabled: boolean;
   userEmail?: string;
   onClearLogs: () => void;
+  onFactoryReset: () => void;
   onLogout?: () => void;
 };
 
-export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onLogout }: Props) {
+export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onLogout }: Props) {
   const [supportMessage, setSupportMessage] = useState("");
   const [supportStatus, setSupportStatus] = useState("");
 
@@ -87,6 +88,18 @@ export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onCl
         <button className="button danger" disabled={busy} type="button" onClick={onClearLogs}>
           <Trash2 size={18} />
           Limpar
+        </button>
+      </article>
+
+      <article className="panel option-panel">
+        <div>
+          <p className="panel-label">Reset</p>
+          <h2>Padrão de fábrica</h2>
+          <p>Apaga sessão, grupos, nome e mensagens salvas deste usuário.</p>
+        </div>
+        <button className="button danger" disabled={busy} type="button" onClick={onFactoryReset}>
+          <RotateCcw size={18} />
+          Resetar
         </button>
       </article>
 

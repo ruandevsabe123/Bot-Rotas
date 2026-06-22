@@ -136,6 +136,7 @@ export type RouteReaction = {
   senderPhone: string;
   senderIdentifiers?: string[];
   isAdmin: boolean;
+  leaderName?: string;
 };
 
 export type RouteDispatch = {
@@ -215,6 +216,7 @@ export type DesktopApi = {
   startTestMonitoring: () => Promise<BotSnapshot>;
   stopMonitoring: () => Promise<BotSnapshot>;
   simulateOpening: () => Promise<BotSnapshot>;
+  manualDispatch: () => Promise<BotSnapshot>;
   saveGroup: (payload: SaveGroupPayload) => Promise<BotSnapshot>;
   saveTestGroup: (payload: SaveGroupPayload) => Promise<BotSnapshot>;
   warmupGroups: () => Promise<BotSnapshot>;

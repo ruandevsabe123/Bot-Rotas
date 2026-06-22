@@ -65,13 +65,9 @@ export class RouteStore {
 
       changed = true;
       const alreadySaved = route.reactions.some((item) => item.id === reaction.id);
-      const validated = route.validated || reaction.isAdmin;
       return {
         ...route,
         reactions: alreadySaved ? route.reactions : [reaction, ...route.reactions].slice(0, 50),
-        validated,
-        validatedAt: !route.validated && reaction.isAdmin ? reaction.timestamp : route.validatedAt,
-        validatedBy: !route.validated && reaction.isAdmin ? reaction.senderPhone : route.validatedBy,
         updatedAt: reaction.timestamp
       };
     });
@@ -127,7 +123,8 @@ export class RouteStore {
             senderIdentifiers: Array.isArray(item.senderIdentifiers)
               ? item.senderIdentifiers.filter((identifier: unknown) => typeof identifier === "string")
               : undefined,
-            isAdmin: Boolean(item.isAdmin)
+            isAdmin: Boolean(item.isAdmin),
+            leaderName: typeof item.leaderName === "string" ? item.leaderName : undefined
           })).filter((item: RouteReaction) => item.id)
         : []
     };

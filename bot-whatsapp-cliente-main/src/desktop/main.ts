@@ -33,6 +33,7 @@ function createBot() {
   bot = new BotService({
     authDir: path.join(dataDir, "auth_info"),
     configPath: path.join(dataDir, "config.json"),
+    logStorePath: path.join(dataDir, "bot_logs.json"),
     pairingPhoneNumber: ""
   });
 
@@ -132,6 +133,10 @@ function registerIpc() {
   });
   ipcMain.handle("bot:simulateOpening", async () => {
     bot.simulateOpening();
+    return bot.getSnapshot();
+  });
+  ipcMain.handle("bot:manualDispatch", async () => {
+    await bot.manualDispatch();
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveGroup", async (_event, payload: SaveGroupPayload) => {

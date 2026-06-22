@@ -34,9 +34,12 @@ function resolveDataDir() {
     return requested;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (process.env.RENDER || process.env.NODE_ENV === "production") {
+      throw new Error(`DATA_DIR sem permissão: ${requested}. Configure um Persistent Disk gravável no Render. Erro: ${message}`);
+    }
     const fallback = path.join(os.tmpdir(), "bot-whatsapp");
     console.error(`DATA_DIR sem permissão: ${requested}. Erro: ${message}`);
-    console.error(`Usando fallback temporário: ${fallback}. Atenção: sem Persistent Disk, usuários e sessões podem sumir em deploy/restart.`);
+    console.error(`Usando fallback temporário: ${fallback}. Atenção: dados podem sumir em restart.`);
     ensureWritableDir(fallback);
     return fallback;
   }
@@ -182,6 +185,7 @@ function getBotForEmail(email: string) {
   const userAuthDir = path.join(userDir, "auth_info");
   const userConfigPath = path.join(userDir, "config.json");
   const userRouteStorePath = path.join(userDir, "route_history.json");
+  const userLogStorePath = path.join(userDir, "bot_logs.json");
 
   if (normalizedEmail === panelEmail) {
     const legacyAuthDir = path.join(dataDir, "auth_info");
@@ -200,6 +204,7 @@ function getBotForEmail(email: string) {
     authDir: userAuthDir,
     configPath: userConfigPath,
     routeStorePath: userRouteStorePath,
+    logStorePath: userLogStorePath,
     clientEmail: normalizedEmail,
     adminPhoneNumbers,
     pairingPhoneNumber: process.env.BOT_PHONE_NUMBER || "",
@@ -504,6 +509,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
       break;
     case "simulate-opening":
       bot.simulateOpening();
+      break;
+    case "manual-dispatch":
+      await bot.manualDispatch();
       break;
     case "warmup":
       await bot.warmupConnection();

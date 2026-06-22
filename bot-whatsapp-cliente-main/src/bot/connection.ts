@@ -54,6 +54,7 @@ type BotServiceOptions = {
   authDir?: string;
   configPath?: string;
   routeStorePath?: string;
+  logStorePath?: string;
   clientEmail?: string;
   adminPhoneNumbers?: string[];
   terminalMode?: boolean;
@@ -70,6 +71,20 @@ const HEALTH_CHECK_INTERVAL_MS = 25000;
 const INSTANT_BURST_DELAY_MS = 0;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
+const DEFAULT_LEADER_CONTACTS = [
+  { name: "Gabriel Melo - Analista de Transporte", phone: "5511940670165" },
+  { name: "André Bomfim", phone: "5521998970947" },
+  { name: "Júlia Moura - Analista de Transporte", phone: "5522992143214" },
+  { name: "Gabriel Melo", phone: "5522996189621" },
+  { name: "Amanda - Analista De Transporte", phone: "5522997387295" },
+  { name: "Flávia De Azevedo Barreto", phone: "5522998597005" },
+  { name: "Henrique Nunes", phone: "5522999230394" },
+  { name: "André Bomfim - Analista de Transporte", phone: "5511913591907" },
+  { name: "Renato Balbino", phone: "5511945113460" },
+  { name: "flávia barreto", phone: "5511992561962" },
+  { name: "Thalles Lunga", phone: "5521967843028" },
+  { name: "Renato Balbino", phone: "5522998677384" }
+];
 
 export class BotService extends EventEmitter {
   private sock: any;
@@ -109,6 +124,7 @@ export class BotService extends EventEmitter {
   private authDir: string;
   private clientEmail = "";
   private adminPhoneNumbers = new Set<string>();
+  private leaderContacts = new Map<string, string>();
   private activeRouteByCycle = new Map<number, string>();
   private autoClearInvalidSession = false;
   private clearedInvalidSessionInCurrentRun = false;
@@ -121,9 +137,13 @@ export class BotService extends EventEmitter {
     this.authDir = options.authDir || path.resolve(process.cwd(), "auth_info");
     this.configStore = new ConfigStore(options.configPath);
     this.routeStore = new RouteStore(options.routeStorePath || path.resolve(process.cwd(), "route_history.json"));
-    this.logger = new BotLogger(() => this.emitSnapshot());
+    this.logger = new BotLogger(() => this.emitSnapshot(), options.logStorePath || path.resolve(process.cwd(), "bot_logs.json"));
     this.clientEmail = options.clientEmail || "";
-    this.adminPhoneNumbers = new Set((options.adminPhoneNumbers || []).map((item) => this.normalizePhone(item)).filter(Boolean));
+    this.leaderContacts = new Map(DEFAULT_LEADER_CONTACTS.map((item) => [this.normalizePhone(item.phone), item.name]));
+    this.adminPhoneNumbers = new Set([
+      ...DEFAULT_LEADER_CONTACTS.map((item) => this.normalizePhone(item.phone)),
+      ...(options.adminPhoneNumbers || []).map((item) => this.normalizePhone(item))
+    ].filter(Boolean));
     this.autoClearInvalidSession = Boolean(options.autoClearInvalidSession);
     this.pairingPhoneNumber = Object.prototype.hasOwnProperty.call(options, "pairingPhoneNumber")
       ? options.pairingPhoneNumber || ""
@@ -284,6 +304,54 @@ export class BotService extends EventEmitter {
     this.logger.warning("Simulação de abertura acionada pelo painel.");
     this.enviarMensagensRapidas(cycleId);
     this.logger.info("⚡ Abertura simulada. Disparo acionado.");
+    this.emitSnapshot();
+    return true;
+  }
+
+  async manualDispatch(): Promise<boolean> {
+    if (this.status !== "connected" || !this.sock) {
+      this.logger.warning("Conecte o WhatsApp antes de disparar manualmente.");
+      this.emitSnapshot();
+      return false;
+    }
+
+    this.monitoringMode = "target";
+    if (!this.configStore.load().grupoAlvoJid && this.configStore.load().grupoAlvoNome) {
+      await this.resolveConfiguredGroup();
+    }
+
+    const config = this.configStore.load();
+    const targetJid = config.grupoAlvoJid;
+
+    if (!targetJid) {
+      this.logger.error("Grupo alvo ainda não foi configurado.");
+      this.emitSnapshot();
+      return false;
+    }
+
+    try {
+      const metadata = await this.refreshGroupMetadata(targetJid);
+      this.groupState = metadata?.announce === false ? "open" : "closed";
+    } catch (error) {
+      this.logger.warning(`Não consegui confirmar o estado do grupo: ${this.getErrorMessage(error)}`);
+    }
+
+    if (this.groupState !== "open") {
+      this.logger.error("Disparo manual bloqueado: o grupo ainda está fechado.");
+      this.emitSnapshot();
+      return false;
+    }
+
+    if (!this.prepareSendPlan()) {
+      this.logger.error("Disparo manual cancelado: não consegui preparar as mensagens.");
+      this.emitSnapshot();
+      return false;
+    }
+
+    const cycleId = ++this.sendCycleId;
+    this.grupoJaFechouDepoisDoInicio = false;
+    this.enviarMensagensRapidas(cycleId);
+    this.logger.info("Disparo manual acionado pelo painel.");
     this.emitSnapshot();
     return true;
   }
@@ -1130,13 +1198,14 @@ export class BotService extends EventEmitter {
         senderJid,
         senderPhone,
         senderIdentifiers,
-        isAdmin: senderIdentifiers.some((identifier) => this.isAdminPhoneIdentifier(identifier))
+        isAdmin: senderIdentifiers.some((identifier) => this.isAdminPhoneIdentifier(identifier)),
+        leaderName: this.getLeaderNameFromIdentifiers(senderIdentifiers)
       };
 
       if (this.routeStore.addReaction(String(reactedMessageId), routeReaction)) {
         this.logger.info(
           routeReaction.isAdmin
-            ? `Rota validada por administrador (${senderPhone}).`
+            ? `Reação do líder ${routeReaction.leaderName || senderPhone} foi encontrada. Aguardando validação manual do admin.`
             : `Reação recebida em rota enviada (${senderPhone || "remetente desconhecido"}).`
         );
         this.emitSnapshot();
@@ -1260,6 +1329,16 @@ export class BotService extends EventEmitter {
     if (phone.startsWith("55") && this.adminPhoneNumbers.has(phone.slice(2))) return true;
     if (!phone.startsWith("55") && this.adminPhoneNumbers.has(`55${phone}`)) return true;
     return false;
+  }
+
+  private getLeaderNameFromIdentifiers(values: string[]) {
+    for (const value of values) {
+      const phone = this.normalizePhone(value);
+      const variants = phone.startsWith("55") ? [phone, phone.slice(2)] : [phone, `55${phone}`];
+      const found = variants.map((item) => this.leaderContacts.get(item)).find(Boolean);
+      if (found) return found;
+    }
+    return undefined;
   }
 
   private enviarMensagensRapidas(cycleId: number) {

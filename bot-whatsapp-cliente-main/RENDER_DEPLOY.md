@@ -32,7 +32,7 @@ O `render.yaml` cria um disco em `/opt/render/project/src/data`. É nele que fic
 - `auth_info`: sessão do WhatsApp.
 - `config.json`: grupos, nome e mensagens salvas.
 
-Sem disco persistente, o WhatsApp pode pedir novo QR Code após deploy/restart.
+Sem disco persistente, o WhatsApp pode pedir novo QR Code após deploy/restart e o histórico não fica garantido. Em produção, o servidor exige que `DATA_DIR` seja gravável para não salvar dados em pasta temporária.
 
 Para entregar para outro cliente, apague o disco antigo no Render ou use `Ajustes > Resetar tudo` no painel do usuário. Isso remove sessão do WhatsApp, grupos, nome e mensagens salvas daquele login, e força uma nova conexão por QR Code.
 

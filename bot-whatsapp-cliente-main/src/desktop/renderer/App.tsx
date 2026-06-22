@@ -483,8 +483,6 @@ function AdminMetric({
 
 function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: () => void }) {
   const createdAt = new Date(route.createdAt).toLocaleString("pt-BR");
-  const lastReaction = route.reactions[0];
-  const identifiers = lastReaction?.senderIdentifiers?.length ? lastReaction.senderIdentifiers : lastReaction?.senderPhone ? [lastReaction.senderPhone] : [];
 
   return (
     <article className={route.validated ? "route-row validated" : "route-row"} style={colorStyle(route.clientColor)}>
@@ -511,13 +509,20 @@ function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: ()
           <span key={`${route.id}-${message}-${index}`}>{message}</span>
         ))}
       </div>
-      {lastReaction ? (
-        <div className="reaction-line">
-          <b>{lastReaction.emoji || "?"}</b>
-          <span>
-            {lastReaction.isAdmin ? "Admin detectado" : "Reação de ID interno"}
-            {identifiers.length ? ` · ${identifiers.join(" / ")}` : ""}
-          </span>
+      {route.reactions.length ? (
+        <div className="reaction-stack">
+          {route.reactions.map((reaction) => {
+            const identifiers = reaction.senderIdentifiers?.length ? reaction.senderIdentifiers : reaction.senderPhone ? [reaction.senderPhone] : [];
+            return (
+              <div className={reaction.isAdmin ? "reaction-line leader" : "reaction-line"} key={reaction.id}>
+                <b>{reaction.emoji || "?"}</b>
+                <span>
+                  {reaction.isAdmin ? `Reação do líder${reaction.leaderName ? ` (${reaction.leaderName})` : ""} encontrada` : "Reação de ID interno"}
+                  {identifiers.length ? ` · ${identifiers.join(" / ")}` : ""}
+                </span>
+              </div>
+            );
+          })}
         </div>
       ) : null}
       {!route.validated && onValidate ? (
@@ -745,6 +750,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [lastNotifiedSupportId, setLastNotifiedSupportId] = useState("");
+  const [leaderAlert, setLeaderAlert] = useState("");
+  const [lastLeaderReactionId, setLastLeaderReactionId] = useState("");
 
   function refresh() {
     Promise.all([getAdminRoutes(), getAdminUsers(), getAdminSupportMessages()])
@@ -800,6 +807,38 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       // O navegador pode bloquear áudio/notificações antes de interação do admin.
     }
   }, [lastNotifiedSupportId, supportDashboard.messages]);
+
+  useEffect(() => {
+    const reaction = dashboard.routes
+      .filter((route) => !route.validated)
+      .flatMap((route) => route.reactions)
+      .filter((item) => item.isAdmin)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
+
+    if (!reaction || reaction.id === lastLeaderReactionId) return;
+    setLastLeaderReactionId(reaction.id);
+    setLeaderAlert(`Reação do líder${reaction.leaderName ? ` (${reaction.leaderName})` : ""} foi encontrada.`);
+
+    try {
+      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (AudioContextClass) {
+        const audio = new AudioContextClass();
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        oscillator.frequency.value = 1046;
+        gain.gain.setValueAtTime(0.0001, audio.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.12, audio.currentTime + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + 0.35);
+        oscillator.connect(gain);
+        gain.connect(audio.destination);
+        oscillator.start();
+        oscillator.stop(audio.currentTime + 0.38);
+        window.setTimeout(() => void audio.close(), 450);
+      }
+    } catch {
+      // O navegador pode bloquear áudio antes da interação do admin.
+    }
+  }, [dashboard.routes, lastLeaderReactionId]);
 
   async function saveUser(nextEditor = editor) {
     if (!nextEditor) return;
@@ -954,6 +993,20 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       </section>
 
       {detail ? <UserDetailModal detail={detail} onClose={() => setDetail(undefined)} /> : null}
+      {leaderAlert ? (
+        <div className="modal-backdrop" role="presentation">
+          <section className="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="leader-alert-title">
+            <p className="panel-label">Atenção</p>
+            <h2 id="leader-alert-title">Reação encontrada</h2>
+            <p className="confirmation-message">{leaderAlert}</p>
+            <div className="confirmation-actions">
+              <button className="button primary" type="button" onClick={() => setLeaderAlert("")}>
+                Ver rotas
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }
@@ -1220,6 +1273,25 @@ export default function App() {
     });
   }
 
+  function confirmManualDispatch() {
+    const messages = buildMessagePreview();
+    setConfirmation({
+      title: "Disparo manual",
+      message: snapshot.groupState === "closed"
+        ? "O grupo ainda parece fechado. Se clicar agora, o sistema vai bloquear e registrar o aviso."
+        : "Deseja disparar manualmente no grupo alvo agora?",
+      details: [
+        `Grupo alvo: ${groupLabel}`,
+        `Estado atual: ${snapshot.groupState === "open" ? "aberto" : snapshot.groupState === "closed" ? "fechado" : "desconhecido"}`,
+        messages.length ? `Mensagens: ${messages.join(" | ")}` : "Nenhuma mensagem configurada."
+      ],
+      confirmLabel: "Disparar agora",
+      onConfirm: async () => {
+        await runAction(botApi.manualDispatch);
+      }
+    });
+  }
+
   function confirmClearLogs() {
     setConfirmation({
       title: "Limpar logs",
@@ -1319,8 +1391,11 @@ export default function App() {
             onStop={() => runAction(botApi.stopBot)}
             onStartMonitoring={confirmStartMonitoring}
             onStopMonitoring={() => runAction(botApi.stopMonitoring)}
+            onManualDispatch={confirmManualDispatch}
+            onWarmup={confirmWarmup}
             monitoringEnabled={snapshot.monitoringEnabled}
             monitoringMode={snapshot.monitoringMode}
+            groupState={snapshot.groupState}
           />
 
           {snapshot.qrCode || snapshot.status === "waiting_qr" ? <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} /> : null}
@@ -1392,6 +1467,7 @@ export default function App() {
             monitoringEnabled={Boolean(snapshot.monitoringEnabled)}
             userEmail={userEmail}
             onClearLogs={confirmClearLogs}
+            onFactoryReset={confirmFactoryReset}
             onLogout={() => {
               logout();
             }}
