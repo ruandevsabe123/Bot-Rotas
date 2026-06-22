@@ -1053,107 +1053,154 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
 
   const activeClientLabel = clientFilter === "all" ? "Todos os clientes" : clientFilter;
   const filteredUnreadSupport = filteredSupportMessages.filter((message) => !message.read).length;
+  const latestLogs = filteredLogs.slice(0, 5);
+  const latestRoutes = filteredRoutes.slice(0, 3);
+  const onlineClients = usersDashboard.users.filter((user) => user.role === "client" && user.presenceStatus === "online").length;
 
   return (
-    <main className="app-shell admin-shell">
-      <section className="topbar app-topbar">
+    <main className="app-shell admin-shell admin-console">
+      <section className="admin-console-header">
         <div>
-          <p className="eyebrow">Painel admin</p>
-          <h1>Controle do bot</h1>
+          <p className="eyebrow">Central de comando</p>
+          <h1>Painel dos disparos</h1>
+          <span>{activeClientLabel} · dados ao vivo</span>
         </div>
-        <div className="group-pill">
-          <span>Administrador</span>
-          <strong>{userEmail}</strong>
+        <div className="admin-header-actions">
+          <button className="button" type="button" onClick={refresh}>
+            <RefreshCw size={18} />
+            Atualizar
+          </button>
+          <button className="icon-button" title="Configurações" type="button" onClick={() => setActiveSection("settings")}>
+            <Settings size={20} />
+          </button>
         </div>
       </section>
 
-      <section className="admin-command-bar">
-        <div>
-          <p className="panel-label">Filtro ativo</p>
-          <strong>{activeClientLabel}</strong>
-        </div>
-        <label>
-          Cliente
-          <select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
-            <option value="all">Todos os clientes</option>
-            {clientOptions.map((user) => (
-              <option key={user.email} value={user.email}>{user.email}</option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Disparos
-          <select value={routeStatusFilter} onChange={(event) => setRouteStatusFilter(event.target.value as RouteStatusFilter)}>
-            <option value="all">Todos os status</option>
-            <option value="pending">Pendentes</option>
-            <option value="leader">Com reação de líder</option>
-            <option value="validated">Validados</option>
-          </select>
-        </label>
-        <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("all"); }}>
-          Limpar filtros
-        </button>
-      </section>
+      <section className="admin-studio">
+        <aside className="admin-action-rail" aria-label="Navegação do admin">
+          <button className="admin-rail-item critical" type="button" onClick={() => setActiveSection("reactions")}>
+            <AlertTriangle size={20} />
+            <span>Validar</span>
+            <strong>{filteredPendingRoutes.length}</strong>
+          </button>
+          <button className="admin-rail-item" type="button" onClick={() => setActiveSection("logs")}>
+            <Activity size={20} />
+            <span>Logs</span>
+            <strong>{unreadLogCount || filteredLogs.length}</strong>
+          </button>
+          <button className="admin-rail-item warm" type="button" onClick={() => setActiveSection("routes")}>
+            <Route size={20} />
+            <span>Disparos</span>
+            <strong>{filteredRoutes.length}</strong>
+          </button>
+          <button className="admin-rail-item" type="button" onClick={() => setActiveSection("users")}>
+            <ShieldCheck size={20} />
+            <span>Clientes</span>
+            <strong>{usersDashboard.users.length}</strong>
+          </button>
+          <button className="admin-rail-item success" type="button" onClick={() => setActiveSection("support")}>
+            <MessageSquareText size={20} />
+            <span>Suporte</span>
+            <strong>{filteredUnreadSupport}</strong>
+          </button>
+        </aside>
 
-      <section className="admin-grid">
-        <AdminMetric Icon={Route} tone="blue" title="Rotas" value={filteredRoutes.length} detail="disparos no filtro" />
-        <AdminMetric Icon={CheckCircle2} tone="green" title="Validadas" value={filteredRoutes.filter((route) => route.validated).length} detail="confirmadas por você" />
-        <AdminMetric Icon={Zap} tone="yellow" title="Reações" value={filteredRoutes.reduce((total, route) => total + route.reactions.length, 0)} detail="recebidas no filtro" />
-        <AdminMetric Icon={ShieldCheck} tone="blue" title="Usuários" value={usersDashboard.users.length} detail={`${dashboard.totals.clients} com rotas`} />
-        <AdminMetric Icon={MessageSquareText} tone={filteredUnreadSupport ? "red" : "green"} title="Mensagens" value={filteredUnreadSupport} detail="não lidas no filtro" />
-      </section>
+        <section className="admin-main-stage">
+          <section className="admin-hero-board">
+            <div className="admin-hero-copy">
+              <p className="panel-label">Prioridade agora</p>
+              <h2>{filteredPendingRoutes.length ? "Reações aguardando validação" : "Fila limpa"}</h2>
+              <p>{filteredPendingRoutes.length ? "Abra a fila, confira o líder e valide manualmente a rota certa." : "Nenhuma reação pendente para o filtro atual."}</p>
+              <div className="admin-hero-actions">
+                <button className="button primary" type="button" onClick={() => setActiveSection("reactions")}>
+                  Abrir validações
+                </button>
+                <button className="button" type="button" onClick={() => setActiveSection("logs")}>
+                  Ver logs ao vivo
+                </button>
+              </div>
+            </div>
+            <div className="admin-hero-number">
+              <span>{filteredPendingRoutes.length}</span>
+              <small>pendentes</small>
+            </div>
+          </section>
 
-      <section className="admin-control-grid">
-        <AdminSectionCard
-          Icon={AlertTriangle}
-          tone={filteredPendingRoutes.length ? "red" : "green"}
-          title="Validação"
-          value={filteredPendingRoutes.length}
-          detail="reações aguardando análise"
-          onOpen={() => setActiveSection("reactions")}
-        />
-        <AdminSectionCard
-          Icon={Activity}
-          tone={unreadLogCount ? "red" : "blue"}
-          title="Tempo real"
-          value={filteredLogs.length}
-          detail="logs ao vivo dos bots"
-          badge={unreadLogCount}
-          onOpen={() => setActiveSection("logs")}
-        />
-        <AdminSectionCard
-          Icon={Route}
-          tone="yellow"
-          title="Disparos"
-          value={filteredRoutes.length}
-          detail="histórico filtrável"
-          onOpen={() => setActiveSection("routes")}
-        />
-        <AdminSectionCard
-          Icon={ShieldCheck}
-          tone="blue"
-          title="Usuários"
-          value={usersDashboard.users.length}
-          detail="acessos e sessões"
-          onOpen={() => setActiveSection("users")}
-        />
-        <AdminSectionCard
-          Icon={MessageSquareText}
-          tone={filteredUnreadSupport ? "red" : "green"}
-          title="Mensagens"
-          value={filteredUnreadSupport}
-          detail="chamados internos"
-          badge={filteredUnreadSupport}
-          onOpen={() => setActiveSection("support")}
-        />
-        <AdminSectionCard
-          Icon={Settings}
-          tone="blue"
-          title="Configurações"
-          value="Ajustes"
-          detail="notificações, filtros e sessão"
-          onOpen={() => setActiveSection("settings")}
-        />
+          <section className="admin-filter-dock">
+            <label>
+              Cliente
+              <select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
+                <option value="all">Todos os clientes</option>
+                {clientOptions.map((user) => (
+                  <option key={user.email} value={user.email}>{user.email}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Status
+              <select value={routeStatusFilter} onChange={(event) => setRouteStatusFilter(event.target.value as RouteStatusFilter)}>
+                <option value="all">Todos os disparos</option>
+                <option value="pending">Pendentes</option>
+                <option value="leader">Com reação de líder</option>
+                <option value="validated">Validados</option>
+              </select>
+            </label>
+            <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("all"); }}>
+              Limpar
+            </button>
+          </section>
+
+          <section className="admin-kpi-strip">
+            <div><span>Rotas</span><strong>{filteredRoutes.length}</strong></div>
+            <div><span>Validadas</span><strong>{filteredRoutes.filter((route) => route.validated).length}</strong></div>
+            <div><span>Reações</span><strong>{filteredRoutes.reduce((total, route) => total + route.reactions.length, 0)}</strong></div>
+            <div><span>Clientes online</span><strong>{onlineClients}</strong></div>
+            <div><span>Mensagens</span><strong>{filteredUnreadSupport}</strong></div>
+          </section>
+
+          <section className="admin-panorama">
+            <article className="admin-preview-panel">
+              <div className="admin-preview-heading">
+                <div>
+                  <p className="panel-label">Disparos recentes</p>
+                  <h2>Últimas rotas</h2>
+                </div>
+                <button className="button" type="button" onClick={() => setActiveSection("routes")}>Ver tudo</button>
+              </div>
+              <div className="admin-mini-list">
+                {latestRoutes.length ? latestRoutes.map((route) => (
+                  <button key={`preview-${route.id}`} type="button" onClick={() => setActiveSection("routes")}>
+                    <span className={route.validated ? "mini-badge ok" : "mini-badge"}>{route.validated ? "Validada" : route.status}</span>
+                    <strong>{route.groupName}</strong>
+                    <small>{route.clientEmail} · {route.reactions.length} reação(ões)</small>
+                  </button>
+                )) : <p className="qr-empty">Nenhum disparo para esse filtro.</p>}
+              </div>
+            </article>
+
+            <article className="admin-preview-panel live">
+              <div className="admin-preview-heading">
+                <div>
+                  <p className="panel-label">Tempo real</p>
+                  <h2>Últimos logs</h2>
+                </div>
+                {unreadLogCount ? <span className="admin-live-pill">{unreadLogCount} novo(s)</span> : null}
+              </div>
+              <div className="admin-mini-log">
+                {latestLogs.length ? latestLogs.map((log) => (
+                  <button key={`feed-${log.clientEmail}-${log.id}`} type="button" onClick={() => setActiveSection("logs")}>
+                    <span style={colorStyle(log.clientColor)}><i /></span>
+                    <div>
+                      <strong>{log.clientEmail}</strong>
+                      <small>{formatDate(log.timestamp)}</small>
+                      <p>{log.message}</p>
+                    </div>
+                  </button>
+                )) : <p className="qr-empty">Nenhum log recebido ainda.</p>}
+              </div>
+            </article>
+          </section>
+        </section>
       </section>
 
       {error ? <p className="login-error">{error}</p> : null}
