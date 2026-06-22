@@ -161,6 +161,7 @@ export type RouteDispatch = {
 
 export type AdminRoutesSnapshot = {
   routes: RouteDispatch[];
+  pendingReactionRoutes: RouteDispatch[];
   totals: {
     routes: number;
     validated: number;

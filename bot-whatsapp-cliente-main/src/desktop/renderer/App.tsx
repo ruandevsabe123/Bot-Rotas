@@ -481,6 +481,12 @@ function AdminMetric({
   );
 }
 
+function getReactionDisplayPhone(reaction: RouteDispatch["reactions"][number]) {
+  if (reaction.senderPhone && reaction.senderPhone.startsWith("55")) return reaction.senderPhone;
+  const phone = (reaction.senderIdentifiers || []).find((item) => /^55\d{10,13}$/.test(item));
+  return phone || reaction.senderPhone || "Número não identificado";
+}
+
 function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: () => void }) {
   const createdAt = new Date(route.createdAt).toLocaleString("pt-BR");
 
@@ -511,18 +517,15 @@ function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: ()
       </div>
       {route.reactions.length ? (
         <div className="reaction-stack">
-          {route.reactions.map((reaction) => {
-            const identifiers = reaction.senderIdentifiers?.length ? reaction.senderIdentifiers : reaction.senderPhone ? [reaction.senderPhone] : [];
-            return (
-              <div className={reaction.isAdmin ? "reaction-line leader" : "reaction-line"} key={reaction.id}>
-                <b>{reaction.emoji || "?"}</b>
-                <span>
-                  {reaction.isAdmin ? `Reação do líder${reaction.leaderName ? ` (${reaction.leaderName})` : ""} encontrada` : "Reação de ID interno"}
-                  {identifiers.length ? ` · ${identifiers.join(" / ")}` : ""}
-                </span>
-              </div>
-            );
-          })}
+          {route.reactions.map((reaction) => (
+            <div className={reaction.isAdmin ? "reaction-line leader" : "reaction-line"} key={reaction.id}>
+              <b>{reaction.emoji || "?"}</b>
+              <span>
+                {reaction.isAdmin ? `Reação do líder${reaction.leaderName ? ` (${reaction.leaderName})` : ""} encontrada` : "Reação recebida"}
+                {` · ${getReactionDisplayPhone(reaction)}`}
+              </span>
+            </div>
+          ))}
         </div>
       ) : null}
       {!route.validated && onValidate ? (
@@ -741,6 +744,7 @@ function SupportMessageRow({ message, onMarkRead }: { message: SupportMessage; o
 function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: () => void }) {
   const [dashboard, setDashboard] = useState<AdminRoutesSnapshot>({
     routes: [],
+    pendingReactionRoutes: [],
     totals: { routes: 0, validated: 0, reactions: 0, clients: 0 }
   });
   const [usersDashboard, setUsersDashboard] = useState<AdminUsersSnapshot>({ users: [] });
@@ -809,8 +813,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   }, [lastNotifiedSupportId, supportDashboard.messages]);
 
   useEffect(() => {
-    const reaction = dashboard.routes
-      .filter((route) => !route.validated)
+    const reaction = dashboard.pendingReactionRoutes
       .flatMap((route) => route.reactions)
       .filter((item) => item.isAdmin)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0];
@@ -838,7 +841,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     } catch {
       // O navegador pode bloquear áudio antes da interação do admin.
     }
-  }, [dashboard.routes, lastLeaderReactionId]);
+  }, [dashboard.pendingReactionRoutes, lastLeaderReactionId]);
 
   async function saveUser(nextEditor = editor) {
     if (!nextEditor) return;
@@ -973,8 +976,25 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
         <section className="quick-panel admin-list-panel admin-routes-panel">
           <div className="panel-heading">
             <div>
+              <p className="panel-label">Validação</p>
+              <h2>Reações para validar</h2>
+            </div>
+            <span className="mini-badge ok">{dashboard.pendingReactionRoutes.length}</span>
+          </div>
+          <div className="route-list">
+            {dashboard.pendingReactionRoutes.length ? (
+              dashboard.pendingReactionRoutes.map((route) => <RouteRow key={`pending-${route.id}`} route={route} onValidate={() => validateRoute(route.id)} />)
+            ) : (
+              <p className="qr-empty">Nenhuma reação pendente de validação.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="quick-panel admin-list-panel admin-routes-panel">
+          <div className="panel-heading">
+            <div>
               <p className="panel-label">Histórico</p>
-              <h2>Rotas enviadas pelos clientes</h2>
+              <h2>Últimos 100 disparos</h2>
             </div>
             <button className="button" type="button" onClick={onLogout}>
               <Route size={18} />

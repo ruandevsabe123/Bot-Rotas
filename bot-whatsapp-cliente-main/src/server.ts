@@ -401,18 +401,27 @@ function getAdminUserDetail(email: string): AdminUserDetail | undefined {
 
 function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
   const colorByEmail = new Map(Array.from(panelUsers.entries()).map(([email, user]) => [email, user.color || defaultUserColor(email)]));
-  const routes = getClientEmails()
+  const allRoutes = getClientEmails()
     .flatMap((email) => getBotForEmail(email).getRoutes())
     .map((route) => ({ ...route, clientColor: colorByEmail.get(route.clientEmail) || defaultUserColor(route.clientEmail) }))
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  const clients = new Set(routes.map((route) => route.clientEmail).filter(Boolean));
+  const pendingReactionRoutes = allRoutes
+    .filter((route) => !route.validated && route.reactions.length)
+    .sort((a, b) => {
+      const aLast = a.reactions[0]?.timestamp || a.updatedAt;
+      const bLast = b.reactions[0]?.timestamp || b.updatedAt;
+      return new Date(bLast).getTime() - new Date(aLast).getTime();
+    });
+  const routes = allRoutes.slice(0, 100);
+  const clients = new Set(allRoutes.map((route) => route.clientEmail).filter(Boolean));
   return {
     routes,
+    pendingReactionRoutes,
     totals: {
-      routes: routes.length,
-      validated: routes.filter((route) => route.validated).length,
-      reactions: routes.reduce((total, route) => total + route.reactions.length, 0),
+      routes: allRoutes.length,
+      validated: allRoutes.filter((route) => route.validated).length,
+      reactions: allRoutes.reduce((total, route) => total + route.reactions.length, 0),
       clients: clients.size
     }
   };

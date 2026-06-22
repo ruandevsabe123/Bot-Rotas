@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { RouteDispatch, RouteReaction } from "../shared/types";
 
-const MAX_ROUTES = 500;
+const MAX_ROUTES = 100;
 
 export class RouteStore {
   constructor(private readonly filePath: string) {}
@@ -67,7 +67,7 @@ export class RouteStore {
       const alreadySaved = route.reactions.some((item) => item.id === reaction.id);
       return {
         ...route,
-        reactions: alreadySaved ? route.reactions : [reaction, ...route.reactions].slice(0, 50),
+        reactions: alreadySaved ? route.reactions : [reaction, ...route.reactions],
         updatedAt: reaction.timestamp
       };
     });

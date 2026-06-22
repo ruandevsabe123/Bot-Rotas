@@ -83,7 +83,8 @@ const DEFAULT_LEADER_CONTACTS = [
   { name: "Renato Balbino", phone: "5511945113460" },
   { name: "flávia barreto", phone: "5511992561962" },
   { name: "Thalles Lunga", phone: "5521967843028" },
-  { name: "Renato Balbino", phone: "5522998677384" }
+  { name: "Renato Balbino", phone: "5522998677384" },
+  { name: "Admin do painel", phone: "5522997005493" }
 ];
 
 export class BotService extends EventEmitter {
@@ -1239,7 +1240,7 @@ export class BotService extends EventEmitter {
 
       const senderIdentifiers = await this.getReactionSenderIdentifiers(msg, reaction);
       const senderJid = senderIdentifiers[0] || "";
-      const senderPhone = senderIdentifiers.find((identifier) => identifier.startsWith("55")) || senderIdentifiers[0] || "";
+      const senderPhone = senderIdentifiers.find((identifier) => /^55\d{10,13}$/.test(identifier)) || senderIdentifiers[0] || "";
       const emoji = String(reaction.text || "");
       const timestampMs = Number(reaction.senderTimestampMs || msg.messageTimestamp || Date.now());
       const timestamp = new Date(timestampMs > 9999999999 ? timestampMs : timestampMs * 1000).toISOString();
