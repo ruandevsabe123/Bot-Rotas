@@ -1258,7 +1258,7 @@ export class BotService extends EventEmitter {
         this.logger.info(
           routeReaction.isAdmin
             ? `Reação do líder ${routeReaction.leaderName || senderPhone} foi encontrada. Aguardando validação manual do admin.`
-            : `Reação recebida em rota enviada (${senderPhone || "remetente desconhecido"}).`
+            : `Reação recebida em rota enviada (${senderPhone || "remetente desconhecido"}). IDs: ${senderIdentifiers.join(" / ") || "nenhum"}`
         );
         this.emitSnapshot();
       }
@@ -1279,7 +1279,9 @@ export class BotService extends EventEmitter {
       reaction?.key?.participantPn,
       reaction?.key?.participantLid,
       reaction?.senderJid,
-      reaction?.participant
+      reaction?.participant,
+      ...this.collectReactionIdentifierCandidates(msg),
+      ...this.collectReactionIdentifierCandidates(reaction)
     ];
 
     const identifiers = new Set<string>();
@@ -1367,30 +1369,60 @@ export class BotService extends EventEmitter {
 
     try {
       const mappedPhone = await this.sock?.signalRepository?.lidMapping?.getPNForLID?.(lidJid);
-      return this.normalizePhone(String(mappedPhone || ""));
+      return this.normalizePhoneFromUnknown(mappedPhone);
     } catch (error) {
       this.logger.warning(`Não consegui traduzir ID interno do WhatsApp para telefone: ${this.getErrorMessage(error)}`);
       return "";
     }
   }
 
+  private collectReactionIdentifierCandidates(input: unknown, depth = 0): string[] {
+    if (!input || depth > 3) return [];
+    if (typeof input === "string") {
+      const phone = this.normalizePhone(input);
+      return input.includes("@") || phone.length >= 10 ? [input] : [];
+    }
+    if (typeof input !== "object") return [];
+
+    const values: string[] = [];
+    for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+      if (/timestamp|ephemeral|messageStub/i.test(key)) continue;
+      if (typeof value === "string") {
+        const phone = this.normalizePhone(value);
+        if (value.includes("@") || phone.length >= 10) values.push(value);
+      } else if (value && typeof value === "object") {
+        values.push(...this.collectReactionIdentifierCandidates(value, depth + 1));
+      }
+    }
+    return values;
+  }
+
   private isAdminPhoneIdentifier(value: string) {
     const phone = this.normalizePhone(value);
     if (!phone) return false;
-    if (this.adminPhoneNumbers.has(phone)) return true;
-    if (phone.startsWith("55") && this.adminPhoneNumbers.has(phone.slice(2))) return true;
-    if (!phone.startsWith("55") && this.adminPhoneNumbers.has(`55${phone}`)) return true;
-    return false;
+    return Array.from(this.adminPhoneNumbers).some((adminPhone) => this.samePhone(phone, adminPhone));
   }
 
   private getLeaderNameFromIdentifiers(values: string[]) {
     for (const value of values) {
       const phone = this.normalizePhone(value);
-      const variants = phone.startsWith("55") ? [phone, phone.slice(2)] : [phone, `55${phone}`];
-      const found = variants.map((item) => this.leaderContacts.get(item)).find(Boolean);
-      if (found) return found;
+      for (const [leaderPhone, leaderName] of this.leaderContacts.entries()) {
+        if (this.samePhone(phone, leaderPhone)) return leaderName;
+      }
     }
     return undefined;
+  }
+
+  private samePhone(left: string, right: string) {
+    const a = this.normalizePhone(left);
+    const b = this.normalizePhone(right);
+    if (!a || !b) return false;
+    if (a === b) return true;
+    if (a.startsWith("55") && a.slice(2) === b) return true;
+    if (b.startsWith("55") && b.slice(2) === a) return true;
+    const aTail = a.slice(-11);
+    const bTail = b.slice(-11);
+    return aTail.length >= 10 && bTail.length >= 10 && aTail === bTail;
   }
 
   private enviarMensagensRapidas(cycleId: number) {
@@ -2122,6 +2154,39 @@ export class BotService extends EventEmitter {
   private getErrorMessage(error: unknown) {
     if (error instanceof Error) return error.message;
     return String(error);
+  }
+
+  private normalizePhoneFromUnknown(value: unknown): string {
+    if (!value) return "";
+    if (typeof value === "string" || typeof value === "number") {
+      return this.normalizePhone(String(value));
+    }
+
+    if (typeof value === "object") {
+      const record = value as Record<string, unknown>;
+      const directValues = [
+        record.user,
+        record.phone,
+        record.phoneNumber,
+        record.phone_number,
+        record.pn,
+        record.id,
+        record.jid,
+        record._serialized
+      ];
+
+      for (const item of directValues) {
+        const phone = this.normalizePhoneFromUnknown(item);
+        if (phone) return phone;
+      }
+
+      for (const item of Object.values(record)) {
+        const phone = this.normalizePhoneFromUnknown(item);
+        if (phone) return phone;
+      }
+    }
+
+    return "";
   }
 
   private normalizePhone(value: string) {
