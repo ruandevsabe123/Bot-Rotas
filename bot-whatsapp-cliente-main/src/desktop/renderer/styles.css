@@ -553,6 +553,79 @@ h2 {
   grid-column: 1 / -1;
 }
 
+.admin-control-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.admin-section-card {
+  display: flex;
+  min-height: 138px;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid rgba(245, 247, 248, 0.09);
+  border-radius: 8px;
+  color: inherit;
+  text-align: left;
+  background: #07090b;
+}
+
+.admin-section-card:hover {
+  border-color: rgba(245, 197, 66, 0.38);
+  background: #0b0e11;
+}
+
+.admin-section-icon {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(245, 197, 66, 0.1);
+}
+
+.admin-section-card span:last-child {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-section-card small,
+.admin-section-card em {
+  color: #8e99a3;
+  font-size: 0.82rem;
+  font-style: normal;
+}
+
+.admin-section-card strong {
+  color: #ffffff;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.admin-section-card-green .admin-section-icon {
+  color: #35d07f;
+  background: rgba(53, 208, 127, 0.1);
+}
+
+.admin-section-card-blue .admin-section-icon {
+  color: #7eb6ff;
+  background: rgba(126, 182, 255, 0.1);
+}
+
+.admin-section-card-red .admin-section-icon {
+  color: #ff7a70;
+  background: rgba(255, 81, 72, 0.1);
+}
+
+.admin-section-card-yellow .admin-section-icon {
+  color: #f5c542;
+}
+
 .route-list {
   display: grid;
   gap: 10px;
@@ -662,6 +735,51 @@ h2 {
 .reaction-line small {
   color: #8e99a3;
   font-size: 0.8rem;
+}
+
+.admin-log-list {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-log-row {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid rgba(245, 247, 248, 0.08);
+  border-left: 4px solid var(--client-color, #f5c542);
+  border-radius: 8px;
+  background: #050607;
+}
+
+.admin-log-row > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.admin-log-row p {
+  margin: 0;
+  color: #d4dbe0;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.admin-log-error {
+  border-color: rgba(255, 81, 72, 0.22);
+  border-left-color: #ff5148;
+}
+
+.admin-log-warning {
+  border-color: rgba(245, 197, 66, 0.22);
+  border-left-color: #f5c542;
+}
+
+.admin-log-success {
+  border-color: rgba(53, 208, 127, 0.22);
+  border-left-color: #35d07f;
 }
 
 .reaction-line b {
@@ -1474,6 +1592,21 @@ h2 {
   width: min(520px, 100%);
 }
 
+.admin-section-dialog {
+  width: min(1040px, 100%);
+  max-height: min(820px, calc(100vh - 40px));
+  overflow: hidden;
+}
+
+.admin-section-scroll {
+  display: grid;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+
 .confirmation-message {
   margin: 0;
   color: #f4f7f8;
@@ -1738,6 +1871,7 @@ h2 {
 
   .operation-steps,
   .admin-grid,
+  .admin-control-grid,
   .detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1780,10 +1914,11 @@ h2 {
   }
 
   .readiness-list,
-  .button-grid,
-  .operation-steps,
-  .admin-grid,
-  .detail-grid,
+    .button-grid,
+    .operation-steps,
+    .admin-grid,
+    .admin-control-grid,
+    .detail-grid,
   .user-editor,
   .user-row {
     grid-template-columns: 1fr;

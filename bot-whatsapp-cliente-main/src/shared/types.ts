@@ -170,6 +170,18 @@ export type AdminRoutesSnapshot = {
   };
 };
 
+export type AdminLogEntry = BotLog & {
+  clientEmail: string;
+  clientColor?: string;
+};
+
+export type AdminMonitorSnapshot = {
+  routes: AdminRoutesSnapshot;
+  users: AdminUsersSnapshot;
+  support: AdminSupportMessagesSnapshot;
+  logs: AdminLogEntry[];
+};
+
 export type SaveGroupPayload = {
   group: string;
   groupId?: string;

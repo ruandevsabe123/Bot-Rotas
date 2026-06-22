@@ -1,5 +1,6 @@
 import {
   AdminRoutesSnapshot,
+  AdminMonitorSnapshot,
   AdminSupportMessagesSnapshot,
   AdminUserDetail,
   AdminUsersSnapshot,
@@ -98,6 +99,29 @@ export async function getPanelMe() {
 
 export function getAdminRoutes() {
   return fetchJson<AdminRoutesSnapshot>("/api/admin/routes");
+}
+
+export function getAdminMonitor() {
+  return fetchJson<AdminMonitorSnapshot>("/api/admin/monitor");
+}
+
+export function subscribeAdminMonitor(callback: (snapshot: AdminMonitorSnapshot) => void, onError?: () => void) {
+  const token = getPanelToken();
+  if (!token) return () => undefined;
+
+  const source = new EventSource(`/api/admin/events?token=${encodeURIComponent(token)}`);
+  source.onmessage = (event) => {
+    try {
+      callback(JSON.parse(event.data) as AdminMonitorSnapshot);
+    } catch {
+      // Ignora pacote inválido e mantém a conexão viva.
+    }
+  };
+  source.onerror = () => {
+    onError?.();
+  };
+
+  return () => source.close();
 }
 
 export function validateAdminRoute(routeId: string) {

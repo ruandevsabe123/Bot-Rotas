@@ -8,7 +8,7 @@ import qrcodeTerminal from "qrcode-terminal";
 import { BotService } from "./bot/connection";
 import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
-import { AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole, UserPresenceStatus } from "./shared/types";
+import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
 const panelEmail = String(process.env.PANEL_EMAIL || "").trim().toLowerCase();
@@ -139,6 +139,7 @@ type Client = {
 
 const bots = new Map<string, BotService>();
 const clients = new Set<Client>();
+const adminClients = new Set<http.ServerResponse>();
 const lastSnapshotState = new Map<string, { qrCode: string; logId: string }>();
 
 function getUserStorageKey(email: string) {
@@ -213,6 +214,7 @@ function getBotForEmail(email: string) {
 
   nextBot.on("snapshot", () => {
     broadcastSnapshot(normalizedEmail);
+    broadcastAdminSnapshot();
     logSnapshot(normalizedEmail);
   });
 
@@ -295,6 +297,12 @@ function getAuthorizedEmail(request: http.IncomingMessage) {
   return undefined;
 }
 
+function getAuthorizedEmailFromUrl(url: URL) {
+  const tokenEmail = verifySessionToken(String(url.searchParams.get("token") || "").trim());
+  if (tokenEmail && !panelUsers.get(tokenEmail)?.blocked) return tokenEmail;
+  return undefined;
+}
+
 function requireAuth(request: http.IncomingMessage, response: http.ServerResponse) {
   const email = getAuthorizedEmail(request);
   if (email) {
@@ -311,6 +319,7 @@ function requireAuth(request: http.IncomingMessage, response: http.ServerRespons
 
 function syncPanelUser(user: StoredPanelUser) {
   panelUsers.set(user.email, createUserRecord(user.email, user.password, user.role, user));
+  broadcastAdminSnapshot();
 }
 
 function touchPanelUser(email: string) {
@@ -443,6 +452,37 @@ function getAdminSupportMessagesSnapshot(): AdminSupportMessagesSnapshot {
     messages,
     unread: messages.filter((message) => !message.read).length
   };
+}
+
+function getAdminLogsSnapshot(): AdminLogEntry[] {
+  const colorByEmail = new Map(Array.from(panelUsers.entries()).map(([email, user]) => [email, user.color || defaultUserColor(email)]));
+  return getClientEmails()
+    .flatMap((email) =>
+      getBotForEmail(email).getSnapshot().logs.map((log) => ({
+        ...log,
+        clientEmail: email,
+        clientColor: colorByEmail.get(email) || defaultUserColor(email)
+      }))
+    )
+    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+    .slice(0, 300);
+}
+
+function getAdminMonitorSnapshot(): AdminMonitorSnapshot {
+  return {
+    routes: getAdminRoutesSnapshot(),
+    users: getAdminUsersSnapshot(),
+    support: getAdminSupportMessagesSnapshot(),
+    logs: getAdminLogsSnapshot()
+  };
+}
+
+function broadcastAdminSnapshot() {
+  if (!adminClients.size) return;
+  const payload = `data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`;
+  for (const client of adminClients) {
+    client.write(payload);
+  }
 }
 
 function broadcastSnapshot(email: string) {
@@ -663,6 +703,7 @@ const server = http.createServer(async (request, response) => {
         message: String(body.message || ""),
         userAgent: String(request.headers["user-agent"] || "")
       });
+      broadcastAdminSnapshot();
       sendJson(response, 200, { ok: true, message });
       return;
     }
@@ -715,6 +756,21 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/admin/events") {
+      const email = getAuthorizedEmailFromUrl(url);
+      if (!email || !requireAdmin(email, response)) return;
+
+      response.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-store",
+        Connection: "keep-alive"
+      });
+      adminClients.add(response);
+      response.write(`data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`);
+      request.on("close", () => adminClients.delete(response));
+      return;
+    }
+
     let authorizedEmail = "";
     if (url.pathname.startsWith("/api/") || url.pathname === "/events" || url.pathname === "/qr.svg") {
       const email = requireAuth(request, response);
@@ -738,6 +794,12 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/admin/monitor") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      sendJson(response, 200, getAdminMonitorSnapshot());
+      return;
+    }
+
     if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/routes/")) {
       if (!requireAdmin(authorizedEmail, response)) return;
       const routeId = decodeURIComponent(url.pathname.replace("/api/admin/routes/", "").replace(/\/validate$/, ""));
@@ -745,6 +807,7 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, 404, { error: "Rota não encontrada." });
         return;
       }
+      broadcastAdminSnapshot();
       sendJson(response, 200, getAdminRoutesSnapshot());
       return;
     }
@@ -765,6 +828,7 @@ const server = http.createServer(async (request, response) => {
       if (!requireAdmin(authorizedEmail, response)) return;
       const id = decodeURIComponent(url.pathname.replace("/api/admin/support/messages/", ""));
       supportMessageStore.markRead(id);
+      broadcastAdminSnapshot();
       sendJson(response, 200, getAdminSupportMessagesSnapshot());
       return;
     }
