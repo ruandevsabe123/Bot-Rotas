@@ -10,6 +10,7 @@ type Props = {
   onStopMonitoring: () => void;
   onManualDispatch: () => void;
   onWarmup: () => void;
+  onSimulateTargetDispatch: () => void;
   monitoringEnabled?: boolean;
   monitoringMode?: "target" | "test";
   groupState?: BotGroupState;
@@ -24,6 +25,7 @@ export function ControlButtons({
   onStopMonitoring,
   onManualDispatch,
   onWarmup,
+  onSimulateTargetDispatch,
   monitoringEnabled,
   monitoringMode,
   groupState
@@ -68,6 +70,10 @@ export function ControlButtons({
         <button className="button" disabled={!canWarmup} onClick={onWarmup}>
           <Flame size={18} />
           Aquecer 15 msg
+        </button>
+        <button className="button" disabled={!canWarmup} onClick={onSimulateTargetDispatch}>
+          <Send size={18} />
+          Simular alvo
         </button>
       </div>
     </article>

@@ -217,6 +217,7 @@ export type DesktopApi = {
   stopMonitoring: () => Promise<BotSnapshot>;
   simulateOpening: () => Promise<BotSnapshot>;
   manualDispatch: () => Promise<BotSnapshot>;
+  simulateTargetDispatch: () => Promise<BotSnapshot>;
   saveGroup: (payload: SaveGroupPayload) => Promise<BotSnapshot>;
   saveTestGroup: (payload: SaveGroupPayload) => Promise<BotSnapshot>;
   warmupGroups: () => Promise<BotSnapshot>;

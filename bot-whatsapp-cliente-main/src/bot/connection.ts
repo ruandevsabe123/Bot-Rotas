@@ -116,6 +116,7 @@ export class BotService extends EventEmitter {
   private preparedTargetJid = "";
   private preparedMessages: string[] = [];
   private preparedRelayMessages: any[] = []; // esse aqui
+  private preparedRelaySignature = "";
   private warmupMessagesSent = 0;
   private warmupCompleted = false;
   private configStore: ConfigStore;
@@ -126,6 +127,7 @@ export class BotService extends EventEmitter {
   private adminPhoneNumbers = new Set<string>();
   private leaderContacts = new Map<string, string>();
   private activeRouteByCycle = new Map<number, string>();
+  private targetSimulationCycles = new Set<number>();
   private autoClearInvalidSession = false;
   private clearedInvalidSessionInCurrentRun = false;
   private groupMetadataCache = new Map<string, any>();
@@ -356,6 +358,53 @@ export class BotService extends EventEmitter {
     return true;
   }
 
+  async simulateTargetDispatchOnTestGroup(): Promise<boolean> {
+    if (!this.sock || this.status !== "connected") {
+      this.logger.warning("Conecte o WhatsApp antes de simular o disparo alvo.");
+      return false;
+    }
+
+    const config = this.configStore.load();
+    if (!config.grupoTesteJid && !config.grupoTesteNome) {
+      this.logger.warning("Salve um grupo de teste antes de simular o disparo alvo.");
+      return false;
+    }
+
+    this.syncMessagesFromConfig();
+    let mensagens = [...this.mensagensProntasAlvo];
+    if (!mensagens.length) {
+      this.logger.warning("Configure as mensagens do grupo alvo antes de simular.");
+      return false;
+    }
+
+    if (mensagens.length > MAX_OUTGOING_MESSAGES) {
+      mensagens = mensagens.slice(0, MAX_OUTGOING_MESSAGES);
+    }
+
+    const testGroup = await this.resolveWarmupTarget(config);
+    if (!testGroup?.jid) {
+      this.logger.warning("Não foi possível resolver o grupo de teste para simular o alvo.");
+      return false;
+    }
+
+    const cycleId = ++this.sendCycleId;
+    this.targetSimulationCycles.add(cycleId);
+    this.monitoringMode = "test";
+    this.preparedTargetJid = testGroup.jid;
+    this.preparedMessages = mensagens;
+    this.rebuildPreparedRelayMessages(testGroup.jid, mensagens);
+    this.registerRouteDispatch(cycleId, testGroup.jid, mensagens);
+
+    const sendCycle = this.sendFastSequence(testGroup.jid, mensagens, cycleId).finally(() => {
+      this.targetSimulationCycles.delete(cycleId);
+      if (cycleId === this.sendCycleId) this.activeSendCycle = undefined;
+    });
+    this.activeSendCycle = sendCycle;
+    this.logger.info(`Simulação do alvo enviada no grupo de teste: ${mensagens.join(" | ")}`);
+    this.emitSnapshot();
+    return true;
+  }
+
   async start(pairingPhoneNumber?: string) {
     if (this.starting) return this.starting;
     if (this.isRunning()) {
@@ -417,6 +466,7 @@ export class BotService extends EventEmitter {
     this.preparedTargetJid = "";
     this.preparedMessages = [];
     this.preparedRelayMessages = []; // esse aqui
+    this.preparedRelaySignature = "";
     this.setStatus("disconnected");
     this.logger.info("Bot parado.");
   }
@@ -498,6 +548,7 @@ export class BotService extends EventEmitter {
     this.preparedTargetJid = "";
     this.preparedMessages = [];
     this.preparedRelayMessages = [];
+    this.preparedRelaySignature = "";
     this.resetWarmupState();
     this.codigosEscolhidos = [];
     this.montarMensagens();
@@ -515,6 +566,7 @@ export class BotService extends EventEmitter {
     this.preparedTargetJid = "";
     this.preparedMessages = [];
     this.preparedRelayMessages = [];
+    this.preparedRelaySignature = "";
     this.logger.success(`Grupo alterado para: ${config.grupoAlvoNome || config.grupoAlvoJid}`);
 
     if (this.sock && this.status === "connected") {
@@ -1392,8 +1444,23 @@ export class BotService extends EventEmitter {
 
   private ensurePreparedRelayMessages(jid: string, mensagens: string[]) {
     if (!this.sock || !jid) return;
-    if (this.preparedRelayMessages.length === mensagens.length) return;
+    const signature = this.getRelaySignature(jid, mensagens);
+    if (this.preparedRelaySignature === signature && this.preparedRelayMessages.length === mensagens.length) return;
+    this.rebuildPreparedRelayMessages(jid, mensagens);
+  }
+
+  private rebuildPreparedRelayMessages(jid: string, mensagens: string[]) {
+    if (!this.sock || !jid) {
+      this.preparedRelayMessages = [];
+      this.preparedRelaySignature = "";
+      return;
+    }
     this.preparedRelayMessages = mensagens.map((mensagem) => this.buildRelayTextMessage(this.sock, jid, mensagem));
+    this.preparedRelaySignature = this.getRelaySignature(jid, mensagens);
+  }
+
+  private getRelaySignature(jid: string, mensagens: string[]) {
+    return `${jid}::${mensagens.join("\u001f")}`;
   }
 
   private registerRouteDispatch(cycleId: number, jid: string, mensagens: string[]) {
@@ -1495,6 +1562,7 @@ export class BotService extends EventEmitter {
     }
 
     await this.sendFastSequence(jid, mensagens, cycleId);
+    this.stopMonitoringAfterTargetDispatch(cycleId);
   }
 
   private async sendAggressiveTargetSequence(jid: string, mensagens: string[], cycleId: number) {
@@ -1544,10 +1612,23 @@ export class BotService extends EventEmitter {
 
       this.updateRouteDispatch(cycleId, confirmed, mensagens.length);
       this.emitSnapshot();
+      this.stopMonitoringAfterTargetDispatch(cycleId);
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo agressivo: ${this.getErrorMessage(error)}`);
       this.updateRouteDispatch(cycleId, 0, mensagens.length);
+      this.stopMonitoringAfterTargetDispatch(cycleId);
     }
+  }
+
+  private stopMonitoringAfterTargetDispatch(cycleId: number) {
+    if (this.targetSimulationCycles.has(cycleId)) return;
+    if (this.monitoringMode !== "target") return;
+    if (!this.monitoringEnabled) return;
+
+    this.monitoringEnabled = false;
+    this.clearHealthCheckTimer();
+    this.logger.warning("Disparo no grupo alvo finalizado. Bot parado automaticamente para evitar mensagens duplicadas.");
+    this.emitSnapshot();
   }
 
   private async sendSingleInstant(sock: any, jid: string, mensagem: string, cycleId: number) {
@@ -1659,6 +1740,8 @@ export class BotService extends EventEmitter {
       this.sock && this.preparedTargetJid
         ? this.preparedMessages.map((mensagem) => this.buildRelayTextMessage(this.sock, this.preparedTargetJid, mensagem))
         : [];
+    this.preparedRelaySignature =
+      this.sock && this.preparedTargetJid ? this.getRelaySignature(this.preparedTargetJid, this.preparedMessages) : "";
 
     return Boolean(this.preparedTargetJid && this.preparedMessages.length);
   }
@@ -1781,6 +1864,7 @@ export class BotService extends EventEmitter {
     }
 
     this.currentUserInTargetGroup = true;
+    this.prepareSendPlan();
     return true;
   }
 
@@ -1934,6 +2018,7 @@ export class BotService extends EventEmitter {
     this.preparedTargetJid = "";
     this.preparedMessages = [];
     this.preparedRelayMessages = [];
+    this.preparedRelaySignature = "";
   }
 
   private isFatalRuntimeError(errorMessage = "") {

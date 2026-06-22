@@ -1292,6 +1292,22 @@ export default function App() {
     });
   }
 
+  function confirmSimulateTargetDispatch() {
+    const messages = buildMessagePreview();
+    setConfirmation({
+      title: "Simular alvo",
+      message: "Deseja enviar no grupo teste exatamente as mensagens que iriam para o grupo alvo?",
+      details: [
+        `Grupo teste: ${testGroupLabel}`,
+        messages.length ? `Mensagens alvo: ${messages.join(" | ")}` : "Nenhuma mensagem alvo configurada."
+      ],
+      confirmLabel: "Simular alvo",
+      onConfirm: async () => {
+        await runAction(botApi.simulateTargetDispatch);
+      }
+    });
+  }
+
   function confirmClearLogs() {
     setConfirmation({
       title: "Limpar logs",
@@ -1393,6 +1409,7 @@ export default function App() {
             onStopMonitoring={() => runAction(botApi.stopMonitoring)}
             onManualDispatch={confirmManualDispatch}
             onWarmup={confirmWarmup}
+            onSimulateTargetDispatch={confirmSimulateTargetDispatch}
             monitoringEnabled={snapshot.monitoringEnabled}
             monitoringMode={snapshot.monitoringMode}
             groupState={snapshot.groupState}

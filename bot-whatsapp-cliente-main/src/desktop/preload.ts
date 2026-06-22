@@ -21,6 +21,7 @@ const api: DesktopApi = {
   stopMonitoring: () => ipcRenderer.invoke("bot:disableMonitoring"),
   simulateOpening: () => ipcRenderer.invoke("bot:simulateOpening"),
   manualDispatch: () => ipcRenderer.invoke("bot:manualDispatch"),
+  simulateTargetDispatch: () => ipcRenderer.invoke("bot:simulateTargetDispatch"),
   restartBot: () => ipcRenderer.invoke("bot:restart"),
   clearSession: () => ipcRenderer.invoke("bot:clearSession"),
   factoryReset: () => ipcRenderer.invoke("bot:factoryReset"),

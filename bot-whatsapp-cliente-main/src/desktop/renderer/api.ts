@@ -196,6 +196,7 @@ function createWebApi(): DesktopApi {
     stopMonitoring: () => action("stop-monitoring"),
     simulateOpening: () => action("simulate-opening"),
     manualDispatch: () => action("manual-dispatch"),
+    simulateTargetDispatch: () => action("simulate-target-dispatch"),
     saveGroup: (payload: SaveGroupPayload) => action("save-group", payload),
     saveTestGroup: (payload: SaveGroupPayload) => action("save-test-group", payload),
     warmupGroups: () => action("warmup"),

@@ -139,6 +139,10 @@ function registerIpc() {
     await bot.manualDispatch();
     return bot.getSnapshot();
   });
+  ipcMain.handle("bot:simulateTargetDispatch", async () => {
+    await bot.simulateTargetDispatchOnTestGroup();
+    return bot.getSnapshot();
+  });
   ipcMain.handle("bot:saveGroup", async (_event, payload: SaveGroupPayload) => {
     await bot.saveGroup(payload.group, payload.groupId, payload.groupName);
     return bot.getSnapshot();

@@ -513,6 +513,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
     case "manual-dispatch":
       await bot.manualDispatch();
       break;
+    case "simulate-target-dispatch":
+      await bot.simulateTargetDispatchOnTestGroup();
+      break;
     case "warmup":
       await bot.warmupConnection();
       break;
