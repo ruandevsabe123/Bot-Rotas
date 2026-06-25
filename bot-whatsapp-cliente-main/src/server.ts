@@ -667,9 +667,11 @@ function serveStatic(urlPath: string, response: http.ServerResponse) {
     return;
   }
 
+  const fileName = path.basename(filePath);
+  const shouldRevalidate = fileName === "index.html" || fileName === "sw.js" || fileName === "manifest.webmanifest";
   response.writeHead(200, {
     "Content-Type": getContentType(filePath),
-    "Cache-Control": filePath.endsWith("index.html") ? "no-store" : "public, max-age=31536000, immutable"
+    "Cache-Control": shouldRevalidate ? "no-store, no-cache, must-revalidate" : "public, max-age=31536000, immutable"
   });
   fs.createReadStream(filePath).pipe(response);
 }
