@@ -40,6 +40,34 @@ export type BotConfig = {
   codigosMensagensAlvo: string[];
   // mensagens enviadas durante o aquecimento (grupo de teste)
   codigosMensagensTeste: string[];
+  testMessageCount: number;
+  testMessageIntervalMs: number;
+  fastMode: boolean;
+  minSendDelayMs: number;
+};
+
+export type BotPerformanceMetrics = {
+  lastDispatchLatencyMs: number;
+  averageDispatchLatencyMs: number;
+  lastDispatchDurationMs: number;
+  averageMessageSendMs: number;
+  dispatchCount: number;
+  sentMessages: number;
+  failedMessages: number;
+  activeQueue: number;
+  lastDispatchAt?: string;
+};
+
+export type BotTestStatus = {
+  active: boolean;
+  startedAt?: string;
+  stoppedAt?: string;
+  lastRunAt?: string;
+  lastDurationMs?: number;
+  lastSentCount: number;
+  lastFailedCount: number;
+  configuredMessageCount: number;
+  intervalMs: number;
 };
 
 export type BotSnapshot = {
@@ -57,6 +85,8 @@ export type BotSnapshot = {
   warmupCompleted?: boolean;
   warmupMessagesSent?: number;
   warmupRequiredMessages?: number;
+  testStatus?: BotTestStatus;
+  performanceMetrics?: BotPerformanceMetrics;
   routeDispatches?: RouteDispatch[];
 };
 
@@ -201,6 +231,8 @@ export type SaveMessageSettingsPayload = {
 export type SaveWarmupMessageSettingsPayload = {
   senderName: string;
   codes: string[];
+  messageCount?: number;
+  intervalMs?: number;
 };
 
 export type SaveTargetMessageSettingsPayload = {
@@ -210,6 +242,8 @@ export type SaveTargetMessageSettingsPayload = {
 
 export type GeneralSettingsPayload = {
   nuclearMode: boolean;
+  fastMode?: boolean;
+  minSendDelayMs?: number;
 };
 
 export type StartBotPayload = {

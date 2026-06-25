@@ -76,7 +76,7 @@ type PendingConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-type AppTab = "home" | "messages" | "logs" | "settings";
+type AppTab = "home" | "groups" | "messages" | "test" | "settings";
 type GroupEditor = "target" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
 type RouteStatusFilter = "all" | "pending" | "validated" | "leader";
@@ -96,17 +96,39 @@ const emptySnapshot: BotSnapshot = {
     nomeEnvio: "",
     nuclearMode: false,
     codigosMensagensAlvo: [],
-    codigosMensagensTeste: []
+    codigosMensagensTeste: [],
+    testMessageCount: 15,
+    testMessageIntervalMs: 0,
+    fastMode: true,
+    minSendDelayMs: 0
   },
   groups: [],
   readinessChecks: [],
-  logs: []
+  logs: [],
+  testStatus: {
+    active: false,
+    lastSentCount: 0,
+    lastFailedCount: 0,
+    configuredMessageCount: 15,
+    intervalMs: 0
+  },
+  performanceMetrics: {
+    lastDispatchLatencyMs: 0,
+    averageDispatchLatencyMs: 0,
+    lastDispatchDurationMs: 0,
+    averageMessageSendMs: 0,
+    dispatchCount: 0,
+    sentMessages: 0,
+    failedMessages: 0,
+    activeQueue: 0
+  }
 };
 
 const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
   { id: "home", label: "Inicio", Icon: Home },
+  { id: "groups", label: "Grupos", Icon: Route },
   { id: "messages", label: "Mensagens", Icon: MessageSquareText },
-  { id: "logs", label: "Logs", Icon: Activity },
+  { id: "test", label: "Teste", Icon: TestTube2 },
   { id: "settings", label: "Ajustes", Icon: Settings }
 ];
 
@@ -397,6 +419,17 @@ function CockpitPanel({
           detail={armed ? `Última abertura: ${lastOpening}` : `${confirmed} mensagem(ns) confirmadas`}
         />
       </div>
+    </section>
+  );
+}
+
+function PerformanceStrip({ snapshot }: { snapshot: BotSnapshot }) {
+  const metrics = snapshot.performanceMetrics || emptySnapshot.performanceMetrics!;
+  return (
+    <section className="performance-strip">
+      <AdminMetric Icon={Zap} tone="yellow" title="Latência" value={`${metrics.lastDispatchLatencyMs}ms`} detail={`média ${metrics.averageDispatchLatencyMs}ms`} />
+      <AdminMetric Icon={Gauge} tone="green" title="Disparo" value={`${metrics.lastDispatchDurationMs}ms`} detail={`${metrics.sentMessages} enviadas`} />
+      <AdminMetric Icon={Activity} tone="blue" title="Fila" value={metrics.activeQueue} detail={`${metrics.failedMessages} falha(s)`} />
     </section>
   );
 }
@@ -1196,6 +1229,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const automaticRoutes = filteredRoutes.filter((route) => route.mode === "target" && getRouteTrigger(route) === "automatic");
   const manualRoutes = filteredRoutes.filter((route) => ["manual", "simulation"].includes(getRouteTrigger(route)));
   const testRoutes = filteredRoutes.filter((route) => route.mode === "test" || ["warmup", "target-simulation"].includes(getRouteTrigger(route)));
+  const latestTestRoute = testRoutes[0];
 
   return (
     <main className="app-shell admin-shell admin-console">
@@ -1308,10 +1342,28 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             <div><span>Validadas</span><strong>{filteredRoutes.filter((route) => route.validated).length}</strong></div>
             <div><span>Reações</span><strong>{filteredRoutes.reduce((total, route) => total + route.reactions.length, 0)}</strong></div>
             <div><span>Clientes online</span><strong>{onlineClients}</strong></div>
+            <div><span>Testes</span><strong>{testRoutes.length}</strong></div>
             <div><span>Mensagens</span><strong>{filteredUnreadSupport}</strong></div>
           </section>
 
           <section className="admin-panorama">
+            <article className="admin-preview-panel test-audit-panel">
+              <div className="admin-preview-heading">
+                <div>
+                  <p className="panel-label">Grupo de teste</p>
+                  <h2>{latestTestRoute?.groupName || "Sem teste recente"}</h2>
+                </div>
+                <button className="button" type="button" onClick={() => { setRouteKindFilter("test"); setActiveSection("routes"); }}>
+                  Ver histórico
+                </button>
+              </div>
+              <div className="detail-list">
+                <span>Cliente: <b>{latestTestRoute?.clientEmail || activeClientLabel}</b></span>
+                <span>Status: <b>{latestTestRoute ? (latestTestRoute.status === "sent" ? "finalizado" : latestTestRoute.status) : "parado"}</b></span>
+                <span>Mensagens: <b>{latestTestRoute ? `${latestTestRoute.confirmedCount}/${latestTestRoute.totalCount}` : "0/0"}</b></span>
+                <span>Último evento: <b>{latestTestRoute ? formatShortDate(latestTestRoute.updatedAt) : "Sem registro"}</b></span>
+              </div>
+            </article>
             <article className="admin-preview-panel">
               <div className="admin-preview-heading">
                 <div>
@@ -1697,7 +1749,7 @@ export default function App() {
     });
   }
 
-  function confirmSaveTest(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[]) {
+  function confirmSaveTest(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], messageCount = 15, intervalMs = 0) {
     const selectedGroupName = groupName || group;
     const messages = buildMessagePreview(senderName, codes);
 
@@ -1710,7 +1762,7 @@ export default function App() {
         await runAction(async () => {
           await botApi.saveTestGroup({ group, groupId, groupName });
           setGroupEditor(undefined);
-          return botApi.saveWarmupMessageSettings({ senderName, codes });
+          return botApi.saveWarmupMessageSettings({ senderName, codes, messageCount, intervalMs });
         });
       }
     });
@@ -1922,33 +1974,24 @@ export default function App() {
             onStartMonitoring={confirmStartMonitoring}
             onStopMonitoring={() => runAction(botApi.stopMonitoring)}
             onManualDispatch={confirmManualDispatch}
-            onWarmup={confirmWarmup}
-            onSimulateTargetDispatch={confirmSimulateTargetDispatch}
             monitoringEnabled={snapshot.monitoringEnabled}
             monitoringMode={snapshot.monitoringMode}
             groupState={snapshot.groupState}
           />
 
+          <PerformanceStrip snapshot={snapshot} />
+
           {snapshot.qrCode || snapshot.status === "waiting_qr" ? <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} /> : null}
         </section>
       ) : null}
 
-      {activeTab === "messages" ? (
+      {activeTab === "groups" ? (
         <section className="mobile-home">
-          <section className="quick-panel identity-panel">
-            <div>
-              <p className="panel-label">Nome nas mensagens</p>
-              <h2>{snapshot.config.nomeEnvio || "Digite seu nome"}</h2>
-            </div>
-            <button className="button" type="button" onClick={() => setGroupEditor("target")}>
-              Configurar
-            </button>
-          </section>
           <section className="quick-panel">
             <div className="panel-heading">
               <div>
                 <p className="panel-label">Configuração</p>
-                <h2>Grupos e mensagens</h2>
+                <h2>Grupos do bot</h2>
               </div>
               <button className="icon-button" disabled={busy} title="Atualizar grupos" type="button" onClick={() => runAction(botApi.refreshGroups)}>
                 <RefreshCw size={20} />
@@ -1969,6 +2012,20 @@ export default function App() {
               onOpen={() => setGroupEditor("test")}
             />
           </section>
+        </section>
+      ) : null}
+
+      {activeTab === "messages" ? (
+        <section className="mobile-home">
+          <section className="quick-panel identity-panel">
+            <div>
+              <p className="panel-label">Nome nas mensagens</p>
+              <h2>{snapshot.config.nomeEnvio || "Digite seu nome"}</h2>
+            </div>
+            <button className="button" type="button" onClick={() => setGroupEditor("target")}>
+              Configurar
+            </button>
+          </section>
           <MessagePreviewStrip
             title="Mensagens alvo"
             group={groupLabel}
@@ -1984,14 +2041,72 @@ export default function App() {
         </section>
       ) : null}
 
-      {activeTab === "logs" ? (
-        <section className="tab-stack">
-          <LogsPanel logs={snapshot.logs} />
+      {activeTab === "test" ? (
+        <section className="mobile-home">
+          <section className="quick-panel test-command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Grupo de teste</p>
+                <h2>{testGroupLabel}</h2>
+              </div>
+              <span className={snapshot.testStatus?.active ? "mini-badge ok" : "mini-badge"}>
+                {snapshot.testStatus?.active ? "Rodando" : "Parado"}
+              </span>
+            </div>
+            <div className="review-grid">
+              <article className="review-item ok">
+                <span>Quantidade</span>
+                <strong>{snapshot.config.testMessageCount || 15}</strong>
+              </article>
+              <article className="review-item ok">
+                <span>Intervalo</span>
+                <strong>{snapshot.config.testMessageIntervalMs || 0}ms</strong>
+              </article>
+              <article className="review-item ok">
+                <span>Último teste</span>
+                <strong>{snapshot.testStatus?.lastSentCount || 0}/{snapshot.testStatus?.configuredMessageCount || snapshot.config.testMessageCount || 15}</strong>
+              </article>
+            </div>
+            <div className="review-actions">
+              <button className="button" type="button" onClick={() => setGroupEditor("test")}>
+                Configurar teste
+              </button>
+              {snapshot.testStatus?.active ? (
+                <button className="button danger" disabled={busy} type="button" onClick={() => runAction(botApi.stopMonitoring)}>
+                  Parar teste
+                </button>
+              ) : (
+                <button className="button primary" disabled={busy || snapshot.status !== "connected"} type="button" onClick={confirmWarmup}>
+                  Iniciar teste
+                </button>
+              )}
+            </div>
+          </section>
+          <section className="quick-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Histórico de teste</p>
+                <h2>{(snapshot.routeDispatches || []).filter((route) => route.mode === "test" || ["warmup", "target-simulation"].includes(getRouteTrigger(route))).length} registro(s)</h2>
+              </div>
+              <button className="button" type="button" onClick={confirmSimulateTargetDispatch}>
+                Simular alvo
+              </button>
+            </div>
+            <div className="admin-route-scroll compact">
+              {(snapshot.routeDispatches || [])
+                .filter((route) => route.mode === "test" || ["warmup", "target-simulation"].includes(getRouteTrigger(route)))
+                .slice(0, 12)
+                .map((route) => <RouteRow key={`client-test-${route.id}`} route={route} />)}
+            </div>
+          </section>
+          <LogsPanel logs={snapshot.logs.filter((log) => /teste|aquecimento|simulação/i.test(log.message)).slice(0, 80)} />
         </section>
       ) : null}
 
       {activeTab === "settings" ? (
         <section className="tab-stack">
+          <LogsPanel logs={snapshot.logs} />
+          <PerformanceStrip snapshot={snapshot} />
           <SettingsPanel
             config={snapshot.config}
             busy={busy}
@@ -2007,18 +2122,28 @@ export default function App() {
       ) : null}
 
       <nav className="bottom-nav icon-nav" aria-label="Navegação principal">
-        {tabs.map(({ id, label, Icon }) => (
-          <button
-            key={id}
-            aria-label={label}
-            className={activeTab === id ? "active" : ""}
-            title={label}
-            type="button"
-            onClick={() => setActiveTab(id)}
-          >
-            <Icon size={23} />
-          </button>
-        ))}
+        {tabs.map(({ id, label, Icon }) => {
+          const badge =
+            id === "test" && snapshot.testStatus?.active
+              ? 1
+              : id === "settings" && snapshot.logs.some((log) => log.level === "error")
+              ? snapshot.logs.filter((log) => log.level === "error").length
+              : 0;
+          return (
+            <button
+              key={id}
+              aria-label={label}
+              className={activeTab === id ? "active" : ""}
+              title={label}
+              type="button"
+              onClick={() => setActiveTab(id)}
+            >
+              {badge ? <b className="nav-badge">{badge}</b> : null}
+              <Icon size={22} />
+              <span>{label}</span>
+            </button>
+          );
+        })}
       </nav>
 
       {groupEditor ? (

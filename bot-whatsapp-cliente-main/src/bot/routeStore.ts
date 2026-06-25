@@ -5,14 +5,19 @@ import { RouteDispatch, RouteReaction } from "../shared/types";
 const MAX_ROUTES = 100;
 
 export class RouteStore {
+  private routes?: RouteDispatch[];
+  private flushTimer?: NodeJS.Timeout;
+  private dirty = false;
+
   constructor(private readonly filePath: string) {}
 
   all(): RouteDispatch[] {
-    return this.load();
+    return [...this.getRoutes()];
   }
 
   clear() {
-    this.save([]);
+    this.routes = [];
+    this.scheduleSave(0);
   }
 
   create(input: Omit<RouteDispatch, "createdAt" | "updatedAt" | "validated" | "reactions">) {
@@ -25,13 +30,14 @@ export class RouteStore {
       reactions: []
     };
 
-    this.save([route, ...this.load()].slice(0, MAX_ROUTES));
+    this.routes = [route, ...this.getRoutes()].slice(0, MAX_ROUTES);
+    this.scheduleSave();
     return route;
   }
 
   update(id: string, patch: Partial<Pick<RouteDispatch, "confirmedCount" | "status" | "sentMessageIds">>) {
-    this.save(
-      this.load().map((route) =>
+    this.routes =
+      this.getRoutes().map((route) =>
         route.id === id
           ? {
               ...route,
@@ -39,15 +45,15 @@ export class RouteStore {
               updatedAt: new Date().toISOString()
             }
           : route
-      )
-    );
+      );
+    this.scheduleSave();
   }
 
   validate(id: string, validatedBy: string) {
     let changed = false;
     const now = new Date().toISOString();
-    this.save(
-      this.load().map((route) => {
+    this.routes =
+      this.getRoutes().map((route) => {
         if (route.id !== id) return route;
         changed = true;
         return {
@@ -57,14 +63,14 @@ export class RouteStore {
           validatedBy,
           updatedAt: now
         };
-      })
-    );
+      });
+    if (changed) this.scheduleSave();
     return changed;
   }
 
   addReaction(messageId: string, reaction: RouteReaction) {
     let changed = false;
-    const routes = this.load().map((route) => {
+    const routes = this.getRoutes().map((route) => {
       if (!route.sentMessageIds.includes(messageId)) return route;
 
       changed = true;
@@ -76,8 +82,20 @@ export class RouteStore {
       };
     });
 
-    if (changed) this.save(routes);
+    if (changed) {
+      this.routes = routes;
+      this.scheduleSave();
+    }
     return changed;
+  }
+
+  flush() {
+    this.saveNow(this.getRoutes());
+  }
+
+  private getRoutes() {
+    if (!this.routes) this.routes = this.load();
+    return this.routes;
   }
 
   private load(): RouteDispatch[] {
@@ -91,9 +109,23 @@ export class RouteStore {
     }
   }
 
-  private save(routes: RouteDispatch[]) {
+  private saveNow(routes: RouteDispatch[]) {
+    this.dirty = false;
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = undefined;
+    }
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
     fs.writeFileSync(this.filePath, JSON.stringify(routes, null, 2));
+  }
+
+  private scheduleSave(delayMs = 250) {
+    this.dirty = true;
+    if (this.flushTimer) return;
+    this.flushTimer = setTimeout(() => {
+      if (!this.dirty) return;
+      this.saveNow(this.getRoutes());
+    }, delayMs);
   }
 
   private normalize(input: any): RouteDispatch | undefined {

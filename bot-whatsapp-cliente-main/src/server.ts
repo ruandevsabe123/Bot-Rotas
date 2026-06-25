@@ -612,7 +612,12 @@ async function handleAction(bot: BotService, action: string, body: any) {
       bot.setMessageSettings(String(body.senderName || ""), Array.isArray(body.codes) ? body.codes : []);
       break;
     case "save-warmup-message-settings":
-      bot.setWarmupMessageSettings(String(body.senderName || ""), Array.isArray(body.codes) ? body.codes : []);
+      bot.setWarmupMessageSettings(
+        String(body.senderName || ""),
+        Array.isArray(body.codes) ? body.codes : [],
+        body.messageCount,
+        body.intervalMs
+      );
       break;
     case "save-general-settings":
       bot.setGeneralSettings({ nuclearMode: Boolean(body.nuclearMode) });
@@ -630,7 +635,11 @@ function getContentType(filePath: string) {
   if (ext === ".js") return "text/javascript; charset=utf-8";
   if (ext === ".css") return "text/css; charset=utf-8";
   if (ext === ".svg") return "image/svg+xml";
+  if (ext === ".png") return "image/png";
+  if (ext === ".webp") return "image/webp";
+  if (ext === ".ico") return "image/x-icon";
   if (ext === ".json") return "application/json; charset=utf-8";
+  if (ext === ".webmanifest") return "application/manifest+json; charset=utf-8";
   return "application/octet-stream";
 }
 

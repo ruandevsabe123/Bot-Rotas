@@ -13,7 +13,7 @@
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 100dvh;
   background:
     radial-gradient(circle at 50% -12%, rgba(245, 197, 66, 0.14), transparent 28%),
     linear-gradient(180deg, #080a0c 0%, #030405 58%, #000000 100%);
@@ -33,7 +33,8 @@ button {
 .app-shell {
   width: min(1180px, calc(100vw - 40px));
   margin: 0 auto;
-  padding: 28px 0 112px;
+  min-height: 100dvh;
+  padding: 28px 0 142px;
 }
 
 .app-shell::before {
@@ -66,14 +67,14 @@ button {
 
 .login-shell {
   display: grid;
-  min-height: 100vh;
+  min-height: 100dvh;
   place-items: center;
   padding: 20px;
 }
 
 .loading-shell {
   display: grid;
-  min-height: 100vh;
+  min-height: 100dvh;
   place-items: center;
   padding: 20px;
 }
@@ -456,7 +457,7 @@ h2 {
 
 .admin-shell {
   width: min(1440px, calc(100vw - 32px));
-  padding-bottom: 36px;
+  padding-bottom: 142px;
 }
 
 .admin-console {
@@ -2266,6 +2267,22 @@ h2 {
   margin-top: 14px;
 }
 
+.test-settings-grid,
+.performance-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.test-settings-grid {
+  grid-template-columns: 1fr 1fr;
+}
+
+.test-settings-grid label {
+  display: grid;
+  gap: 7px;
+}
+
 .group-form label {
   color: #d4dbe0;
   font-size: 0.92rem;
@@ -2398,7 +2415,7 @@ h2 {
   display: grid;
   gap: 14px;
   width: min(620px, 100%);
-  max-height: calc(100vh - 40px);
+  max-height: calc(100dvh - 40px);
   overflow: auto;
   padding: 22px;
 }
@@ -2409,7 +2426,7 @@ h2 {
 
 .admin-section-dialog {
   width: min(1040px, 100%);
-  max-height: min(820px, calc(100vh - 40px));
+  max-height: min(820px, calc(100dvh - 40px));
   overflow: hidden;
 }
 
@@ -2446,12 +2463,12 @@ h2 {
   bottom: 18px;
   z-index: 18;
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 6px;
   width: min(420px, calc(100vw - 28px));
   padding: 8px;
   border: 1px solid rgba(245, 247, 248, 0.1);
-  border-radius: 8px;
+  border-radius: 28px;
   background: rgba(5, 6, 7, 0.9);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.58);
   transform: translateX(-50%);
@@ -2459,14 +2476,36 @@ h2 {
 }
 
 .bottom-nav button {
+  position: relative;
   display: grid;
-  min-height: 48px;
+  gap: 3px;
+  min-height: 62px;
   place-items: center;
   border: 1px solid transparent;
   border-radius: 8px;
   color: #8e99a3;
   background: transparent;
   cursor: pointer;
+}
+
+.bottom-nav button span {
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 12px;
+  display: grid;
+  min-width: 18px;
+  height: 18px;
+  place-items: center;
+  border-radius: 999px;
+  color: #ffffff;
+  background: #ff5148;
+  font-size: 0.68rem;
 }
 
 .bottom-nav button.active {
@@ -2775,6 +2814,7 @@ h2 {
   .app-shell {
     width: min(100vw - 22px, 680px);
     padding-top: 18px;
+    padding-bottom: 154px;
   }
 
   .app-topbar h1 {
@@ -2807,8 +2847,8 @@ h2 {
   }
 
   .admin-preview-panel {
-    height: min(760px, 82vh);
-    min-height: 560px;
+    height: auto;
+    min-height: 0;
   }
 
   .admin-route-tabs button {
@@ -2845,7 +2885,7 @@ h2 {
   }
 
   .readiness-list,
-    .button-grid,
+  .button-grid,
     .operation-steps,
     .admin-command-bar,
     .admin-grid,
@@ -2886,6 +2926,17 @@ h2 {
 
   .sheet-dialog,
   .confirmation-dialog {
-    max-height: calc(100vh - 20px);
+    max-height: calc(100dvh - 20px);
+  }
+
+  .performance-strip,
+  .test-settings-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bottom-nav {
+    bottom: max(12px, env(safe-area-inset-bottom));
+    width: min(520px, calc(100vw - 20px));
+    padding: 8px;
   }
 }

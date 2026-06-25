@@ -1,8 +1,34 @@
 {
-  "name": "Bot WhatsApp",
-  "short_name": "Bot",
+  "name": "Bot Rotas WhatsApp",
+  "short_name": "Bot Rotas",
+  "description": "Painel confiável para monitorar e disparar rotas do bot WhatsApp.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#0d1117",
-  "theme_color": "#0d1117"
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#030405",
+  "theme_color": "#050607",
+  "orientation": "portrait",
+  "categories": ["productivity", "business"],
+  "icons": [
+    {
+      "src": "/bot-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/bot-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Abrir painel",
+      "short_name": "Painel",
+      "url": "/"
+    }
+  ]
 }

@@ -10,7 +10,11 @@ export const DEFAULT_CONFIG: BotConfig = {
   nomeEnvio: "",
   nuclearMode: false,
   codigosMensagensAlvo: [],
-  codigosMensagensTeste: []
+  codigosMensagensTeste: [],
+  testMessageCount: 15,
+  testMessageIntervalMs: 0,
+  fastMode: true,
+  minSendDelayMs: 0
 };
 
 export class ConfigStore {
@@ -104,6 +108,10 @@ export class ConfigStore {
       grupoTesteNome: typeof input.grupoTesteNome === "string" ? input.grupoTesteNome : "",
       nomeEnvio: typeof input.nomeEnvio === "string" ? input.nomeEnvio.trim() : DEFAULT_CONFIG.nomeEnvio,
       nuclearMode: typeof input.nuclearMode === "boolean" ? input.nuclearMode : DEFAULT_CONFIG.nuclearMode,
+      testMessageCount: this.clampNumber(input.testMessageCount, 1, 200, DEFAULT_CONFIG.testMessageCount),
+      testMessageIntervalMs: this.clampNumber(input.testMessageIntervalMs, 0, 10000, DEFAULT_CONFIG.testMessageIntervalMs),
+      fastMode: typeof input.fastMode === "boolean" ? input.fastMode : DEFAULT_CONFIG.fastMode,
+      minSendDelayMs: this.clampNumber(input.minSendDelayMs, 0, 5000, DEFAULT_CONFIG.minSendDelayMs),
       // support legacy `codigosMensagens` if present
       codigosMensagensAlvo: Array.isArray(input.codigosMensagensAlvo)
         ? input.codigosMensagensAlvo.filter((item) => typeof item === "string" && item.trim())
@@ -114,5 +122,11 @@ export class ConfigStore {
         ? input.codigosMensagensTeste.filter((item) => typeof item === "string" && item.trim())
         : []
     };
+  }
+
+  private clampNumber(value: unknown, min: number, max: number, fallback: number) {
+    const numberValue = Number(value);
+    if (!Number.isFinite(numberValue)) return fallback;
+    return Math.min(max, Math.max(min, Math.floor(numberValue)));
   }
 }

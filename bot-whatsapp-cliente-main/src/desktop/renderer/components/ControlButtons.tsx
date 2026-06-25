@@ -1,4 +1,4 @@
-import { Flame, LogOut, Play, QrCode, Send, Square } from "lucide-react";
+import { LogOut, Play, QrCode, Send, Square } from "lucide-react";
 import { BotGroupState, BotStatus } from "../../../shared/types";
 
 type Props = {
@@ -9,8 +9,6 @@ type Props = {
   onStartMonitoring: () => void;
   onStopMonitoring: () => void;
   onManualDispatch: () => void;
-  onWarmup: () => void;
-  onSimulateTargetDispatch: () => void;
   monitoringEnabled?: boolean;
   monitoringMode?: "target" | "test";
   groupState?: BotGroupState;
@@ -24,8 +22,6 @@ export function ControlButtons({
   onStartMonitoring,
   onStopMonitoring,
   onManualDispatch,
-  onWarmup,
-  onSimulateTargetDispatch,
   monitoringEnabled,
   monitoringMode,
   groupState
@@ -40,7 +36,6 @@ export function ControlButtons({
   const canStop = !busy && isRunning;
   const canStartMonitoring = !busy && isConnected && !Boolean(monitoringEnabled);
   const canStopMonitoring = !busy && isConnected && Boolean(monitoringEnabled);
-  const canWarmup = !busy && isConnected;
   const canManualDispatch = !busy && isConnected;
 
   return (
@@ -66,14 +61,6 @@ export function ControlButtons({
         <button className="button accent" disabled={!canManualDispatch} onClick={onManualDispatch}>
           <Send size={18} />
           Disparo manual{groupState === "closed" ? " (fechado)" : ""}
-        </button>
-        <button className="button" disabled={!canWarmup} onClick={onWarmup}>
-          <Flame size={18} />
-          Aquecer 15 msg
-        </button>
-        <button className="button" disabled={!canWarmup} onClick={onSimulateTargetDispatch}>
-          <Send size={18} />
-          Simular alvo
         </button>
       </div>
     </article>

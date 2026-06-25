@@ -8,7 +8,7 @@ import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { RouteStore } from "./routeStore";
-import { BotConfig, BotGroup, BotGroupState, BotReadinessCheck, BotSnapshot, BotStatus, RouteDispatch, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotTestStatus, RouteDispatch, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -68,7 +68,6 @@ type MonitoringMode = "target" | "test";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 3500;
 const HEALTH_CHECK_INTERVAL_MS = 25000;
-const INSTANT_BURST_DELAY_MS = 0;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
 const DEFAULT_LEADER_CONTACTS = [
@@ -119,6 +118,24 @@ export class BotService extends EventEmitter {
   private preparedRelaySignature = "";
   private warmupMessagesSent = 0;
   private warmupCompleted = false;
+  private activeTestRunId = 0;
+  private testStatus: BotTestStatus = {
+    active: false,
+    lastSentCount: 0,
+    lastFailedCount: 0,
+    configuredMessageCount: WARMUP_MESSAGE_COUNT,
+    intervalMs: 0
+  };
+  private performanceMetrics: BotPerformanceMetrics = {
+    lastDispatchLatencyMs: 0,
+    averageDispatchLatencyMs: 0,
+    lastDispatchDurationMs: 0,
+    averageMessageSendMs: 0,
+    dispatchCount: 0,
+    sentMessages: 0,
+    failedMessages: 0,
+    activeQueue: 0
+  };
   private configStore: ConfigStore;
   private routeStore: RouteStore;
   private logger: BotLogger;
@@ -151,6 +168,7 @@ export class BotService extends EventEmitter {
       ? options.pairingPhoneNumber || ""
       : process.env.BOT_PHONE_NUMBER || "";
     const config = this.configStore.load();
+    this.refreshRuntimeSettings(config);
     this.codigosEscolhidos = options.initialCodes?.length ? options.initialCodes : [];
     this.montarMensagens();
     this.warmupMessagesSent = 0;
@@ -172,13 +190,52 @@ export class BotService extends EventEmitter {
       monitoringMode: this.monitoringEnabled ? this.monitoringMode : undefined,
       warmupCompleted: this.warmupCompleted,
       warmupMessagesSent: this.warmupMessagesSent,
-      warmupRequiredMessages: WARMUP_MESSAGE_COUNT,
+      warmupRequiredMessages: this.configStore.load().testMessageCount || WARMUP_MESSAGE_COUNT,
+      testStatus: this.getTestStatus(),
+      performanceMetrics: { ...this.performanceMetrics },
       routeDispatches: this.getRoutes()
     };
   }
 
   getRoutes() {
     return this.routeStore.all();
+  }
+
+  private refreshRuntimeSettings(config = this.configStore.load()) {
+    this.testStatus.configuredMessageCount = config.testMessageCount || WARMUP_MESSAGE_COUNT;
+    this.testStatus.intervalMs = config.testMessageIntervalMs || 0;
+  }
+
+  private getTestStatus(): BotTestStatus {
+    this.refreshRuntimeSettings();
+    return { ...this.testStatus };
+  }
+
+  private recordDispatchMetrics(input: {
+    eventDetectedAt: number;
+    sendStartedAt: number;
+    sendFinishedAt: number;
+    confirmed: number;
+    total: number;
+  }) {
+    const latency = Math.max(0, input.sendStartedAt - input.eventDetectedAt);
+    const duration = Math.max(0, input.sendFinishedAt - input.sendStartedAt);
+    const perMessage = input.total ? duration / input.total : duration;
+    const nextCount = this.performanceMetrics.dispatchCount + 1;
+    const average = (current: number, next: number) => Math.round(((current * this.performanceMetrics.dispatchCount) + next) / nextCount);
+
+    this.performanceMetrics = {
+      ...this.performanceMetrics,
+      lastDispatchLatencyMs: latency,
+      averageDispatchLatencyMs: average(this.performanceMetrics.averageDispatchLatencyMs, latency),
+      lastDispatchDurationMs: duration,
+      averageMessageSendMs: average(this.performanceMetrics.averageMessageSendMs, perMessage),
+      dispatchCount: nextCount,
+      sentMessages: this.performanceMetrics.sentMessages + input.confirmed,
+      failedMessages: this.performanceMetrics.failedMessages + Math.max(0, input.total - input.confirmed),
+      activeQueue: 0,
+      lastDispatchAt: new Date(input.sendFinishedAt).toISOString()
+    };
   }
 
   validateRoute(routeId: string, validatedBy: string) {
@@ -280,6 +337,20 @@ export class BotService extends EventEmitter {
   disableMonitoring(): void {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
+    this.activeTestRunId += 1;
+    if (this.testStatus.active) {
+      this.testStatus = {
+        ...this.getTestStatus(),
+        active: false,
+        startedAt: this.testStatus.startedAt,
+        stoppedAt: new Date().toISOString(),
+        lastRunAt: this.testStatus.lastRunAt,
+        lastDurationMs: this.testStatus.startedAt ? Date.now() - new Date(this.testStatus.startedAt).getTime() : undefined,
+        lastSentCount: this.warmupMessagesSent,
+        lastFailedCount: Math.max(0, this.testStatus.configuredMessageCount - this.warmupMessagesSent)
+      };
+      this.logger.warning("Teste interrompido pelo painel do usuário.");
+    }
     this.clearHealthCheckTimer();
     this.logger.info("⏹️ Monitoramento desativado (Parou de escutar aberturas).");
     this.emitSnapshot();
@@ -304,7 +375,7 @@ export class BotService extends EventEmitter {
     this.groupState = "open";
     this.grupoJaFechouDepoisDoInicio = false;
     this.logger.warning("Simulação de abertura acionada pelo painel.");
-    this.enviarMensagensRapidas(cycleId, "simulation");
+    this.enviarMensagensRapidas(cycleId, "simulation", Date.now());
     this.logger.info("⚡ Abertura simulada. Disparo acionado.");
     this.emitSnapshot();
     return true;
@@ -352,7 +423,7 @@ export class BotService extends EventEmitter {
 
     const cycleId = ++this.sendCycleId;
     this.grupoJaFechouDepoisDoInicio = false;
-    this.enviarMensagensRapidas(cycleId, "manual");
+    this.enviarMensagensRapidas(cycleId, "manual", Date.now());
     this.logger.info("Disparo manual acionado pelo painel.");
     this.emitSnapshot();
     return true;
@@ -395,7 +466,9 @@ export class BotService extends EventEmitter {
     this.rebuildPreparedRelayMessages(testGroup.jid, mensagens);
     this.registerRouteDispatch(cycleId, testGroup.jid, mensagens, "target-simulation");
 
-    const sendCycle = this.sendFastSequence(testGroup.jid, mensagens, cycleId).finally(() => {
+    this.performanceMetrics.activeQueue = mensagens.length;
+    const eventDetectedAt = Date.now();
+    const sendCycle = this.sendFastSequence(testGroup.jid, mensagens, cycleId, eventDetectedAt, eventDetectedAt).finally(() => {
       this.targetSimulationCycles.delete(cycleId);
       if (cycleId === this.sendCycleId) this.activeSendCycle = undefined;
     });
@@ -592,6 +665,7 @@ export class BotService extends EventEmitter {
     }
 
     const config = this.configStore.load();
+    this.refreshRuntimeSettings(config);
     if (!config.grupoTesteJid && !config.grupoTesteNome) {
       this.logger.warning("Salve um grupo de teste para aquecimento antes de iniciar.");
       return false;
@@ -609,8 +683,20 @@ export class BotService extends EventEmitter {
     this.syncMessagesFromConfig();
 
     const warmupMessages = this.buildWarmupMessages();
+    const testRunId = ++this.activeTestRunId;
     this.warmupMessagesSent = 0;
     this.warmupCompleted = false;
+    this.testStatus = {
+      ...this.getTestStatus(),
+      active: true,
+      startedAt: new Date().toISOString(),
+      stoppedAt: undefined,
+      lastRunAt: new Date().toISOString(),
+      lastSentCount: 0,
+      lastFailedCount: 0
+    };
+    const testStartedAt = Date.now();
+    this.emitSnapshot();
 
     // send an initial marker message indicating the start of warmup with weekday, date and time
     try {
@@ -634,30 +720,46 @@ export class BotService extends EventEmitter {
     const relayMessages = warmupMessages.map((mensagem) => this.buildRelayTextMessage(this.sock, warmupGroup.jid, mensagem));
 
     for (const [index, fullMessage] of relayMessages.entries()) {
+      if (testRunId !== this.activeTestRunId) break;
       const messageNumber = index + 1;
-      this.logger.info(`Enviando (rápido) mensagem de aquecimento ${messageNumber}/${WARMUP_MESSAGE_COUNT} para o grupo de teste.`);
+      this.logger.info(`Enviando mensagem de teste ${messageNumber}/${warmupMessages.length} para o grupo de teste.`);
       try {
-        // send without retries/delays to be as fast as possible
         await this.relayPreparedMessage(this.sock, warmupGroup.jid, fullMessage);
         this.warmupMessagesSent += 1;
-        this.logger.success(`Aquecimento ${messageNumber} enviado (rápido).`);
+        this.logger.success(`Teste ${messageNumber} enviado.`);
       } catch (err) {
-        this.logger.warning(`Falha no envio de aquecimento ${messageNumber}: ${this.getErrorMessage(err)}. Continuando...`);
+        this.testStatus.lastFailedCount += 1;
+        this.logger.warning(`Falha no envio de teste ${messageNumber}: ${this.getErrorMessage(err)}. Continuando...`);
       }
 
-      // emit progress after each send
-      this.emitSnapshot();
+      this.testStatus.lastSentCount = this.warmupMessagesSent;
+      if (config.testMessageIntervalMs > 0 && messageNumber < relayMessages.length && testRunId === this.activeTestRunId) {
+        await this.delay(config.testMessageIntervalMs);
+      }
     }
 
     if (config.grupoAlvoJid) {
       await this.refreshGroupMetadata(config.grupoAlvoJid);
     }
 
-    this.warmupCompleted = this.warmupMessagesSent >= WARMUP_MESSAGE_COUNT;
+    const stoppedByUser = testRunId !== this.activeTestRunId;
+    this.warmupCompleted = !stoppedByUser && this.warmupMessagesSent >= warmupMessages.length;
+    this.testStatus = {
+      ...this.getTestStatus(),
+      active: false,
+      startedAt: this.testStatus.startedAt,
+      stoppedAt: new Date().toISOString(),
+      lastRunAt: this.testStatus.lastRunAt,
+      lastDurationMs: Date.now() - testStartedAt,
+      lastSentCount: this.warmupMessagesSent,
+      lastFailedCount: Math.max(0, warmupMessages.length - this.warmupMessagesSent)
+    };
     if (this.warmupCompleted) {
-      this.logger.success(`Aquecimento concluído: ${this.warmupMessagesSent}/${WARMUP_MESSAGE_COUNT} mensagens enviadas no grupo de teste.`);
+      this.logger.success(`Teste concluído: ${this.warmupMessagesSent}/${warmupMessages.length} mensagens enviadas no grupo de teste.`);
+    } else if (stoppedByUser) {
+      this.logger.warning(`Teste parado: ${this.warmupMessagesSent}/${warmupMessages.length} mensagens enviadas.`);
     } else {
-      this.logger.warning(`Aquecimento incompleto: ${this.warmupMessagesSent}/${WARMUP_MESSAGE_COUNT} mensagens enviadas.`);
+      this.logger.warning(`Teste incompleto: ${this.warmupMessagesSent}/${warmupMessages.length} mensagens enviadas.`);
     }
 
     this.emitSnapshot();
@@ -682,11 +784,13 @@ export class BotService extends EventEmitter {
   }
 
   private buildWarmupMessages() {
+    const config = this.configStore.load();
+    const count = config.testMessageCount || WARMUP_MESSAGE_COUNT;
     const baseMessages = this.mensagensProntasTeste.length
       ? this.mensagensProntasTeste
       : ["Aquecimento"].map((item) => item);
 
-    return Array.from({ length: WARMUP_MESSAGE_COUNT }, (_, index) => {
+    return Array.from({ length: count }, (_, index) => {
       const message = baseMessages[index % baseMessages.length];
       return `${message} (aquecimento ${index + 1})`;
     });
@@ -787,14 +891,18 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  setGeneralSettings(settings: { nuclearMode: boolean }) {
+  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number }) {
     if (this.monitoringEnabled) {
       this.logger.warning("Pare o bot antes de trocar entre modo normal e modo nuclear.");
       this.emitSnapshot();
       return;
     }
 
-    const config = this.configStore.save({ nuclearMode: Boolean(settings.nuclearMode) });
+    const nextSettings: Partial<BotConfig> = { nuclearMode: Boolean(settings.nuclearMode) };
+    if (settings.fastMode !== undefined) nextSettings.fastMode = Boolean(settings.fastMode);
+    if (settings.minSendDelayMs !== undefined) nextSettings.minSendDelayMs = settings.minSendDelayMs;
+    const config = this.configStore.save(nextSettings);
+    this.refreshRuntimeSettings(config);
     this.prepareSendPlan();
     this.logger.success(config.nuclearMode ? "Modo nuclear ativado." : "Modo nuclear desativado.");
     this.emitSnapshot();
@@ -824,12 +932,19 @@ export class BotService extends EventEmitter {
   }
 
   // Save warmup (teste) message settings. This resets the warmup state.
-  setWarmupMessageSettings(senderName: string, codes: string[]) {
+  setWarmupMessageSettings(senderName: string, codes: string[], messageCount?: number, intervalMs?: number) {
     this.resetWarmupState();
     const nextCodes = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
-    this.configStore.save({ nomeEnvio: senderName.trim(), codigosMensagensTeste: nextCodes });
+    const nextSettings: Partial<BotConfig> = {
+      nomeEnvio: senderName.trim(),
+      codigosMensagensTeste: nextCodes
+    };
+    if (messageCount !== undefined) nextSettings.testMessageCount = messageCount;
+    if (intervalMs !== undefined) nextSettings.testMessageIntervalMs = intervalMs;
+    const config = this.configStore.save(nextSettings);
+    this.refreshRuntimeSettings(config);
     this.montarMensagens();
-    this.logger.success(`Mensagens de aquecimento atualizadas: ${nextCodes.length} mensagens.`);
+    this.logger.success(`Teste atualizado: ${config.testMessageCount} mensagens, intervalo ${config.testMessageIntervalMs}ms.`);
   }
 
   private async connect() {
@@ -1180,7 +1295,7 @@ export class BotService extends EventEmitter {
 
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
-        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic");
+        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now());
         this.logger.info(`⚡ ${activeGroup.label} ABRIU! Disparo acionado.`);
         return;
       }
@@ -1231,7 +1346,7 @@ export class BotService extends EventEmitter {
 
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
-        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic");
+        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now());
         this.logger.info("Palavra de abertura detectada. Rajada instantânea acionada.");
         return;
       }
@@ -1432,7 +1547,7 @@ export class BotService extends EventEmitter {
     return aTail.length >= 10 && bTail.length >= 10 && aTail === bTail;
   }
 
-  private enviarMensagensRapidas(cycleId: number, trigger: RouteDispatch["trigger"] = this.monitoringMode === "test" ? "warmup" : "automatic") {
+  private enviarMensagensRapidas(cycleId: number, trigger: RouteDispatch["trigger"] = this.monitoringMode === "test" ? "warmup" : "automatic", eventDetectedAt = Date.now()) {
     if (!this.preparedTargetJid || !this.preparedMessages.length) {
       this.prepareSendPlan();
     }
@@ -1463,12 +1578,14 @@ export class BotService extends EventEmitter {
     const config = this.configStore.load();
     this.ensurePreparedRelayMessages(this.preparedTargetJid, mensagens);
     this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
+    this.performanceMetrics.activeQueue = mensagens.length;
+    const sendStartedAt = Date.now();
     const sendCycle =
       this.monitoringMode === "test"
-        ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId)
+        ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt)
         : config.nuclearMode
-        ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId)
-        : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId);
+        ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt)
+        : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt);
 
     this.activeSendCycle = sendCycle.finally(() => {
       if (cycleId === this.sendCycleId) {
@@ -1530,7 +1647,7 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  private async sendFastSequence(jid: string, mensagens: string[], cycleId: number) {
+  private async sendFastSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now()) {
     try {
       const sock = this.sock;
       if (!sock) {
@@ -1546,6 +1663,7 @@ export class BotService extends EventEmitter {
           this.logger.warning("Disparo terminou com atenção: 0/1 mensagem confirmada.");
         }
         this.updateRouteDispatch(cycleId, sent ? 1 : 0, 1);
+        this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: sent ? 1 : 0, total: 1 });
         return;
       }
 
@@ -1587,13 +1705,15 @@ export class BotService extends EventEmitter {
         this.logger.warning(`Disparo terminou com atenção: ${confirmed}/${mensagens.length} mensagens confirmadas.`);
       }
       this.updateRouteDispatch(cycleId, confirmed, mensagens.length);
+      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed, total: mensagens.length });
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo turbo: ${this.getErrorMessage(error)}`);
       this.updateRouteDispatch(cycleId, 0, mensagens.length);
+      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length });
     }
   }
 
-  private async sendNuclearTargetSequence(jid: string, mensagens: string[], cycleId: number) {
+  private async sendNuclearTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now()) {
     this.logger.info("☢️ Modo nuclear ativo: validando abertura antes do disparo enxuto.");
     const acceptsMessages = await this.waitUntilGroupAcceptsMessages(jid, cycleId);
     if (!acceptsMessages || cycleId !== this.sendCycleId) {
@@ -1601,11 +1721,11 @@ export class BotService extends EventEmitter {
       return;
     }
 
-    await this.sendFastSequence(jid, mensagens, cycleId);
+    await this.sendFastSequence(jid, mensagens, cycleId, eventDetectedAt, sendStartedAt);
     this.stopMonitoringAfterTargetDispatch(cycleId);
   }
 
-  private async sendAggressiveTargetSequence(jid: string, mensagens: string[], cycleId: number) {
+  private async sendAggressiveTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now()) {
     // aggressive, low-latency send for the real target group
     try {
       const sock = this.sock;
@@ -1618,7 +1738,6 @@ export class BotService extends EventEmitter {
         ? this.preparedRelayMessages
         : mensagens.map((m) => this.buildRelayTextMessage(sock, jid, m));
 
-      const startedAt = Date.now();
       const results = await Promise.allSettled(
         relayMessages.map((fullMessage) => {
           if (cycleId !== this.sendCycleId) {
@@ -1645,17 +1764,19 @@ export class BotService extends EventEmitter {
       });
 
       if (confirmed === mensagens.length) {
-        this.logger.success(`Disparo instantâneo concluído em ${Date.now() - startedAt}ms: ${confirmed}/${mensagens.length}.`);
+        this.logger.success(`Disparo instantâneo concluído em ${Date.now() - sendStartedAt}ms: ${confirmed}/${mensagens.length}.`);
       } else {
-        this.logger.warning(`Disparo instantâneo terminou com atenção em ${Date.now() - startedAt}ms: ${confirmed}/${mensagens.length}.`);
+        this.logger.warning(`Disparo instantâneo terminou com atenção em ${Date.now() - sendStartedAt}ms: ${confirmed}/${mensagens.length}.`);
       }
 
       this.updateRouteDispatch(cycleId, confirmed, mensagens.length);
+      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed, total: mensagens.length });
       this.emitSnapshot();
       this.stopMonitoringAfterTargetDispatch(cycleId);
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo agressivo: ${this.getErrorMessage(error)}`);
       this.updateRouteDispatch(cycleId, 0, mensagens.length);
+      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length });
       this.stopMonitoringAfterTargetDispatch(cycleId);
     }
   }
@@ -1799,7 +1920,11 @@ export class BotService extends EventEmitter {
     cycleId: number,
     skipInstantAttempt = false
   ) {
-    const delays = [15, 25, 40, 65, 95, 140, 210, 320, 480, 720, 1100, 1700, 2600];
+    const config = this.configStore.load();
+    const minDelay = Math.max(0, config.minSendDelayMs || 0);
+    const delays = [minDelay, 15, 25, 40, 65, 95, 140, 210, 320, 480, 720, 1100, 1700, 2600]
+      .filter((delay, index, items) => delay > 0 || index === 0)
+      .filter((delay, index, items) => items.indexOf(delay) === index);
 
     for (let attempt = skipInstantAttempt ? 1 : 0; attempt <= delays.length; attempt += 1) {
       if (cycleId !== this.sendCycleId) {

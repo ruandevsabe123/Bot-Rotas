@@ -12,7 +12,9 @@ type Props = {
     groupId: string | undefined,
     groupName: string | undefined,
     senderName: string,
-    codes: string[]
+    codes: string[],
+    messageCount?: number,
+    intervalMs?: number
   ) => void;
   onWarmup?: () => void;
 };
@@ -51,6 +53,8 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [senderName, setSenderName] = useState("");
   const [codes, setCodes] = useState("");
+  const [messageCount, setMessageCount] = useState(15);
+  const [intervalMs, setIntervalMs] = useState(0);
   const requestedGroupsRef = useRef(false);
 
   const isTarget = kind === "target";
@@ -69,12 +73,16 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     setSelectedGroupId(isTarget ? config.grupoAlvoJid || "" : config.grupoTesteJid || "");
     setSenderName(config.nomeEnvio);
     setCodes(savedCodesKey);
+    setMessageCount(config.testMessageCount || 15);
+    setIntervalMs(config.testMessageIntervalMs || 0);
   }, [
     config.grupoAlvoJid,
     config.grupoAlvoNome,
     config.grupoTesteJid,
     config.grupoTesteNome,
     config.nomeEnvio,
+    config.testMessageCount,
+    config.testMessageIntervalMs,
     isTarget,
     savedCodesKey
   ]);
@@ -95,7 +103,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
 
     if (!value || !senderName.trim() || !nextCodes.length) return;
     setCodes(nextCodes.join("\n"));
-    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes);
+    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs);
   }
 
   const previewMessages = parseCodes(codes)
@@ -168,6 +176,34 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           rows={3}
         />
 
+        {!isTarget ? (
+          <div className="test-settings-grid">
+            <label htmlFor={`${kind}-count`}>
+              Quantidade
+              <input
+                id={`${kind}-count`}
+                min={1}
+                max={200}
+                type="number"
+                value={messageCount}
+                onChange={(event) => setMessageCount(Number(event.target.value || 1))}
+              />
+            </label>
+            <label htmlFor={`${kind}-interval`}>
+              Intervalo ms
+              <input
+                id={`${kind}-interval`}
+                min={0}
+                max={10000}
+                step={50}
+                type="number"
+                value={intervalMs}
+                onChange={(event) => setIntervalMs(Number(event.target.value || 0))}
+              />
+            </label>
+          </div>
+        ) : null}
+
         <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || !codes.trim()} type="submit">
           {label.action}
         </button>
@@ -187,4 +223,3 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     </article>
   );
 }
-

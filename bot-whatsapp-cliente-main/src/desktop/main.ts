@@ -7,6 +7,7 @@ import {
   GeneralSettingsPayload,
   SaveGroupPayload,
   SaveMessageSettingsPayload,
+  SaveWarmupMessageSettingsPayload,
   StartBotPayload
 } from "../shared/types";
 
@@ -151,10 +152,9 @@ function registerIpc() {
     await bot.saveTestGroup(payload.group, payload.groupId, payload.groupName);
     return bot.getSnapshot();
   });
-  ipcMain.handle("bot:saveWarmupMessageSettings", async (_event, payload: SaveMessageSettingsPayload) => {
+  ipcMain.handle("bot:saveWarmupMessageSettings", async (_event, payload: SaveWarmupMessageSettingsPayload) => {
     try {
-      // @ts-ignore - call backend method
-      bot.setWarmupMessageSettings(payload.senderName, payload.codes);
+      bot.setWarmupMessageSettings(payload.senderName, payload.codes, payload.messageCount, payload.intervalMs);
     } catch (err) {
       // ignore
     }
