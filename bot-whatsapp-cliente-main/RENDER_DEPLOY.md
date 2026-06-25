@@ -4,8 +4,8 @@ Este projeto agora pode rodar como painel web mobile-first no Render.
 
 ## Variáveis obrigatórias/recomendadas
 
-- `PANEL_USERS`: obrigatório em produção, no formato `emailadmin:senhaadmin:admin,emailcliente:senhacliente:client`. As senhas não são impressas no log.
-- `PANEL_ADMIN_EMAILS`: obrigatório para liberar acesso admin, no formato `emailadmin` ou `email1,email2`.
+- `PANEL_USERS`: obrigatório em produção, no formato `emailadmin:senhaadmin:admin,emailcliente:senhacliente:client`. O terceiro campo define `admin` ou `client`; as senhas não são impressas no log.
+- `PANEL_ADMIN_EMAILS`: recomendado para reforçar acesso admin, no formato `emailadmin` ou `email1,email2`.
 - `PANEL_SESSION_SECRET`: recomendado/obrigatório para manter sessões estáveis entre restarts. Use um valor longo e aleatório.
 - `DATA_DIR`: no `render.yaml` já está como `/data`.
 - `BOT_PHONE_NUMBER`: opcional. Use somente se quiser gerar código de pareamento pelo número em vez de QR Code. Formato: `55DDDNUMERO`, sem `+`.

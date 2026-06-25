@@ -88,10 +88,11 @@ function parsePanelUsers(envUsers: string | undefined, adminEmails: Set<string>)
   const users = new Map<string, PanelUserRecord>();
   const raw = String(envUsers || "").trim();
   for (const part of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
-    const [email, password, , color] = part.split(":").map((item) => item.trim());
+    const [email, password, role, color] = part.split(":").map((item) => item.trim());
     if (!email || !password) continue;
     const normalizedEmail = email.toLowerCase();
-    users.set(normalizedEmail, createUserRecord(normalizedEmail, password, adminEmails.has(normalizedEmail) ? "admin" : "client", {
+    const userRole: PanelUserRole = role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "client";
+    users.set(normalizedEmail, createUserRecord(normalizedEmail, password, userRole, {
       color: normalizeUserColor(color, normalizedEmail)
     }));
   }
@@ -102,10 +103,11 @@ function mergeStoredUsers(users: Map<string, PanelUserRecord>, storedUsers: Stor
   for (const storedUser of storedUsers) {
     const configuredUser = users.get(storedUser.email);
     if (!configuredUser) continue;
-    users.set(storedUser.email, createUserRecord(storedUser.email, configuredUser.password, adminEmails.has(storedUser.email) ? "admin" : "client", {
+    const userRole: PanelUserRole = configuredUser.role === "admin" || adminEmails.has(storedUser.email) ? "admin" : "client";
+    users.set(storedUser.email, createUserRecord(storedUser.email, configuredUser.password, userRole, {
       ...storedUser,
       password: configuredUser.password,
-      role: adminEmails.has(storedUser.email) ? "admin" : "client"
+      role: userRole
     }));
   }
   return users;
@@ -132,14 +134,14 @@ console.log("Ambiente:", process.env.RENDER ? "Render/produção" : process.env.
 if (!String(process.env.PANEL_USERS || "").trim()) {
   console.error("PANEL_USERS não configurado. Login ficará bloqueado até configurar PANEL_USERS=email:senha:role nas variáveis de ambiente.");
 }
-if (!configuredAdminEmails.size) {
-  console.error("PANEL_ADMIN_EMAILS não configurado. Nenhum usuário terá acesso de administrador.");
-}
 if (!process.env.PANEL_SESSION_SECRET) {
   console.warn("PANEL_SESSION_SECRET não configurado. Sessões serão invalidadas a cada restart.");
 }
 console.log("Painel de usuarios habilitados:", Array.from(panelUsers.keys()).join(", ") || "nenhum");
 console.log("Administradores do painel:", Array.from(panelUsers.entries()).filter(([, user]) => user.role === "admin").map(([email]) => email).join(", ") || "nenhum");
+if (!configuredAdminEmails.size && !Array.from(panelUsers.values()).some((user) => user.role === "admin")) {
+  console.error("Nenhum administrador configurado. Use PANEL_ADMIN_EMAILS ou marque um usuário com :admin em PANEL_USERS.");
+}
 
 type Client = {
   email: string;
