@@ -1311,7 +1311,9 @@ export class BotService extends EventEmitter {
   }
   private async handleMessages(messages: any[], connectionId: number) {
     if (connectionId !== this.activeConnectionId) return;
-    await this.handleReactions(messages);
+    void this.handleReactions(messages).catch((error) => {
+      this.logger.warning(`Reações processadas fora do caminho crítico falharam: ${this.getErrorMessage(error)}`);
+    });
     if (!this.monitoringEnabled) return;
 
     const activeGroup = this.getActiveMonitoringGroup();
@@ -1607,7 +1609,7 @@ export class BotService extends EventEmitter {
     });
 
     this.logger.info(
-      `${this.monitoringMode === "test" ? "Aquecimento real do teste" : config.nuclearMode ? "Modo nuclear enxuto" : "Modo instantâneo agressivo"}: ${mensagens.length} mensagens preparadas: ${mensagens.join(" | ")}`
+      `${this.monitoringMode === "test" ? "Aquecimento real do teste" : config.nuclearMode ? "Modo nuclear máximo" : "Modo instantâneo agressivo"}: ${mensagens.length} mensagens preparadas: ${mensagens.join(" | ")}`
     );
   }
 
@@ -1727,9 +1729,8 @@ export class BotService extends EventEmitter {
   }
 
   private async sendNuclearTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now(), trigger: RouteDispatch["trigger"] = "automatic") {
-    this.logger.info("☢️ Modo nuclear instantâneo: disparo imediato após evento de abertura.");
-    await this.sendFastSequence(jid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger);
-    this.stopMonitoringAfterTargetDispatch(cycleId);
+    this.logger.info("☢️ Modo nuclear máximo: rajada paralela imediata após evento de abertura.");
+    await this.sendAggressiveTargetSequence(jid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger);
   }
 
   private async sendAggressiveTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now(), trigger: RouteDispatch["trigger"] = "automatic") {
@@ -1929,7 +1930,7 @@ export class BotService extends EventEmitter {
   ) {
     const config = this.configStore.load();
     const minDelay = Math.max(0, config.minSendDelayMs || 0);
-    const delays = [minDelay, 15, 25, 40, 65, 95, 140, 210, 320, 480, 720, 1100, 1700, 2600]
+    const delays = [minDelay, 10, 20, 35, 55, 85, 130, 210, 320]
       .filter((delay, index, items) => delay > 0 || index === 0)
       .filter((delay, index, items) => items.indexOf(delay) === index);
 
