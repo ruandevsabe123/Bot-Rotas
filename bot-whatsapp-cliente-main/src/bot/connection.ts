@@ -1727,13 +1727,7 @@ export class BotService extends EventEmitter {
   }
 
   private async sendNuclearTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now(), trigger: RouteDispatch["trigger"] = "automatic") {
-    this.logger.info("☢️ Modo nuclear ativo: validando abertura antes do disparo enxuto.");
-    const acceptsMessages = await this.waitUntilGroupAcceptsMessages(jid, cycleId);
-    if (!acceptsMessages || cycleId !== this.sendCycleId) {
-      this.logger.warning("Modo nuclear cancelado: o grupo ainda não aceitou mensagens.");
-      return;
-    }
-
+    this.logger.info("☢️ Modo nuclear instantâneo: disparo imediato após evento de abertura.");
     await this.sendFastSequence(jid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger);
     this.stopMonitoringAfterTargetDispatch(cycleId);
   }

@@ -21,7 +21,7 @@ export function LogsPanel({ logs }: Props) {
       </div>
       <div className="timeline-list">
         {logs.length ? (
-          [...logs].reverse().map((log) => {
+          logs.map((log) => {
             const kind = getTimelineKind(log.message);
             return (
               <div className={`timeline-row timeline-${kind} log-${log.level}`} key={log.id}>

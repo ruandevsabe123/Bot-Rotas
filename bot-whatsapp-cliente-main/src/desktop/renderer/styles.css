@@ -485,11 +485,29 @@ h2 {
 }
 
 .admin-mobile-header {
+  position: relative;
   display: grid;
   grid-template-columns: 52px minmax(0, 1fr) 48px 48px;
   gap: 10px;
   align-items: center;
   padding-top: 8px;
+}
+
+.notification-popover {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 40;
+  display: grid;
+  gap: 10px;
+  width: min(430px, calc(100vw - 28px));
+  max-height: 70dvh;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid rgba(245, 247, 248, 0.14);
+  border-radius: 8px;
+  background: rgba(5, 8, 12, 0.98);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.68);
 }
 
 .admin-app-icon,
@@ -3262,7 +3280,8 @@ h2 {
   left: 50%;
   right: auto;
   bottom: max(14px, env(safe-area-inset-bottom));
-  width: min(460px, calc(100vw - 28px));
+  grid-template-columns: repeat(6, 1fr);
+  width: min(520px, calc(100vw - 28px));
   transform: translateX(-50%);
   background:
     linear-gradient(180deg, rgba(17, 24, 32, 0.92), rgba(5, 8, 12, 0.94));
@@ -3270,6 +3289,66 @@ h2 {
   box-shadow:
     0 18px 54px rgba(0, 0, 0, 0.7),
     inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.report-list {
+  display: grid;
+  gap: 10px;
+}
+
+.report-row {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto auto auto auto auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px;
+  border: 1px solid rgba(245, 247, 248, 0.1);
+  border-left: 4px solid var(--client-color, #3b9cff);
+  border-radius: 8px;
+  background: rgba(8, 11, 14, 0.86);
+}
+
+.report-row strong,
+.report-row p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.report-row p {
+  margin: 3px 0 0;
+  color: #a9b2bb;
+}
+
+.report-row b {
+  color: #35d07f;
+  font-size: 1.45rem;
+}
+
+.report-row small,
+.report-row > span:not(.client-color-dot) {
+  color: #a9b2bb;
+  font-weight: 800;
+}
+
+.action-toast {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  z-index: 80;
+  transform: translateX(-50%);
+  width: min(420px, calc(100vw - 28px));
+  padding: 12px 16px;
+  border: 1px solid rgba(53, 208, 127, 0.34);
+  border-radius: 8px;
+  color: #f4f7f8;
+  text-align: center;
+  font-weight: 900;
+  background:
+    linear-gradient(135deg, rgba(53, 208, 127, 0.16), transparent 48%),
+    rgba(5, 8, 12, 0.98);
+  box-shadow: 0 18px 54px rgba(0, 0, 0, 0.48);
+  pointer-events: none;
 }
 
 .admin-bottom-nav button.active {

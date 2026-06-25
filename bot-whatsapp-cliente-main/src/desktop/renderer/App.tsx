@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   Clock3,
   Edit3,
-  Filter,
   Gauge,
   Home,
   Info,
@@ -85,7 +84,7 @@ type PendingConfirmation = {
 type AppTab = "home" | "groups" | "messages" | "test" | "settings";
 type GroupEditor = "target" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
-type AdminMainTab = "dashboard" | "validations" | "history" | "alerts" | "clients";
+type AdminMainTab = "dashboard" | "validations" | "history" | "reports" | "clients" | "settings";
 type RouteStatusFilter = "all" | "pending" | "validated" | "rejected" | "leader";
 type RouteKindFilter = "all" | "automatic" | "manual" | "test";
 type RouteHistoryTab = "automatic" | "manual" | "test";
@@ -446,13 +445,11 @@ function LaunchReviewPanel({
   groupLabel,
   messages,
   onEditTarget,
-  onEditTest
 }: {
   snapshot: BotSnapshot;
   groupLabel: string;
   messages: string[];
   onEditTarget: () => void;
-  onEditTest: () => void;
 }) {
   const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
   const hasName = Boolean(snapshot.config.nomeEnvio);
@@ -490,9 +487,6 @@ function LaunchReviewPanel({
       <div className="review-actions">
         <button className="button" type="button" onClick={onEditTarget}>
           Configurar envio real
-        </button>
-        <button className="button accent" type="button" onClick={onEditTest}>
-          Configurar teste
         </button>
       </div>
     </section>
@@ -1111,6 +1105,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmCleanup, setConfirmCleanup] = useState<CleanupTarget>();
   const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [actionToast, setActionToast] = useState("");
 
   const clientOptions = useMemo(
     () => usersDashboard.users.filter((user) => user.role === "client"),
@@ -1159,6 +1155,11 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     [clientFilter, supportDashboard.messages]
   );
   const unreadLogCount = adminLogs.filter((log) => new Date(log.timestamp).getTime() > new Date(lastSeenLogAt).getTime()).length;
+
+  function showAdminToast(message: string) {
+    setActionToast(message);
+    window.setTimeout(() => setActionToast(""), 1000);
+  }
 
   function applyMonitorSnapshot(snapshot: Awaited<ReturnType<typeof getAdminMonitor>>) {
     setDashboard(snapshot.routes);
@@ -1294,6 +1295,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       setUsersDashboard(nextUsers);
       setEditor(undefined);
       setError("");
+      showAdminToast("Usuário salvo.");
     } catch (nextError) {
       if (isAuthError(nextError)) {
         onLogout();
@@ -1330,6 +1332,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   async function readSupportMessage(id: string) {
     try {
       setSupportDashboard(await markSupportMessageRead(id));
+      showAdminToast("Notificação marcada como lida.");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui marcar a mensagem.");
     }
@@ -1339,6 +1342,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     try {
       setDashboard(await validateAdminRoute(routeId));
       setError("");
+      showAdminToast("Rota validada.");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui validar a rota.");
     }
@@ -1348,6 +1352,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     try {
       setDashboard(await rejectAdminRoute(routeId));
       setError("");
+      showAdminToast("Rota marcada como não válida.");
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui rejeitar a rota.");
     }
@@ -1374,6 +1379,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       applyMonitorSnapshot(snapshot);
       setConfirmCleanup(undefined);
       setError("");
+      showAdminToast("Limpeza concluída.");
     } catch (nextError) {
       if (isAuthError(nextError)) {
         onLogout();
@@ -1446,20 +1452,38 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     if (activeAdminTab === "validations") {
       setSeenAdminCounts((current) => ({ ...current, validations: filteredPendingRoutes.length }));
     }
-    if (activeAdminTab === "alerts") {
+    if (notificationsOpen) {
       setSeenAdminCounts((current) => ({ ...current, alerts: alerts.length }));
     }
     if (activeAdminTab === "clients") {
       setSeenAdminCounts((current) => ({ ...current, clients: onlineClients }));
     }
-  }, [activeAdminTab, filteredPendingRoutes.length, alerts.length, onlineClients]);
+  }, [activeAdminTab, notificationsOpen, filteredPendingRoutes.length, alerts.length, onlineClients]);
+
+  const currentMonthLabel = new Date().toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  const monthlyReport = useMemo(() => {
+    const now = new Date();
+    const month = now.getMonth();
+    const year = now.getFullYear();
+    return clientOptions.map((user) => {
+      const routes = dashboard.routes.filter((route) => {
+        const created = new Date(route.createdAt);
+        return route.clientEmail === user.email && created.getMonth() === month && created.getFullYear() === year;
+      });
+      const valid = routes.filter((route) => getRouteDecisionStatus(route) === "validated").length;
+      const rejected = routes.filter((route) => getRouteDecisionStatus(route) === "rejected").length;
+      const pending = routes.filter((route) => getRouteDecisionStatus(route) === "pending").length;
+      return { user, routes, valid, rejected, pending };
+    }).sort((a, b) => b.valid - a.valid || b.routes.length - a.routes.length);
+  }, [clientOptions, dashboard.routes]);
 
   const adminTabs: Array<{ id: AdminMainTab; label: string; Icon: typeof Home; badge?: number }> = [
     { id: "dashboard", label: "Dashboard", Icon: Home },
     { id: "validations", label: "Validações", Icon: ShieldCheck, badge: activeAdminTab === "validations" ? 0 : Math.max(0, filteredPendingRoutes.length - seenAdminCounts.validations) },
     { id: "history", label: "Histórico", Icon: Clock3 },
-    { id: "alerts", label: "Alertas", Icon: AlertTriangle, badge: activeAdminTab === "alerts" ? 0 : Math.max(0, alerts.length - seenAdminCounts.alerts) },
-    { id: "clients", label: "Clientes", Icon: UserPlus, badge: activeAdminTab === "clients" ? 0 : Math.max(0, onlineClients - seenAdminCounts.clients) }
+    { id: "reports", label: "Relatório", Icon: Gauge },
+    { id: "clients", label: "Clientes", Icon: UserPlus, badge: activeAdminTab === "clients" ? 0 : Math.max(0, onlineClients - seenAdminCounts.clients) },
+    { id: "settings", label: "Config", Icon: Settings }
   ];
 
   return (
@@ -1467,20 +1491,45 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       <section className="admin-mobile-header">
         <span className="admin-app-icon">{activeAdminTab === "validations" ? <ShieldCheck size={25} /> : <Activity size={24} />}</span>
         <div>
-          <h1>{activeAdminTab === "validations" ? "Validações e histórico" : activeAdminTab === "history" ? "Histórico permanente" : activeAdminTab === "alerts" ? "Alertas e notificações" : activeAdminTab === "clients" ? "Clientes" : "Central de comando"}</h1>
+          <h1>{activeAdminTab === "validations" ? "Validações e histórico" : activeAdminTab === "history" ? "Histórico permanente" : activeAdminTab === "reports" ? "Relatório mensal" : activeAdminTab === "clients" ? "Clientes" : activeAdminTab === "settings" ? "Configurações" : "Central de comando"}</h1>
           <p>
             {activeAdminTab === "dashboard" ? "Dados ao vivo de todos os clientes" : activeAdminTab === "validations" ? "Monitore, valide e audite todas as rotas do bot" : activeClientLabel}
             {activeAdminTab === "dashboard" ? <span className="online-copy">Tudo online</span> : null}
           </p>
         </div>
-        <button className="icon-button alert-button" title="Alertas" type="button" onClick={() => setActiveAdminTab("alerts")}>
-          {alerts.length ? <b>{alerts.length}</b> : null}
+        <button className="icon-button alert-button" title="Notificações" type="button" onClick={() => setNotificationsOpen((current) => !current)}>
+          {Math.max(0, alerts.length - seenAdminCounts.alerts) ? <b>{Math.max(0, alerts.length - seenAdminCounts.alerts)}</b> : null}
           <Bell size={20} />
         </button>
-        <button className="button admin-filter-button" title="Filtros" type="button" onClick={() => setActiveAdminTab(activeAdminTab === "dashboard" ? "history" : activeAdminTab)}>
-          <Filter size={18} />
-          Filtros
+        <button className="button admin-filter-button" title="Configurações" type="button" onClick={() => setActiveAdminTab("settings")}>
+          <Settings size={18} />
+          Config
         </button>
+        {notificationsOpen ? (
+          <section className="notification-popover">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Notificações</p>
+                <h2>{alerts.length} recentes</h2>
+              </div>
+              <button className="icon-button" title="Fechar" type="button" onClick={() => setNotificationsOpen(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="alert-list compact">
+              {alerts.length ? alerts.slice(0, 8).map((alert) => (
+                <article className={`alert-row tone-${alert.tone}`} key={`bell-${alert.id}`}>
+                  <AlertTriangle size={17} />
+                  <div>
+                    <strong>{alert.title}</strong>
+                    <p>{alert.detail}</p>
+                  </div>
+                  <time>{formatShortDate(alert.time)}</time>
+                </article>
+              )) : <p className="qr-empty">Nenhuma notificação.</p>}
+            </div>
+          </section>
+        ) : null}
       </section>
 
       <section className="admin-mobile-filters">
@@ -1498,17 +1547,6 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
           Atualizar
         </button>
       </section>
-
-      {activeAdminTab !== "alerts" && alerts.length ? (
-        <button className={`admin-alert-toast tone-${alerts[0].tone}`} type="button" onClick={() => setActiveAdminTab("alerts")}>
-          <AlertTriangle size={17} />
-          <span>
-            <strong>{alerts[0].title}</strong>
-            <small>{alerts[0].detail}</small>
-          </span>
-          <b>{alerts.length}</b>
-        </button>
-      ) : null}
 
       {activeAdminTab === "dashboard" ? (
         <section className="admin-tab-page">
@@ -1554,7 +1592,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                 <p className="panel-label">Atividade ao vivo</p>
                 <h2>Últimos eventos</h2>
               </div>
-              <button className="button" type="button" onClick={() => setActiveAdminTab("alerts")}>Ver tudo</button>
+              <button className="button" type="button" onClick={() => setNotificationsOpen(true)}>Ver tudo</button>
             </div>
             <div className="live-activity-list">
               {liveActivity.length ? liveActivity.map((item) => (
@@ -1614,7 +1652,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                 <p className="panel-label">Alertas e notificações</p>
                 <h2>Recentes</h2>
               </div>
-              <button className="button" type="button" onClick={() => setActiveAdminTab("alerts")}>Ver todas</button>
+              <button className="button" type="button" onClick={() => setNotificationsOpen(true)}>Ver todas</button>
             </div>
             <div className="alert-list compact">
               {alerts.slice(0, 3).length ? alerts.slice(0, 3).map((alert) => (
@@ -1763,41 +1801,82 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
         </section>
       ) : null}
 
-      {activeAdminTab === "alerts" ? (
+      {activeAdminTab === "reports" ? (
         <section className="admin-tab-page">
           <article className="command-panel">
             <div className="panel-heading">
               <div>
-                <p className="panel-label">Alertas</p>
-                <h2>{alerts.length} notificação(ões)</h2>
+                <p className="panel-label">Relatório</p>
+                <h2>{currentMonthLabel}</h2>
               </div>
-              <button className="button" type="button" onClick={enableNotifications}>Ativar notificação</button>
+              <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("validated"); setActiveAdminTab("history"); }}>Abrir validadas</button>
             </div>
-            <div className="alert-list">
-              {alerts.length ? alerts.map((alert) => (
-                <article className={`alert-row tone-${alert.tone}`} key={alert.id}>
-                  <AlertTriangle size={18} />
+            <div className="report-list">
+              {monthlyReport.length ? monthlyReport.map((item) => (
+                <article className="report-row" key={`report-${item.user.email}`} style={colorStyle(item.user.color)}>
+                  <span className="client-color-dot" />
                   <div>
-                    <strong>{alert.title}</strong>
-                    <p>{alert.detail}</p>
+                    <strong>{item.user.email}</strong>
+                    <p>{item.routes.length} rota(s) no mês</p>
                   </div>
-                  <time>{formatShortDate(alert.time)}</time>
+                  <b>{item.valid}</b>
+                  <small>válidas</small>
+                  <span>{item.pending} pend.</span>
+                  <span>{item.rejected} não vál.</span>
+                  <button className="button" type="button" onClick={() => { setClientFilter(item.user.email); setRouteStatusFilter("validated"); setActiveAdminTab("history"); }}>Ver</button>
                 </article>
-              )) : <p className="qr-empty">Nenhum alerta no momento.</p>}
+              )) : <p className="qr-empty">Nenhum cliente no relatório.</p>}
             </div>
           </article>
           <article className="command-panel">
             <div className="panel-heading">
               <div>
-                <p className="panel-label">Suporte</p>
-                <h2>{filteredUnreadSupport} não lida(s)</h2>
+                <p className="panel-label">Resumo geral</p>
+                <h2>{monthlyReport.reduce((total, item) => total + item.valid, 0)} rotas válidas</h2>
               </div>
             </div>
-            <div className="support-message-list">
-              {filteredSupportMessages.length ? filteredSupportMessages.map((message) => (
-                <SupportMessageRow key={message.id} message={message} onMarkRead={() => readSupportMessage(message.id)} />
-              )) : <p className="qr-empty">Nenhuma mensagem de cliente ainda.</p>}
+            <section className="command-metrics-grid compact">
+              <AdminMetric Icon={CheckCircle2} tone="green" title="Válidas" value={monthlyReport.reduce((total, item) => total + item.valid, 0)} detail="no mês" />
+              <AdminMetric Icon={Clock3} tone="yellow" title="Pendentes" value={monthlyReport.reduce((total, item) => total + item.pending, 0)} detail="aguardando" />
+              <AdminMetric Icon={Ban} tone="red" title="Não válidas" value={monthlyReport.reduce((total, item) => total + item.rejected, 0)} detail="julgadas" />
+              <AdminMetric Icon={UserPlus} tone="blue" title="Clientes" value={monthlyReport.length} detail="no relatório" />
+            </section>
+          </article>
+        </section>
+      ) : null}
+
+      {activeAdminTab === "settings" ? (
+        <section className="admin-tab-page">
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Configurações</p>
+                <h2>Admin</h2>
+              </div>
             </div>
+            <section className="admin-settings-grid">
+              <div className="admin-settings-panel">
+                <p className="panel-label">Notificações</p>
+                <h2>Sino do painel</h2>
+                <p>Receba avisos de rotas pendentes, suporte e erros do bot.</p>
+                <button className="button primary" type="button" onClick={enableNotifications}>Ativar notificações</button>
+              </div>
+              <div className="admin-settings-panel">
+                <p className="panel-label">Filtros</p>
+                <h2>Visão atual</h2>
+                <p>{activeClientLabel}</p>
+                <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteKindFilter("all"); setRouteStatusFilter("all"); showAdminToast("Filtros resetados."); }}>Resetar filtros</button>
+              </div>
+              <div className="admin-settings-panel danger">
+                <p className="panel-label">Sessão</p>
+                <h2>Sair</h2>
+                <p>Encerra seu acesso nesse navegador.</p>
+                <button className="button danger" type="button" onClick={onLogout}>
+                  <LogOut size={18} />
+                  Sair do usuário
+                </button>
+              </div>
+            </section>
           </article>
         </section>
       ) : null}
@@ -2025,6 +2104,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
 
       {detail ? <UserDetailModal detail={detail} onClose={() => setDetail(undefined)} /> : null}
       {routeDetail ? <RouteDetailModal route={routeDetail} onClose={() => setRouteDetail(undefined)} /> : null}
+      {actionToast ? <div className="action-toast">{actionToast}</div> : null}
       {logToast ? (
         <button className="admin-log-toast" type="button" onClick={() => setActiveSection("logs")}>
           <span>{unreadLogCount}</span>
@@ -2066,6 +2146,12 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
+  const [actionToast, setActionToast] = useState("");
+
+  function showActionToast(message: string) {
+    setActionToast(message);
+    window.setTimeout(() => setActionToast(""), 1000);
+  }
 
   function logout(message = "") {
     setPanelToken("");
@@ -2183,6 +2269,7 @@ export default function App() {
     try {
       const nextSnapshot = await action();
       setSnapshot(nextSnapshot);
+      showActionToast("Ação concluída.");
       return nextSnapshot;
     } catch (error) {
       if (isAuthError(error)) {
@@ -2439,7 +2526,6 @@ export default function App() {
             groupLabel={groupLabel}
             messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
             onEditTarget={() => setGroupEditor("target")}
-            onEditTest={() => setGroupEditor("test")}
           />
 
           <ControlButtons
@@ -2610,6 +2696,8 @@ export default function App() {
           );
         })}
       </nav>
+
+      {actionToast ? <div className="action-toast">{actionToast}</div> : null}
 
       {groupEditor ? (
         <div className="modal-backdrop" role="presentation">
