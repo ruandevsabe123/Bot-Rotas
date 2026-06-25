@@ -3,7 +3,7 @@ services:
     name: bot-whatsapp-painel
     env: node
     plan: starter
-    buildCommand: npm install && npm run build
+    buildCommand: npm install --include=dev && npm run build
     startCommand: node dist/server.js
     envVars:
       - key: NODE_ENV
