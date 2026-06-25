@@ -62,6 +62,7 @@ import {
   isAuthError,
   markSupportMessageRead,
   panelLogin,
+  rejectAdminRoute,
   saveAdminUser,
   sendSupportMessage,
   setPanelPassword,
@@ -85,7 +86,7 @@ type AppTab = "home" | "groups" | "messages" | "test" | "settings";
 type GroupEditor = "target" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
 type AdminMainTab = "dashboard" | "validations" | "history" | "alerts" | "clients";
-type RouteStatusFilter = "all" | "pending" | "validated" | "leader";
+type RouteStatusFilter = "all" | "pending" | "validated" | "rejected" | "leader";
 type RouteKindFilter = "all" | "automatic" | "manual" | "test";
 type RouteHistoryTab = "automatic" | "manual" | "test";
 type CleanupTarget = "logs" | "routes" | "support" | "all";
@@ -547,6 +548,17 @@ function getRouteTriggerLabel(route: RouteDispatch) {
   return "Automático";
 }
 
+function getRouteDecisionStatus(route: RouteDispatch) {
+  return route.decisionStatus || (route.validated ? "validated" : "pending");
+}
+
+function getRouteDecisionLabel(route: RouteDispatch) {
+  const status = getRouteDecisionStatus(route);
+  if (status === "validated") return "Validada";
+  if (status === "rejected") return "Não válida";
+  return "Pendente";
+}
+
 function AdminRouteHistory({
   automaticRoutes,
   manualRoutes,
@@ -554,6 +566,9 @@ function AdminRouteHistory({
   activeTab,
   onTabChange,
   onValidate,
+  onReject,
+  onFilterClient,
+  onDetails,
   compact = false
 }: {
   automaticRoutes: RouteDispatch[];
@@ -562,6 +577,9 @@ function AdminRouteHistory({
   activeTab: RouteHistoryTab;
   onTabChange: (tab: RouteHistoryTab) => void;
   onValidate?: (routeId: string) => void;
+  onReject?: (routeId: string) => void;
+  onFilterClient?: (email: string) => void;
+  onDetails?: (route: RouteDispatch) => void;
   compact?: boolean;
 }) {
   const tabs: Array<{ id: RouteHistoryTab; title: string; detail: string; routes: RouteDispatch[]; Icon: typeof Home }> = [
@@ -598,7 +616,7 @@ function AdminRouteHistory({
             compact ? (
               <button className="admin-route-feed-item" key={`route-feed-${route.id}`} type="button">
                 <div className="admin-route-feed-top">
-                  <span className={route.validated ? "mini-badge ok" : "mini-badge"}>{getRouteTriggerLabel(route)}</span>
+                  <span className={getRouteDecisionStatus(route) === "validated" ? "mini-badge ok" : getRouteDecisionStatus(route) === "rejected" ? "mini-badge danger" : "mini-badge"}>{getRouteDecisionLabel(route)}</span>
                   <small>{new Date(route.createdAt).toLocaleString("pt-BR")}</small>
                 </div>
                 <strong>{route.groupName || route.groupJid || "Grupo sem nome"}</strong>
@@ -622,7 +640,14 @@ function AdminRouteHistory({
                 ) : null}
               </button>
             ) : (
-              <RouteRow key={route.id} route={route} onValidate={onValidate ? () => onValidate(route.id) : undefined} />
+              <RouteRow
+                key={route.id}
+                route={route}
+                onValidate={onValidate ? () => onValidate(route.id) : undefined}
+                onReject={onReject ? () => onReject(route.id) : undefined}
+                onFilterClient={onFilterClient ? () => onFilterClient(route.clientEmail) : undefined}
+                onDetails={onDetails ? () => onDetails(route) : undefined}
+              />
             )
           )) : <p className="qr-empty">Nenhum disparo nesse histórico.</p>}
         </div>
@@ -631,14 +656,30 @@ function AdminRouteHistory({
   );
 }
 
-function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: () => void }) {
+function RouteRow({
+  route,
+  onValidate,
+  onReject,
+  onFilterClient,
+  onDetails
+}: {
+  route: RouteDispatch;
+  onValidate?: () => void;
+  onReject?: () => void;
+  onFilterClient?: () => void;
+  onDetails?: () => void;
+}) {
   const createdAt = new Date(route.createdAt).toLocaleString("pt-BR");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const decisionStatus = getRouteDecisionStatus(route);
+  const validated = decisionStatus === "validated";
+  const rejected = decisionStatus === "rejected";
 
   return (
-    <article className={route.validated ? "route-row validated" : "route-row"} style={colorStyle(route.clientColor)}>
+    <article className={validated ? "route-row validated" : rejected ? "route-row rejected" : "route-row"} style={colorStyle(route.clientColor)}>
       <div className="route-row-main">
-        <span className={route.validated ? "route-state-icon ok" : "route-state-icon"}>
-          {route.validated ? <CheckCircle2 size={19} /> : <Clock3 size={19} />}
+        <span className={validated ? "route-state-icon ok" : rejected ? "route-state-icon rejected" : "route-state-icon"}>
+          {validated ? <CheckCircle2 size={19} /> : rejected ? <Ban size={19} /> : <Clock3 size={19} />}
         </span>
         <div>
           <p className="panel-label client-label">
@@ -647,10 +688,18 @@ function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: ()
           </p>
           <h2>{route.groupName || route.groupJid || "Grupo sem nome"}</h2>
         </div>
-        <span className={route.validated ? "route-status ok" : "route-status"}>{route.validated ? "Validada" : "Pendente"}</span>
-        <button className="icon-button route-menu-button" title="Mais opções" type="button">
+        <span className={validated ? "route-status ok" : rejected ? "route-status rejected" : "route-status"}>{getRouteDecisionLabel(route)}</span>
+        <button className="icon-button route-menu-button" title="Mais opções" type="button" onClick={() => setMenuOpen((current) => !current)}>
           <MoreVertical size={18} />
         </button>
+        {menuOpen ? (
+          <div className="route-menu-popover">
+            {onDetails ? <button type="button" onClick={() => { setMenuOpen(false); onDetails(); }}>Ver detalhes</button> : null}
+            {onFilterClient ? <button type="button" onClick={() => { setMenuOpen(false); onFilterClient(); }}>Filtrar cliente</button> : null}
+            {!validated && onValidate ? <button type="button" onClick={() => { setMenuOpen(false); onValidate(); }}>Marcar validada</button> : null}
+            {!rejected && onReject ? <button className="danger" type="button" onClick={() => { setMenuOpen(false); onReject(); }}>Não validar</button> : null}
+          </div>
+        ) : null}
       </div>
       <div className="route-meta">
         <span>{getRouteTriggerLabel(route)}</span>
@@ -680,15 +729,23 @@ function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: ()
           ))}
         </div>
       ) : null}
-      {!route.validated && onValidate ? (
+      {decisionStatus === "pending" && (onValidate || onReject) ? (
         <div className="route-action-stack">
-          <button className="button accent route-validate-button" type="button" onClick={onValidate}>
-            <CheckCircle2 size={18} />
-            Validar
-          </button>
+          {onValidate ? (
+            <button className="button accent route-validate-button" type="button" onClick={onValidate}>
+              <CheckCircle2 size={18} />
+              Validar
+            </button>
+          ) : null}
           <button className="button route-review-button" type="button">
             Revisar
           </button>
+          {onReject ? (
+            <button className="button danger route-reject-button" type="button" onClick={onReject}>
+              <Ban size={18} />
+              Não validar
+            </button>
+          ) : null}
         </div>
       ) : null}
     </article>
@@ -842,6 +899,7 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
           <AdminMetric Icon={Bot} tone={detail.monitoringEnabled ? "green" : "yellow"} title="Bot" value={detail.botStatus} detail={detail.monitoringEnabled ? "monitorando" : "parado"} />
           <AdminMetric Icon={Wifi} tone="blue" title="Zap" value={formatShortDate(detail.lastWhatsAppConnectionAt)} detail="última conexão" />
           <AdminMetric Icon={Route} tone="green" title="Rotas" value={detail.routes.length} detail="histórico salvo" />
+          <AdminMetric Icon={Zap} tone="yellow" title="Latência" value={`${detail.performanceMetrics?.lastDispatchLatencyMs || 0}ms`} detail={`média ${detail.performanceMetrics?.averageDispatchLatencyMs || 0}ms`} />
         </section>
 
         <section className="detail-section">
@@ -870,6 +928,55 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
             {detail.logs.length ? detail.logs.slice(0, 8).map((log) => (
               <span key={log.id}>{formatDate(log.timestamp)} · {log.message}</span>
             )) : <span>Nenhum log registrado.</span>}
+          </div>
+        </section>
+      </section>
+    </div>
+  );
+}
+
+function RouteDetailModal({ route, onClose }: { route: RouteDispatch; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="sheet-dialog user-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="route-detail-title">
+        <div className="sheet-heading">
+          <div>
+            <p className="panel-label">{getRouteTriggerLabel(route)} · {getRouteDecisionLabel(route)}</p>
+            <h2 id="route-detail-title">{route.groupName || route.groupJid || "Grupo sem nome"}</h2>
+          </div>
+          <button className="icon-button" title="Fechar" type="button" onClick={onClose}>
+            <X size={20} />
+          </button>
+        </div>
+        <section className="detail-grid">
+          <AdminMetric Icon={Send} tone="blue" title="Envio" value={`${route.confirmedCount}/${route.totalCount}`} detail={route.status} />
+          <AdminMetric Icon={MessageSquareText} tone="yellow" title="Reações" value={route.reactions.length} detail="recebidas" />
+          <AdminMetric Icon={Clock3} tone="blue" title="Criada" value={formatShortDate(route.createdAt)} detail={new Date(route.createdAt).toLocaleTimeString("pt-BR")} />
+          <AdminMetric Icon={ShieldCheck} tone={getRouteDecisionStatus(route) === "validated" ? "green" : getRouteDecisionStatus(route) === "rejected" ? "red" : "yellow"} title="Decisão" value={getRouteDecisionLabel(route)} detail={route.validatedBy || route.rejectedBy || "aguardando"} />
+        </section>
+        <section className="detail-section">
+          <p className="panel-label">Dados da rota</p>
+          <div className="detail-list">
+            <span>Cliente: <b>{route.clientEmail || "Não identificado"}</b></span>
+            <span>Grupo: <b>{route.groupName || route.groupJid || "Não identificado"}</b></span>
+            <span>Origem: <b>{getRouteTriggerLabel(route)}</b></span>
+            <span>Atualizada: <b>{formatDate(route.updatedAt)}</b></span>
+          </div>
+        </section>
+        <section className="detail-section">
+          <p className="panel-label">Mensagens</p>
+          <div className="detail-list">
+            {route.messages.length ? route.messages.map((message, index) => <span key={`${route.id}-detail-message-${index}`}>{message}</span>) : <span>Nenhuma mensagem registrada.</span>}
+          </div>
+        </section>
+        <section className="detail-section">
+          <p className="panel-label">Reações</p>
+          <div className="detail-list">
+            {route.reactions.length ? route.reactions.map((reaction) => (
+              <span key={`${route.id}-detail-reaction-${reaction.id}`}>
+                {reaction.emoji || "?"} · {reaction.isAdmin ? `Líder${reaction.leaderName ? ` - ${reaction.leaderName}` : ""}` : getReactionDisplayPhone(reaction)}
+              </span>
+            )) : <span>Nenhuma reação registrada.</span>}
           </div>
         </section>
       </section>
@@ -987,6 +1094,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [activeAdminTab, setActiveAdminTab] = useState<AdminMainTab>("dashboard");
   const [editor, setEditor] = useState<UserEditorState>();
   const [detail, setDetail] = useState<AdminUserDetail>();
+  const [routeDetail, setRouteDetail] = useState<RouteDispatch>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [lastNotifiedSupportId, setLastNotifiedSupportId] = useState("");
@@ -998,6 +1106,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [routeHistoryTab, setRouteHistoryTab] = useState<RouteHistoryTab>("automatic");
   const [routeSearch, setRouteSearch] = useState("");
   const [lastSeenLogAt, setLastSeenLogAt] = useState(() => new Date().toISOString());
+  const [seenAdminCounts, setSeenAdminCounts] = useState({ validations: 0, alerts: 0, clients: 0 });
   const [logToast, setLogToast] = useState<AdminLogEntry>();
   const [confirmLogout, setConfirmLogout] = useState(false);
   const [confirmCleanup, setConfirmCleanup] = useState<CleanupTarget>();
@@ -1025,8 +1134,9 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       const trigger = getRouteTrigger(route);
       const matchesStatus =
         routeStatusFilter === "all" ||
-        (routeStatusFilter === "pending" && !route.validated) ||
-        (routeStatusFilter === "validated" && route.validated) ||
+        (routeStatusFilter === "pending" && getRouteDecisionStatus(route) === "pending") ||
+        (routeStatusFilter === "validated" && getRouteDecisionStatus(route) === "validated") ||
+        (routeStatusFilter === "rejected" && getRouteDecisionStatus(route) === "rejected") ||
         (routeStatusFilter === "leader" && hasLeaderReaction);
       const matchesKind =
         routeKindFilter === "all" ||
@@ -1037,7 +1147,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     });
   }, [clientFilter, dashboard.routes, routeKindFilter, routeSearch, routeStatusFilter]);
   const filteredPendingRoutes = useMemo(
-    () => dashboard.pendingReactionRoutes.filter((route) => clientFilter === "all" || route.clientEmail === clientFilter),
+    () => dashboard.pendingReactionRoutes.filter((route) => getRouteDecisionStatus(route) === "pending" && (clientFilter === "all" || route.clientEmail === clientFilter)),
     [clientFilter, dashboard.pendingReactionRoutes]
   );
   const filteredLogs = useMemo(
@@ -1055,6 +1165,16 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     setUsersDashboard(snapshot.users);
     setSupportDashboard(snapshot.support);
     setAdminLogs(snapshot.logs);
+    setDetail((current) => {
+      if (!current) return current;
+      const summary = snapshot.users.users.find((user) => user.email === current.email);
+      return {
+        ...current,
+        ...(summary || {}),
+        logs: snapshot.logs.filter((log) => log.clientEmail === current.email).slice(0, 40),
+        routes: snapshot.routes.routes.filter((route) => route.clientEmail === current.email)
+      };
+    });
     setError("");
   }
 
@@ -1077,14 +1197,14 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   }, []);
 
   useEffect(() => {
-    const locked = Boolean(activeSection || detail || leaderAlert);
+    const locked = Boolean(activeSection || detail || routeDetail || leaderAlert);
     if (!locked) return;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = previousOverflow;
     };
-  }, [activeSection, detail, leaderAlert]);
+  }, [activeSection, detail, routeDetail, leaderAlert]);
 
   useEffect(() => {
     if (activeSection !== "logs") return;
@@ -1224,6 +1344,21 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     }
   }
 
+  async function rejectRoute(routeId: string) {
+    try {
+      setDashboard(await rejectAdminRoute(routeId));
+      setError("");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui rejeitar a rota.");
+    }
+  }
+
+  function filterRouteClient(email: string) {
+    if (!email) return;
+    setClientFilter(email);
+    setActiveAdminTab("history");
+  }
+
   async function runCleanup(target: CleanupTarget) {
     if (confirmCleanup !== target) {
       setConfirmCleanup(target);
@@ -1253,11 +1388,20 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const activeClientLabel = clientFilter === "all" ? "Todos os clientes" : clientFilter;
   const filteredUnreadSupport = filteredSupportMessages.filter((message) => !message.read).length;
   const onlineClients = usersDashboard.users.filter((user) => user.role === "client" && user.presenceStatus === "online").length;
+  const visibleUserMetrics = usersDashboard.users
+    .filter((user) => clientFilter === "all" || user.email === clientFilter)
+    .map((user) => user.performanceMetrics)
+    .filter((metrics): metrics is NonNullable<AdminUserSummary["performanceMetrics"]> => Boolean(metrics?.dispatchCount));
+  const averageDispatchLatency = visibleUserMetrics.length
+    ? Math.round(visibleUserMetrics.reduce((total, metrics) => total + metrics.averageDispatchLatencyMs, 0) / visibleUserMetrics.length)
+    : 0;
+  const lastDispatchLatency = visibleUserMetrics.reduce((latest, metrics) => Math.max(latest, metrics.lastDispatchLatencyMs || 0), 0);
   const automaticRoutes = filteredRoutes.filter((route) => route.mode === "target" && getRouteTrigger(route) === "automatic");
   const manualRoutes = filteredRoutes.filter((route) => ["manual", "simulation"].includes(getRouteTrigger(route)));
   const testRoutes = filteredRoutes.filter((route) => route.mode === "test" || ["warmup", "target-simulation"].includes(getRouteTrigger(route)));
   const latestTestRoute = testRoutes[0];
-  const validatedRoutes = filteredRoutes.filter((route) => route.validated);
+  const validatedRoutes = filteredRoutes.filter((route) => getRouteDecisionStatus(route) === "validated");
+  const rejectedRoutes = filteredRoutes.filter((route) => getRouteDecisionStatus(route) === "rejected");
   const liveActivity = [
     ...filteredLogs.slice(0, 6).map((log) => ({
       id: `log-${log.clientEmail}-${log.id}`,
@@ -1297,12 +1441,25 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       tone: "red" as const
     }))
   ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 30);
+
+  useEffect(() => {
+    if (activeAdminTab === "validations") {
+      setSeenAdminCounts((current) => ({ ...current, validations: filteredPendingRoutes.length }));
+    }
+    if (activeAdminTab === "alerts") {
+      setSeenAdminCounts((current) => ({ ...current, alerts: alerts.length }));
+    }
+    if (activeAdminTab === "clients") {
+      setSeenAdminCounts((current) => ({ ...current, clients: onlineClients }));
+    }
+  }, [activeAdminTab, filteredPendingRoutes.length, alerts.length, onlineClients]);
+
   const adminTabs: Array<{ id: AdminMainTab; label: string; Icon: typeof Home; badge?: number }> = [
     { id: "dashboard", label: "Dashboard", Icon: Home },
-    { id: "validations", label: "Validações", Icon: ShieldCheck, badge: filteredPendingRoutes.length },
+    { id: "validations", label: "Validações", Icon: ShieldCheck, badge: activeAdminTab === "validations" ? 0 : Math.max(0, filteredPendingRoutes.length - seenAdminCounts.validations) },
     { id: "history", label: "Histórico", Icon: Clock3 },
-    { id: "alerts", label: "Alertas", Icon: AlertTriangle, badge: alerts.length },
-    { id: "clients", label: "Clientes", Icon: UserPlus, badge: onlineClients }
+    { id: "alerts", label: "Alertas", Icon: AlertTriangle, badge: activeAdminTab === "alerts" ? 0 : Math.max(0, alerts.length - seenAdminCounts.alerts) },
+    { id: "clients", label: "Clientes", Icon: UserPlus, badge: activeAdminTab === "clients" ? 0 : Math.max(0, onlineClients - seenAdminCounts.clients) }
   ];
 
   return (
@@ -1342,6 +1499,17 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
         </button>
       </section>
 
+      {activeAdminTab !== "alerts" && alerts.length ? (
+        <button className={`admin-alert-toast tone-${alerts[0].tone}`} type="button" onClick={() => setActiveAdminTab("alerts")}>
+          <AlertTriangle size={17} />
+          <span>
+            <strong>{alerts[0].title}</strong>
+            <small>{alerts[0].detail}</small>
+          </span>
+          <b>{alerts.length}</b>
+        </button>
+      ) : null}
+
       {activeAdminTab === "dashboard" ? (
         <section className="admin-tab-page">
           <section className="command-metrics-grid">
@@ -1350,7 +1518,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             <AdminMetric Icon={MessageSquareText} tone="blue" title="Reações" value={filteredRoutes.reduce((total, route) => total + route.reactions.length, 0)} detail="recebidas" />
             <AdminMetric Icon={Activity} tone="blue" title="Logs ao vivo" value={filteredLogs.length} detail="agora" />
             <AdminMetric Icon={Route} tone="green" title="Grupos ativos" value={new Set(filteredRoutes.map((route) => route.groupJid).filter(Boolean)).size} detail="estáveis" />
-            <AdminMetric Icon={Zap} tone="yellow" title="Latência média" value="ao vivo" detail="por cliente" />
+            <AdminMetric Icon={Zap} tone="yellow" title="Latência média" value={averageDispatchLatency ? `${averageDispatchLatency}ms` : "0ms"} detail={lastDispatchLatency ? `último ${lastDispatchLatency}ms` : "sem disparos"} />
           </section>
 
           <article className="command-card queue-card">
@@ -1478,6 +1646,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
           <div className="admin-subtabs">
             <button className={routeStatusFilter === "pending" ? "active" : ""} type="button" onClick={() => setRouteStatusFilter("pending")}>Pendentes <b>{filteredPendingRoutes.length}</b></button>
             <button className={routeStatusFilter === "validated" ? "active" : ""} type="button" onClick={() => setRouteStatusFilter("validated")}>Validadas <b>{validatedRoutes.length}</b></button>
+            <button className={routeStatusFilter === "rejected" ? "active" : ""} type="button" onClick={() => setRouteStatusFilter("rejected")}>Não válidas <b>{rejectedRoutes.length}</b></button>
             <button className={routeStatusFilter === "all" ? "active" : ""} type="button" onClick={() => setRouteStatusFilter("all")}>Histórico</button>
           </div>
           <section className="command-metrics-grid compact">
@@ -1495,7 +1664,16 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
               <button className="button accent" type="button" onClick={() => filteredPendingRoutes.forEach((route) => void validateRoute(route.id))}>Validar todas</button>
             </div>
             <div className="validation-list">
-              {filteredPendingRoutes.length ? filteredPendingRoutes.map((route) => <RouteRow key={`mobile-pending-${route.id}`} route={route} onValidate={() => validateRoute(route.id)} />) : <p className="qr-empty">Nenhuma validação pendente.</p>}
+              {filteredPendingRoutes.length ? filteredPendingRoutes.map((route) => (
+                <RouteRow
+                  key={`mobile-pending-${route.id}`}
+                  route={route}
+                  onValidate={() => validateRoute(route.id)}
+                  onReject={() => rejectRoute(route.id)}
+                  onFilterClient={() => filterRouteClient(route.clientEmail)}
+                  onDetails={() => setRouteDetail(route)}
+                />
+              )) : <p className="qr-empty">Nenhuma validação pendente.</p>}
             </div>
           </article>
           <article className="command-panel">
@@ -1506,7 +1684,33 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
               </div>
             </div>
             <div className="validation-list">
-              {validatedRoutes.slice(0, 8).map((route) => <RouteRow key={`mobile-validated-${route.id}`} route={route} />)}
+              {validatedRoutes.slice(0, 8).map((route) => (
+                <RouteRow
+                  key={`mobile-validated-${route.id}`}
+                  route={route}
+                  onFilterClient={() => filterRouteClient(route.clientEmail)}
+                  onDetails={() => setRouteDetail(route)}
+                />
+              ))}
+            </div>
+          </article>
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Não válidas</p>
+                <h2>{rejectedRoutes.length} rejeitada(s)</h2>
+              </div>
+            </div>
+            <div className="validation-list">
+              {rejectedRoutes.slice(0, 8).map((route) => (
+                <RouteRow
+                  key={`mobile-rejected-${route.id}`}
+                  route={route}
+                  onValidate={() => validateRoute(route.id)}
+                  onFilterClient={() => filterRouteClient(route.clientEmail)}
+                  onDetails={() => setRouteDetail(route)}
+                />
+              ))}
             </div>
           </article>
         </section>
@@ -1532,6 +1736,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                 <option value="all">Todos</option>
                 <option value="pending">Pendentes</option>
                 <option value="validated">Validadas</option>
+                <option value="rejected">Não válidas</option>
                 <option value="leader">Com líder</option>
               </select>
             </label>
@@ -1551,6 +1756,9 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             activeTab={routeHistoryTab}
             onTabChange={setRouteHistoryTab}
             onValidate={validateRoute}
+            onReject={rejectRoute}
+            onFilterClient={filterRouteClient}
+            onDetails={setRouteDetail}
           />
         </section>
       ) : null}
@@ -1651,7 +1859,16 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
           </div>
           <div className="route-list">
             {filteredPendingRoutes.length ? (
-              filteredPendingRoutes.map((route) => <RouteRow key={`pending-${route.id}`} route={route} onValidate={() => validateRoute(route.id)} />)
+              filteredPendingRoutes.map((route) => (
+                <RouteRow
+                  key={`pending-${route.id}`}
+                  route={route}
+                  onValidate={() => validateRoute(route.id)}
+                  onReject={() => rejectRoute(route.id)}
+                  onFilterClient={() => filterRouteClient(route.clientEmail)}
+                  onDetails={() => setRouteDetail(route)}
+                />
+              ))
             ) : (
               <p className="qr-empty">Nenhuma reação pendente de validação.</p>
             )}
@@ -1684,6 +1901,9 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             activeTab={routeHistoryTab}
             onTabChange={setRouteHistoryTab}
             onValidate={validateRoute}
+            onReject={rejectRoute}
+            onFilterClient={filterRouteClient}
+            onDetails={setRouteDetail}
           />
         </AdminSectionModal>
       ) : null}
@@ -1804,6 +2024,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       ) : null}
 
       {detail ? <UserDetailModal detail={detail} onClose={() => setDetail(undefined)} /> : null}
+      {routeDetail ? <RouteDetailModal route={routeDetail} onClose={() => setRouteDetail(undefined)} /> : null}
       {logToast ? (
         <button className="admin-log-toast" type="button" onClick={() => setActiveSection("logs")}>
           <span>{unreadLogCount}</span>
@@ -2234,6 +2455,8 @@ export default function App() {
             groupState={snapshot.groupState}
           />
 
+          <LogsPanel logs={snapshot.logs.slice(-30)} />
+
           <PerformanceStrip snapshot={snapshot} />
 
           {snapshot.qrCode || snapshot.status === "waiting_qr" ? <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} /> : null}
@@ -2259,13 +2482,6 @@ export default function App() {
               codes={snapshot.config.codigosMensagensAlvo || []}
               onOpen={() => setGroupEditor("target")}
             />
-            <ConfigStrip
-              kind="test"
-              title="Teste abrir/fechar"
-              group={testGroupLabel}
-              codes={snapshot.config.codigosMensagensTeste || []}
-              onOpen={() => setGroupEditor("test")}
-            />
           </section>
         </section>
       ) : null}
@@ -2286,12 +2502,6 @@ export default function App() {
             group={groupLabel}
             messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
             onOpen={() => setGroupEditor("target")}
-          />
-          <MessagePreviewStrip
-            title="Mensagens teste"
-            group={testGroupLabel}
-            messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensTeste || [])}
-            onOpen={() => setGroupEditor("test")}
           />
         </section>
       ) : null}

@@ -243,6 +243,12 @@ export class BotService extends EventEmitter {
     if (changed) this.emitSnapshot();
     return changed;
   }
+
+  rejectRoute(routeId: string, rejectedBy: string) {
+    const changed = this.routeStore.reject(routeId, rejectedBy);
+    if (changed) this.emitSnapshot();
+    return changed;
+  }
   isMonitoringEnabled(): boolean {
     return this.monitoringEnabled;
   }
@@ -337,6 +343,8 @@ export class BotService extends EventEmitter {
   disableMonitoring(): void {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
+    this.sendCycleId += 1;
+    this.activeSendCycle = undefined;
     this.activeTestRunId += 1;
     if (this.testStatus.active) {
       this.testStatus = {
@@ -1552,6 +1560,11 @@ export class BotService extends EventEmitter {
       this.prepareSendPlan();
     }
 
+    if (!this.monitoringEnabled && trigger === "automatic") {
+      this.logger.warning("Abertura ignorada: o bot está parado no painel do cliente.");
+      return;
+    }
+
     if (!this.preparedTargetJid) {
       this.logger.error("Grupo alvo ainda não foi configurado.");
       return;
@@ -1582,10 +1595,10 @@ export class BotService extends EventEmitter {
     const sendStartedAt = Date.now();
     const sendCycle =
       this.monitoringMode === "test"
-        ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt)
+        ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger)
         : config.nuclearMode
-        ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt)
-        : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt);
+        ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger)
+        : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger);
 
     this.activeSendCycle = sendCycle.finally(() => {
       if (cycleId === this.sendCycleId) {
@@ -1647,7 +1660,7 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  private async sendFastSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now()) {
+  private async sendFastSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now(), trigger: RouteDispatch["trigger"] = "warmup") {
     try {
       const sock = this.sock;
       if (!sock) {
@@ -1671,7 +1684,7 @@ export class BotService extends EventEmitter {
 
       for (const [index, mensagem] of mensagens.entries()) {
         const messageNumber = index + 1;
-        if (cycleId !== this.sendCycleId) break;
+        if (cycleId !== this.sendCycleId || (!this.monitoringEnabled && trigger === "automatic")) break;
 
         try {
           await this.relayPreparedTextMessage(sock, jid, mensagem, index);
@@ -1713,7 +1726,7 @@ export class BotService extends EventEmitter {
     }
   }
 
-  private async sendNuclearTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now()) {
+  private async sendNuclearTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now(), trigger: RouteDispatch["trigger"] = "automatic") {
     this.logger.info("☢️ Modo nuclear ativo: validando abertura antes do disparo enxuto.");
     const acceptsMessages = await this.waitUntilGroupAcceptsMessages(jid, cycleId);
     if (!acceptsMessages || cycleId !== this.sendCycleId) {
@@ -1721,11 +1734,11 @@ export class BotService extends EventEmitter {
       return;
     }
 
-    await this.sendFastSequence(jid, mensagens, cycleId, eventDetectedAt, sendStartedAt);
+    await this.sendFastSequence(jid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger);
     this.stopMonitoringAfterTargetDispatch(cycleId);
   }
 
-  private async sendAggressiveTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now()) {
+  private async sendAggressiveTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now(), trigger: RouteDispatch["trigger"] = "automatic") {
     // aggressive, low-latency send for the real target group
     try {
       const sock = this.sock;
@@ -1740,8 +1753,8 @@ export class BotService extends EventEmitter {
 
       const results = await Promise.allSettled(
         relayMessages.map((fullMessage) => {
-          if (cycleId !== this.sendCycleId) {
-            return Promise.reject(new Error("Ciclo cancelado por nova abertura."));
+          if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
+            return Promise.reject(new Error("Ciclo cancelado pelo painel ou por nova abertura."));
           }
           return this.relayPreparedMessage(sock, jid, fullMessage);
         })

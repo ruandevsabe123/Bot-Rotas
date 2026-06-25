@@ -377,6 +377,7 @@ function toUserSummary(email: string, user: PanelUserRecord) {
     botOpen: Boolean(botSnapshot && ["connected", "connecting", "waiting_qr", "reconnecting"].includes(botSnapshot.status)),
     botStatus: botSnapshot?.status,
     monitoringEnabled: botSnapshot?.monitoringEnabled,
+    performanceMetrics: botSnapshot?.performanceMetrics,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     lastLoginAt: user.lastLoginAt,
@@ -412,6 +413,7 @@ function getAdminUserDetail(email: string): AdminUserDetail | undefined {
     botStatus: snapshot.status,
     monitoringEnabled: snapshot.monitoringEnabled,
     monitoringMode: snapshot.monitoringMode,
+    performanceMetrics: snapshot.performanceMetrics,
     lastWhatsAppConnectionAt: getLastWhatsAppConnectionAt(snapshot.logs),
     logs: snapshot.logs.slice(-40).reverse(),
     routes: snapshot.routeDispatches || [],
@@ -427,7 +429,7 @@ function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const pendingReactionRoutes = allRoutes
-    .filter((route) => !route.validated && route.reactions.length)
+    .filter((route) => (route.decisionStatus || (route.validated ? "validated" : "pending")) === "pending" && route.reactions.length)
     .sort((a, b) => {
       const aLast = a.reactions[0]?.timestamp || a.updatedAt;
       const bLast = b.reactions[0]?.timestamp || b.updatedAt;
@@ -450,6 +452,13 @@ function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
 function validateAdminRoute(routeId: string, adminEmail: string) {
   for (const email of getClientEmails()) {
     if (getBotForEmail(email).validateRoute(routeId, adminEmail)) return true;
+  }
+  return false;
+}
+
+function rejectAdminRoute(routeId: string, adminEmail: string) {
+  for (const email of getClientEmails()) {
+    if (getBotForEmail(email).rejectRoute(routeId, adminEmail)) return true;
   }
   return false;
 }
@@ -823,8 +832,29 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/events") {
+      const email = getAuthorizedEmailFromUrl(url);
+      if (!email) {
+        response.writeHead(401, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ error: "Login obrigatório." }));
+        return;
+      }
+      touchPanelUser(email);
+      const activeBot = getBotForEmail(email);
+      response.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-store",
+        Connection: "keep-alive"
+      });
+      const client = { email, response };
+      clients.add(client);
+      response.write(`data: ${JSON.stringify(activeBot.getSnapshot())}\n\n`);
+      request.on("close", () => clients.delete(client));
+      return;
+    }
+
     let authorizedEmail = "";
-    if (url.pathname.startsWith("/api/") || url.pathname === "/events" || url.pathname === "/qr.svg") {
+    if (url.pathname.startsWith("/api/") || url.pathname === "/qr.svg") {
       const email = requireAuth(request, response);
       if (!email) return;
       authorizedEmail = email;
@@ -863,8 +893,15 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/routes/")) {
       if (!requireAdmin(authorizedEmail, response)) return;
-      const routeId = decodeURIComponent(url.pathname.replace("/api/admin/routes/", "").replace(/\/validate$/, ""));
-      if (!url.pathname.endsWith("/validate") || !validateAdminRoute(routeId, authorizedEmail)) {
+      const isValidate = url.pathname.endsWith("/validate");
+      const isReject = url.pathname.endsWith("/reject");
+      const routeId = decodeURIComponent(url.pathname.replace("/api/admin/routes/", "").replace(/\/validate$/, "").replace(/\/reject$/, ""));
+      const changed = isValidate
+        ? validateAdminRoute(routeId, authorizedEmail)
+        : isReject
+        ? rejectAdminRoute(routeId, authorizedEmail)
+        : false;
+      if (!changed) {
         sendJson(response, 404, { error: "Rota não encontrada." });
         return;
       }
@@ -954,19 +991,6 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/snapshot") {
       sendJson(response, 200, activeBot!.getSnapshot());
-      return;
-    }
-
-    if (request.method === "GET" && url.pathname === "/events") {
-      response.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-store",
-        Connection: "keep-alive"
-      });
-      const client = { email: authorizedEmail, response };
-      clients.add(client);
-      response.write(`data: ${JSON.stringify(activeBot!.getSnapshot())}\n\n`);
-      request.on("close", () => clients.delete(client));
       return;
     }
 

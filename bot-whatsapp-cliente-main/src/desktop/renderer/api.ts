@@ -131,6 +131,13 @@ export function validateAdminRoute(routeId: string) {
   });
 }
 
+export function rejectAdminRoute(routeId: string) {
+  return fetchJson<AdminRoutesSnapshot>(`/api/admin/routes/${encodeURIComponent(routeId)}/reject`, {
+    method: "PATCH",
+    body: JSON.stringify({})
+  });
+}
+
 export function getAdminUsers() {
   return fetchJson<AdminUsersSnapshot>("/api/admin/users");
 }
@@ -239,6 +246,20 @@ function createWebApi(): DesktopApi {
       action("save-target-message-settings", payload),
     saveGeneralSettings: (payload: GeneralSettingsPayload) => action("save-general-settings", payload),
     onSnapshot: (callback: (snapshot: BotSnapshot) => void) => {
+      const token = getPanelToken();
+      if (token && "EventSource" in window) {
+        const source = new EventSource(`/events?token=${encodeURIComponent(token)}`);
+        source.onmessage = (event) => {
+          try {
+            callback(JSON.parse(event.data) as BotSnapshot);
+          } catch {
+            // Mantém o canal aberto se vier algum pacote inválido.
+          }
+        };
+        source.onerror = () => undefined;
+        return () => source.close();
+      }
+
       const interval = window.setInterval(() => {
         fetchJson<BotSnapshot>("/api/snapshot")
           .then(callback)

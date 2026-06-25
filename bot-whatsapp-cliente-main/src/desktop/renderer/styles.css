@@ -463,8 +463,13 @@ h2 {
 .admin-mobile-shell {
   display: grid;
   gap: 14px;
-  width: min(940px, calc(100vw - 28px));
+  width: 100%;
+  max-width: 940px;
+  margin-inline: auto;
+  padding-inline: 14px;
+  box-sizing: border-box;
   color: #f4f7f8;
+  overflow-x: hidden;
 }
 
 .admin-mobile-shell::after {
@@ -888,7 +893,16 @@ h2 {
     linear-gradient(180deg, rgba(12, 25, 19, 0.96), rgba(7, 11, 10, 0.98));
 }
 
+.admin-mobile-shell .route-row.rejected {
+  border-color: rgba(255, 81, 72, 0.3);
+  border-left-color: #ff5148;
+  background:
+    linear-gradient(135deg, rgba(255, 81, 72, 0.12), transparent 48%),
+    linear-gradient(180deg, rgba(25, 13, 13, 0.96), rgba(10, 8, 9, 0.98));
+}
+
 .admin-mobile-shell .route-row-main {
+  position: relative;
   display: grid;
   grid-template-columns: 76px minmax(0, 1fr) auto 42px;
   align-items: center;
@@ -913,6 +927,12 @@ h2 {
   background: rgba(53, 208, 127, 0.1);
 }
 
+.admin-mobile-shell .route-state-icon.rejected {
+  border-color: rgba(255, 81, 72, 0.3);
+  color: #ff6b5f;
+  background: rgba(255, 81, 72, 0.1);
+}
+
 .admin-mobile-shell .route-row h2 {
   margin: 0;
   color: #ffffff;
@@ -934,8 +954,47 @@ h2 {
   background: rgba(53, 208, 127, 0.1);
 }
 
+.admin-mobile-shell .route-status.rejected {
+  border-color: rgba(255, 81, 72, 0.3);
+  color: #ff6b5f;
+  background: rgba(255, 81, 72, 0.1);
+}
+
 .route-menu-button {
+  position: relative;
   justify-self: end;
+}
+
+.route-menu-popover {
+  position: absolute;
+  top: 42px;
+  right: 0;
+  z-index: 12;
+  display: grid;
+  min-width: 168px;
+  overflow: hidden;
+  border: 1px solid rgba(245, 247, 248, 0.14);
+  border-radius: 8px;
+  background: rgba(5, 8, 12, 0.98);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.62);
+}
+
+.route-menu-popover button {
+  border: 0;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  color: #f4f7f8;
+  background: transparent;
+  padding: 11px 12px;
+  text-align: left;
+  font-weight: 800;
+}
+
+.route-menu-popover button:last-child {
+  border-bottom: 0;
+}
+
+.route-menu-popover button.danger {
+  color: #ff6b5f;
 }
 
 .admin-mobile-shell .route-meta,
@@ -1048,10 +1107,58 @@ h2 {
   grid-template-columns: 28px minmax(0, 1fr) auto;
   gap: 10px;
   align-items: start;
-  padding: 13px;
+  padding: 10px 12px;
   border: 1px solid rgba(245, 247, 248, 0.08);
   border-radius: 8px;
   background: #080a0c;
+}
+
+.admin-alert-toast {
+  justify-self: start;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  width: min(100%, 520px);
+  border: 1px solid rgba(255, 81, 72, 0.26);
+  border-radius: 8px;
+  color: #f4f7f8;
+  background:
+    linear-gradient(135deg, rgba(255, 81, 72, 0.14), transparent 44%),
+    rgba(8, 11, 14, 0.95);
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.admin-alert-toast.tone-yellow {
+  border-color: rgba(245, 197, 66, 0.3);
+  background:
+    linear-gradient(135deg, rgba(245, 197, 66, 0.14), transparent 44%),
+    rgba(8, 11, 14, 0.95);
+}
+
+.admin-alert-toast span {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.admin-alert-toast strong,
+.admin-alert-toast small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-alert-toast b {
+  display: grid;
+  min-width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 999px;
+  color: #fff;
+  background: #ff5148;
+  font-size: 0.76rem;
 }
 
 .alert-row.tone-red {
@@ -2177,8 +2284,8 @@ h2 {
 
 .admin-log-toast {
   position: fixed;
-  right: 22px;
-  bottom: 22px;
+  left: 16px;
+  top: 16px;
   z-index: 30;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
@@ -2607,6 +2714,12 @@ h2 {
   border-color: rgba(53, 208, 127, 0.28);
   color: #35d07f;
   background: rgba(53, 208, 127, 0.08);
+}
+
+.mini-badge.danger {
+  border-color: rgba(255, 81, 72, 0.3);
+  color: #ff6b5f;
+  background: rgba(255, 81, 72, 0.08);
 }
 
 .cockpit-green span {
@@ -3145,6 +3258,12 @@ h2 {
 }
 
 .admin-bottom-nav {
+  position: fixed;
+  left: 50%;
+  right: auto;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  width: min(460px, calc(100vw - 28px));
+  transform: translateX(-50%);
   background:
     linear-gradient(180deg, rgba(17, 24, 32, 0.92), rgba(5, 8, 12, 0.94));
   border-color: rgba(148, 163, 184, 0.2);
@@ -3520,7 +3639,9 @@ h2 {
   }
 
   .admin-mobile-shell {
-    width: min(100vw - 18px, 680px);
+    width: 100%;
+    max-width: 680px;
+    padding-inline: 9px;
     padding-bottom: 158px;
   }
 

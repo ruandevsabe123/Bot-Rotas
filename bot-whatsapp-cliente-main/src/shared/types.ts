@@ -118,6 +118,7 @@ export type AdminUserSummary = {
   botOpen: boolean;
   botStatus?: BotStatus;
   monitoringEnabled?: boolean;
+  performanceMetrics?: BotPerformanceMetrics;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -185,8 +186,11 @@ export type RouteDispatch = {
   createdAt: string;
   updatedAt: string;
   validated: boolean;
+  decisionStatus?: "pending" | "validated" | "rejected";
   validatedAt?: string;
   validatedBy?: string;
+  rejectedAt?: string;
+  rejectedBy?: string;
   reactions: RouteReaction[];
 };
 

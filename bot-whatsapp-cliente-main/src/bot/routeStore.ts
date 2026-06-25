@@ -27,6 +27,7 @@ export class RouteStore {
       createdAt: now,
       updatedAt: now,
       validated: false,
+      decisionStatus: "pending",
       reactions: []
     };
 
@@ -59,8 +60,29 @@ export class RouteStore {
         return {
           ...route,
           validated: true,
+          decisionStatus: "validated",
           validatedAt: route.validatedAt || now,
           validatedBy,
+          updatedAt: now
+        };
+      });
+    if (changed) this.scheduleSave();
+    return changed;
+  }
+
+  reject(id: string, rejectedBy: string) {
+    let changed = false;
+    const now = new Date().toISOString();
+    this.routes =
+      this.getRoutes().map((route) => {
+        if (route.id !== id) return route;
+        changed = true;
+        return {
+          ...route,
+          validated: false,
+          decisionStatus: "rejected" as const,
+          rejectedAt: route.rejectedAt || now,
+          rejectedBy,
           updatedAt: now
         };
       });
@@ -152,8 +174,11 @@ export class RouteStore {
       createdAt: typeof input.createdAt === "string" ? input.createdAt : new Date().toISOString(),
       updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : new Date().toISOString(),
       validated: Boolean(input.validated),
+      decisionStatus: input.decisionStatus === "rejected" ? "rejected" : Boolean(input.validated) ? "validated" : "pending",
       validatedAt: typeof input.validatedAt === "string" ? input.validatedAt : undefined,
       validatedBy: typeof input.validatedBy === "string" ? input.validatedBy : undefined,
+      rejectedAt: typeof input.rejectedAt === "string" ? input.rejectedAt : undefined,
+      rejectedBy: typeof input.rejectedBy === "string" ? input.rejectedBy : undefined,
       reactions: Array.isArray(input.reactions)
         ? input.reactions.map((item: any) => ({
             id: typeof item.id === "string" ? item.id : "",
