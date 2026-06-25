@@ -3,10 +3,13 @@ import {
   Activity,
   AlertTriangle,
   Ban,
+  Bell,
   Bot,
+  CalendarDays,
   CheckCircle2,
   Clock3,
   Edit3,
+  Filter,
   Gauge,
   Home,
   Info,
@@ -14,9 +17,11 @@ import {
   LogOut,
   Mail,
   MessageSquareText,
+  MoreVertical,
   RefreshCw,
   Route,
   Save,
+  Search,
   Send,
   Settings,
   ShieldCheck,
@@ -643,6 +648,9 @@ function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: ()
           <h2>{route.groupName || route.groupJid || "Grupo sem nome"}</h2>
         </div>
         <span className={route.validated ? "route-status ok" : "route-status"}>{route.validated ? "Validada" : "Pendente"}</span>
+        <button className="icon-button route-menu-button" title="Mais opções" type="button">
+          <MoreVertical size={18} />
+        </button>
       </div>
       <div className="route-meta">
         <span>{getRouteTriggerLabel(route)}</span>
@@ -988,6 +996,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [routeStatusFilter, setRouteStatusFilter] = useState<RouteStatusFilter>("all");
   const [routeKindFilter, setRouteKindFilter] = useState<RouteKindFilter>("all");
   const [routeHistoryTab, setRouteHistoryTab] = useState<RouteHistoryTab>("automatic");
+  const [routeSearch, setRouteSearch] = useState("");
   const [lastSeenLogAt, setLastSeenLogAt] = useState(() => new Date().toISOString());
   const [logToast, setLogToast] = useState<AdminLogEntry>();
   const [confirmLogout, setConfirmLogout] = useState(false);
@@ -1001,6 +1010,17 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const filteredRoutes = useMemo(() => {
     return dashboard.routes.filter((route) => {
       const matchesClient = clientFilter === "all" || route.clientEmail === clientFilter;
+      const search = routeSearch.trim().toLowerCase();
+      const matchesSearch =
+        !search ||
+        [
+          route.groupName,
+          route.groupJid,
+          route.clientEmail,
+          route.validatedBy,
+          ...route.messages,
+          ...route.reactions.flatMap((reaction) => [reaction.senderPhone, reaction.leaderName || "", ...(reaction.senderIdentifiers || [])])
+        ].some((item) => String(item || "").toLowerCase().includes(search));
       const hasLeaderReaction = route.reactions.some((reaction) => reaction.isAdmin);
       const trigger = getRouteTrigger(route);
       const matchesStatus =
@@ -1013,9 +1033,9 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
         (routeKindFilter === "automatic" && route.mode === "target" && trigger === "automatic") ||
         (routeKindFilter === "manual" && ["manual", "simulation"].includes(trigger)) ||
         (routeKindFilter === "test" && (route.mode === "test" || ["warmup", "target-simulation"].includes(trigger)));
-      return matchesClient && matchesStatus && matchesKind;
+      return matchesClient && matchesSearch && matchesStatus && matchesKind;
     });
-  }, [clientFilter, dashboard.routes, routeKindFilter, routeStatusFilter]);
+  }, [clientFilter, dashboard.routes, routeKindFilter, routeSearch, routeStatusFilter]);
   const filteredPendingRoutes = useMemo(
     () => dashboard.pendingReactionRoutes.filter((route) => clientFilter === "all" || route.clientEmail === clientFilter),
     [clientFilter, dashboard.pendingReactionRoutes]
@@ -1288,17 +1308,21 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   return (
     <main className="app-shell admin-shell admin-mobile-shell">
       <section className="admin-mobile-header">
-        <span className="admin-app-icon"><Activity size={24} /></span>
+        <span className="admin-app-icon">{activeAdminTab === "validations" ? <ShieldCheck size={25} /> : <Activity size={24} />}</span>
         <div>
           <h1>{activeAdminTab === "validations" ? "Validações e histórico" : activeAdminTab === "history" ? "Histórico permanente" : activeAdminTab === "alerts" ? "Alertas e notificações" : activeAdminTab === "clients" ? "Clientes" : "Central de comando"}</h1>
-          <p>{activeAdminTab === "dashboard" ? "Dados ao vivo de todos os clientes" : activeClientLabel}</p>
+          <p>
+            {activeAdminTab === "dashboard" ? "Dados ao vivo de todos os clientes" : activeAdminTab === "validations" ? "Monitore, valide e audite todas as rotas do bot" : activeClientLabel}
+            {activeAdminTab === "dashboard" ? <span className="online-copy">Tudo online</span> : null}
+          </p>
         </div>
         <button className="icon-button alert-button" title="Alertas" type="button" onClick={() => setActiveAdminTab("alerts")}>
           {alerts.length ? <b>{alerts.length}</b> : null}
-          <AlertTriangle size={20} />
+          <Bell size={20} />
         </button>
-        <button className="icon-button" title="Configurações" type="button" onClick={() => setActiveSection("settings")}>
-          <Settings size={20} />
+        <button className="button admin-filter-button" title="Filtros" type="button" onClick={() => setActiveAdminTab(activeAdminTab === "dashboard" ? "history" : activeAdminTab)}>
+          <Filter size={18} />
+          Filtros
         </button>
       </section>
 
@@ -1334,6 +1358,9 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             <div>
               <h2>Fila de envio</h2>
               <p>{filteredRoutes.filter((route) => route.status === "sending").length} mensagens aguardando</p>
+              <div className="queue-progress" aria-hidden="true">
+                <span style={{ width: `${Math.min(100, Math.max(8, filteredRoutes.filter((route) => route.status === "sending").length * 22))}%` }} />
+              </div>
             </div>
             <button className="button" type="button" onClick={() => setActiveAdminTab("history")}>Ver fila</button>
           </article>
@@ -1412,6 +1439,37 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             </div>
             <button className="button" type="button" onClick={() => { setRouteKindFilter("test"); setActiveAdminTab("history"); }}>Ver detalhes</button>
           </article>
+
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Alertas e notificações</p>
+                <h2>Recentes</h2>
+              </div>
+              <button className="button" type="button" onClick={() => setActiveAdminTab("alerts")}>Ver todas</button>
+            </div>
+            <div className="alert-list compact">
+              {alerts.slice(0, 3).length ? alerts.slice(0, 3).map((alert) => (
+                <article className={`alert-row tone-${alert.tone}`} key={`dash-${alert.id}`}>
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>{alert.title}</strong>
+                    <p>{alert.detail}</p>
+                  </div>
+                  <time>{formatShortDate(alert.time)}</time>
+                </article>
+              )) : (
+                <article className="alert-row tone-info">
+                  <Info size={18} />
+                  <div>
+                    <strong>O bot está online no momento</strong>
+                    <p>Aguardando novos eventos de clientes.</p>
+                  </div>
+                  <time>agora</time>
+                </article>
+              )}
+            </div>
+          </article>
         </section>
       ) : null}
 
@@ -1456,23 +1514,33 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
 
       {activeAdminTab === "history" ? (
         <section className="admin-tab-page">
-          <section className="admin-mobile-filters in-page">
-            <label>
-              <span>Origem</span>
-              <select value={routeKindFilter} onChange={(event) => setRouteKindFilter(event.target.value as RouteKindFilter)}>
-                <option value="all">Todas</option>
-                <option value="automatic">Automático</option>
-                <option value="manual">Manual / simulação</option>
-                <option value="test">Teste</option>
-              </select>
+          <section className="history-filter-bar">
+            <label className="history-search">
+              <Search size={18} />
+              <input
+                value={routeSearch}
+                onChange={(event) => setRouteSearch(event.target.value)}
+                placeholder="Buscar por grupo, cliente ou e-mail..."
+              />
             </label>
+            <button className="button" type="button">
+              <CalendarDays size={18} />
+              Período
+            </button>
             <label>
-              <span>Status</span>
               <select value={routeStatusFilter} onChange={(event) => setRouteStatusFilter(event.target.value as RouteStatusFilter)}>
                 <option value="all">Todos</option>
                 <option value="pending">Pendentes</option>
                 <option value="validated">Validadas</option>
                 <option value="leader">Com líder</option>
+              </select>
+            </label>
+            <label>
+              <select value={routeKindFilter} onChange={(event) => setRouteKindFilter(event.target.value as RouteKindFilter)}>
+                <option value="all">Origem</option>
+                <option value="automatic">Automático</option>
+                <option value="manual">Manual / simulação</option>
+                <option value="test">Teste</option>
               </select>
             </label>
           </section>
