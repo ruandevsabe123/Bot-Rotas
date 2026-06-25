@@ -10,6 +10,9 @@ createRoot(document.getElementById("root") as HTMLElement).render(
 
 if ("serviceWorker" in navigator && window.location.protocol === "https:") {
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then((registration) => registration.update().catch(() => undefined))
+      .catch(() => undefined);
   });
 }

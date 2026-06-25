@@ -1,5 +1,5 @@
-const CACHE_NAME = "bot-rotas-shell-v1";
-const SHELL_ASSETS = ["/", "/manifest.webmanifest", "/bot-icon-512.png", "/bot-icon-maskable-512.png"];
+const CACHE_NAME = "bot-rotas-shell-v2";
+const SHELL_ASSETS = ["/manifest.webmanifest", "/bot-icon-512.png", "/bot-icon-maskable-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -20,7 +20,10 @@ self.addEventListener("fetch", (event) => {
   if (url.pathname.startsWith("/api/") || url.pathname === "/events" || url.pathname === "/qr.svg") return;
   if (event.request.method !== "GET") return;
 
-  event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request))
-  );
+  if (event.request.mode === "navigate" || url.pathname === "/") {
+    event.respondWith(fetch(event.request).catch(() => caches.match("/")));
+    return;
+  }
+
+  event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
 });
