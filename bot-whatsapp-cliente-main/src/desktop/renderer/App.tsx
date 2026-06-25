@@ -673,10 +673,15 @@ function RouteRow({ route, onValidate }: { route: RouteDispatch; onValidate?: ()
         </div>
       ) : null}
       {!route.validated && onValidate ? (
-        <button className="button accent route-validate-button" type="button" onClick={onValidate}>
-          <CheckCircle2 size={18} />
-          Validar rota
-        </button>
+        <div className="route-action-stack">
+          <button className="button accent route-validate-button" type="button" onClick={onValidate}>
+            <CheckCircle2 size={18} />
+            Validar
+          </button>
+          <button className="button route-review-button" type="button">
+            Revisar
+          </button>
+        </div>
       ) : null}
     </article>
   );
