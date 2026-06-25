@@ -79,6 +79,7 @@ type PendingConfirmation = {
 type AppTab = "home" | "groups" | "messages" | "test" | "settings";
 type GroupEditor = "target" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
+type AdminMainTab = "dashboard" | "validations" | "history" | "alerts" | "clients";
 type RouteStatusFilter = "all" | "pending" | "validated" | "leader";
 type RouteKindFilter = "all" | "automatic" | "manual" | "test";
 type RouteHistoryTab = "automatic" | "manual" | "test";
@@ -970,6 +971,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [supportDashboard, setSupportDashboard] = useState<AdminSupportMessagesSnapshot>({ messages: [], unread: 0 });
   const [adminLogs, setAdminLogs] = useState<AdminLogEntry[]>([]);
   const [activeSection, setActiveSection] = useState<AdminSection>();
+  const [activeAdminTab, setActiveAdminTab] = useState<AdminMainTab>("dashboard");
   const [editor, setEditor] = useState<UserEditorState>();
   const [detail, setDetail] = useState<AdminUserDetail>();
   const [busy, setBusy] = useState(false);
@@ -1230,161 +1232,341 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const manualRoutes = filteredRoutes.filter((route) => ["manual", "simulation"].includes(getRouteTrigger(route)));
   const testRoutes = filteredRoutes.filter((route) => route.mode === "test" || ["warmup", "target-simulation"].includes(getRouteTrigger(route)));
   const latestTestRoute = testRoutes[0];
+  const validatedRoutes = filteredRoutes.filter((route) => route.validated);
+  const liveActivity = [
+    ...filteredLogs.slice(0, 6).map((log) => ({
+      id: `log-${log.clientEmail}-${log.id}`,
+      time: log.timestamp,
+      title: log.message,
+      detail: log.clientEmail,
+      tone: log.level === "error" ? "red" : log.level === "success" ? "green" : "blue"
+    })),
+    ...filteredRoutes.slice(0, 4).map((route) => ({
+      id: `route-${route.id}`,
+      time: route.updatedAt,
+      title: `${getRouteTriggerLabel(route)} · ${route.confirmedCount}/${route.totalCount} enviada(s)`,
+      detail: `${route.groupName || route.groupJid} · ${route.clientEmail}`,
+      tone: route.mode === "test" ? "purple" : "yellow"
+    }))
+  ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 8);
+  const alerts = [
+    ...filteredPendingRoutes.map((route) => ({
+      id: `pending-${route.id}`,
+      title: "Validação pendente",
+      detail: `${route.groupName || route.groupJid} · ${route.reactions.length} reação(ões)`,
+      time: route.updatedAt,
+      tone: "red" as const
+    })),
+    ...filteredSupportMessages.filter((message) => !message.read).map((message) => ({
+      id: `support-${message.id}`,
+      title: "Mensagem de suporte",
+      detail: `${message.email}: ${message.message}`,
+      time: message.createdAt,
+      tone: "yellow" as const
+    })),
+    ...filteredLogs.filter((log) => log.level === "error").slice(0, 8).map((log) => ({
+      id: `error-${log.clientEmail}-${log.id}`,
+      title: "Erro no bot",
+      detail: `${log.clientEmail}: ${log.message}`,
+      time: log.timestamp,
+      tone: "red" as const
+    }))
+  ].sort((a, b) => new Date(b.time).getTime() - new Date(a.time).getTime()).slice(0, 30);
+  const adminTabs: Array<{ id: AdminMainTab; label: string; Icon: typeof Home; badge?: number }> = [
+    { id: "dashboard", label: "Dashboard", Icon: Home },
+    { id: "validations", label: "Validações", Icon: ShieldCheck, badge: filteredPendingRoutes.length },
+    { id: "history", label: "Histórico", Icon: Clock3 },
+    { id: "alerts", label: "Alertas", Icon: AlertTriangle, badge: alerts.length },
+    { id: "clients", label: "Clientes", Icon: UserPlus, badge: onlineClients }
+  ];
 
   return (
-    <main className="app-shell admin-shell admin-console">
-      <section className="admin-console-header">
+    <main className="app-shell admin-shell admin-mobile-shell">
+      <section className="admin-mobile-header">
+        <span className="admin-app-icon"><Activity size={24} /></span>
         <div>
-          <p className="eyebrow">Central de comando</p>
-          <h1>Painel dos disparos</h1>
-          <span>{activeClientLabel} · dados ao vivo</span>
+          <h1>{activeAdminTab === "validations" ? "Validações e histórico" : activeAdminTab === "history" ? "Histórico permanente" : activeAdminTab === "alerts" ? "Alertas e notificações" : activeAdminTab === "clients" ? "Clientes" : "Central de comando"}</h1>
+          <p>{activeAdminTab === "dashboard" ? "Dados ao vivo de todos os clientes" : activeClientLabel}</p>
         </div>
-        <div className="admin-header-actions">
-          <button className="button" type="button" onClick={refresh}>
-            <RefreshCw size={18} />
-            Atualizar
-          </button>
-          <button className="icon-button" title="Configurações" type="button" onClick={() => setActiveSection("settings")}>
-            <Settings size={20} />
-          </button>
-        </div>
+        <button className="icon-button alert-button" title="Alertas" type="button" onClick={() => setActiveAdminTab("alerts")}>
+          {alerts.length ? <b>{alerts.length}</b> : null}
+          <AlertTriangle size={20} />
+        </button>
+        <button className="icon-button" title="Configurações" type="button" onClick={() => setActiveSection("settings")}>
+          <Settings size={20} />
+        </button>
       </section>
 
-      <section className="admin-studio">
-        <aside className="admin-action-rail" aria-label="Navegação do admin">
-          <button className="admin-rail-item critical" type="button" onClick={() => setActiveSection("reactions")}>
-            <AlertTriangle size={20} />
-            <span>Validar</span>
-            <strong>{filteredPendingRoutes.length}</strong>
-          </button>
-          <button className="admin-rail-item" type="button" onClick={() => setActiveSection("logs")}>
-            <Activity size={20} />
-            <span>Logs</span>
-            <strong>{unreadLogCount || filteredLogs.length}</strong>
-          </button>
-          <button className="admin-rail-item warm" type="button" onClick={() => setActiveSection("routes")}>
-            <Route size={20} />
-            <span>Disparos</span>
-            <strong>{filteredRoutes.length}</strong>
-          </button>
-          <button className="admin-rail-item" type="button" onClick={() => setActiveSection("users")}>
-            <ShieldCheck size={20} />
-            <span>Clientes</span>
-            <strong>{usersDashboard.users.length}</strong>
-          </button>
-          <button className="admin-rail-item success" type="button" onClick={() => setActiveSection("support")}>
-            <MessageSquareText size={20} />
-            <span>Suporte</span>
-            <strong>{filteredUnreadSupport}</strong>
-          </button>
-        </aside>
+      <section className="admin-mobile-filters">
+        <label>
+          <span>Cliente</span>
+          <select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
+            <option value="all">Todos os clientes</option>
+            {clientOptions.map((user) => (
+              <option key={user.email} value={user.email}>{user.email}</option>
+            ))}
+          </select>
+        </label>
+        <button className="button" type="button" onClick={refresh}>
+          <RefreshCw size={18} />
+          Atualizar
+        </button>
+      </section>
 
-        <section className="admin-main-stage">
-          <section className="admin-hero-board">
-            <div className="admin-hero-copy">
-              <p className="panel-label">Prioridade agora</p>
-              <h2>{filteredPendingRoutes.length ? "Reações aguardando validação" : "Fila limpa"}</h2>
-              <p>{filteredPendingRoutes.length ? "Abra a fila, confira o líder e valide manualmente a rota certa." : "Nenhuma reação pendente para o filtro atual."}</p>
-              <div className="admin-hero-actions">
-                <button className="button primary" type="button" onClick={() => setActiveSection("reactions")}>
-                  Abrir validações
-                </button>
-                <button className="button" type="button" onClick={() => setActiveSection("logs")}>
-                  Ver logs ao vivo
-                </button>
-              </div>
-            </div>
-            <div className="admin-hero-number">
-              <span>{filteredPendingRoutes.length}</span>
-              <small>pendentes</small>
-            </div>
+      {activeAdminTab === "dashboard" ? (
+        <section className="admin-tab-page">
+          <section className="command-metrics-grid">
+            <AdminMetric Icon={UserPlus} tone="green" title="Clientes online" value={onlineClients} detail="agora" />
+            <AdminMetric Icon={Send} tone="yellow" title="Disparos hoje" value={filteredRoutes.length} detail={`${validatedRoutes.length} validadas`} />
+            <AdminMetric Icon={MessageSquareText} tone="blue" title="Reações" value={filteredRoutes.reduce((total, route) => total + route.reactions.length, 0)} detail="recebidas" />
+            <AdminMetric Icon={Activity} tone="blue" title="Logs ao vivo" value={filteredLogs.length} detail="agora" />
+            <AdminMetric Icon={Route} tone="green" title="Grupos ativos" value={new Set(filteredRoutes.map((route) => route.groupJid).filter(Boolean)).size} detail="estáveis" />
+            <AdminMetric Icon={Zap} tone="yellow" title="Latência média" value="ao vivo" detail="por cliente" />
           </section>
 
-          <section className="admin-filter-dock">
-            <div className="admin-filter-title">
-              <SlidersHorizontal size={18} />
-              <span>Filtros</span>
+          <article className="command-card queue-card">
+            <span className="command-card-icon"><Send size={22} /></span>
+            <div>
+              <h2>Fila de envio</h2>
+              <p>{filteredRoutes.filter((route) => route.status === "sending").length} mensagens aguardando</p>
             </div>
+            <button className="button" type="button" onClick={() => setActiveAdminTab("history")}>Ver fila</button>
+          </article>
+
+          <article className="command-card validation-card">
+            <span className="command-card-icon danger"><AlertTriangle size={22} /></span>
+            <div>
+              <h2>Validações pendentes</h2>
+              <p>Fila aberta · aguardando validação manual</p>
+              <div className="validation-mini-row">
+                <span>Na fila <b>{filteredPendingRoutes.length}</b></span>
+                <span>Aguardando líder <b>{filteredPendingRoutes.filter((route) => route.reactions.some((reaction) => reaction.isAdmin)).length}</b></span>
+                <span>Prontas <b>{filteredPendingRoutes.filter((route) => route.reactions.length).length}</b></span>
+              </div>
+            </div>
+            <strong>{filteredPendingRoutes.length}</strong>
+            <button className="button" type="button" onClick={() => setActiveAdminTab("validations")}>Abrir fila</button>
+          </article>
+
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Atividade ao vivo</p>
+                <h2>Últimos eventos</h2>
+              </div>
+              <button className="button" type="button" onClick={() => setActiveAdminTab("alerts")}>Ver tudo</button>
+            </div>
+            <div className="live-activity-list">
+              {liveActivity.length ? liveActivity.map((item) => (
+                <div className={`live-activity-row tone-${item.tone}`} key={item.id}>
+                  <span />
+                  <time>{new Date(item.time).toLocaleTimeString("pt-BR")}</time>
+                  <p>{item.title}</p>
+                  <small>{item.detail}</small>
+                </div>
+              )) : <p className="qr-empty">Nenhuma atividade ainda.</p>}
+            </div>
+          </article>
+
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Histórico por origem</p>
+                <h2>Resumo</h2>
+              </div>
+              <button className="button" type="button" onClick={() => setActiveAdminTab("history")}>Ver tudo</button>
+            </div>
+            <div className="origin-summary-grid">
+              <button type="button" onClick={() => { setRouteKindFilter("automatic"); setActiveAdminTab("history"); }}>
+                <Zap size={22} />
+                <strong>{automaticRoutes.length}</strong>
+                <span>Automático</span>
+                <small>Abertura real do grupo alvo</small>
+              </button>
+              <button type="button" onClick={() => { setRouteKindFilter("manual"); setActiveAdminTab("history"); }}>
+                <Send size={22} />
+                <strong>{manualRoutes.length}</strong>
+                <span>Manual / Simulação</span>
+                <small>Clique manual e simulação</small>
+              </button>
+              <button type="button" onClick={() => { setRouteKindFilter("test"); setActiveAdminTab("history"); }}>
+                <TestTube2 size={22} />
+                <strong>{testRoutes.length}</strong>
+                <span>Teste / mensagens</span>
+                <small>Aquecimento e simulação alvo</small>
+              </button>
+            </div>
+          </article>
+
+          <article className="command-card test-monitor-card">
+            <span className="command-card-icon purple"><TestTube2 size={22} /></span>
+            <div>
+              <h2>Grupo de teste</h2>
+              <p>{latestTestRoute?.groupName || "Sem teste recente"}</p>
+              <small>{latestTestRoute ? `${latestTestRoute.clientEmail} · ${latestTestRoute.confirmedCount}/${latestTestRoute.totalCount} mensagens` : "Apenas monitoramento no admin"}</small>
+            </div>
+            <button className="button" type="button" onClick={() => { setRouteKindFilter("test"); setActiveAdminTab("history"); }}>Ver detalhes</button>
+          </article>
+        </section>
+      ) : null}
+
+      {activeAdminTab === "validations" ? (
+        <section className="admin-tab-page">
+          <div className="admin-subtabs">
+            <button className={routeStatusFilter === "pending" ? "active" : ""} type="button" onClick={() => setRouteStatusFilter("pending")}>Pendentes <b>{filteredPendingRoutes.length}</b></button>
+            <button className={routeStatusFilter === "validated" ? "active" : ""} type="button" onClick={() => setRouteStatusFilter("validated")}>Validadas <b>{validatedRoutes.length}</b></button>
+            <button className={routeStatusFilter === "all" ? "active" : ""} type="button" onClick={() => setRouteStatusFilter("all")}>Histórico</button>
+          </div>
+          <section className="command-metrics-grid compact">
+            <AdminMetric Icon={AlertTriangle} tone="red" title="Pendentes" value={filteredPendingRoutes.length} detail="para validar" />
+            <AdminMetric Icon={CheckCircle2} tone="green" title="Validadas" value={validatedRoutes.length} detail="no período" />
+            <AdminMetric Icon={MessageSquareText} tone="yellow" title="Reações" value={filteredRoutes.reduce((total, route) => total + route.reactions.length, 0)} detail="recebidas" />
+            <AdminMetric Icon={UserPlus} tone="blue" title="Clientes online" value={onlineClients} detail="no momento" />
+          </section>
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Fila de validação</p>
+                <h2>{filteredPendingRoutes.length} pendente(s)</h2>
+              </div>
+              <button className="button accent" type="button" onClick={() => filteredPendingRoutes.forEach((route) => void validateRoute(route.id))}>Validar todas</button>
+            </div>
+            <div className="validation-list">
+              {filteredPendingRoutes.length ? filteredPendingRoutes.map((route) => <RouteRow key={`mobile-pending-${route.id}`} route={route} onValidate={() => validateRoute(route.id)} />) : <p className="qr-empty">Nenhuma validação pendente.</p>}
+            </div>
+          </article>
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Validadas recentemente</p>
+                <h2>Auditoria</h2>
+              </div>
+            </div>
+            <div className="validation-list">
+              {validatedRoutes.slice(0, 8).map((route) => <RouteRow key={`mobile-validated-${route.id}`} route={route} />)}
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {activeAdminTab === "history" ? (
+        <section className="admin-tab-page">
+          <section className="admin-mobile-filters in-page">
             <label>
-              <span>Cliente</span>
-              <select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
-                <option value="all">Todos os clientes</option>
-                {clientOptions.map((user) => (
-                  <option key={user.email} value={user.email}>{user.email}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Tipo</span>
+              <span>Origem</span>
               <select value={routeKindFilter} onChange={(event) => setRouteKindFilter(event.target.value as RouteKindFilter)}>
-                <option value="all">Todos os tipos</option>
-                <option value="automatic">Alvo automático</option>
+                <option value="all">Todas</option>
+                <option value="automatic">Automático</option>
                 <option value="manual">Manual / simulação</option>
-                <option value="test">Teste / 15 mensagens</option>
+                <option value="test">Teste</option>
               </select>
             </label>
             <label>
               <span>Status</span>
               <select value={routeStatusFilter} onChange={(event) => setRouteStatusFilter(event.target.value as RouteStatusFilter)}>
-                <option value="all">Todos os status</option>
+                <option value="all">Todos</option>
                 <option value="pending">Pendentes</option>
-                <option value="leader">Com reação de líder</option>
-                <option value="validated">Validados</option>
+                <option value="validated">Validadas</option>
+                <option value="leader">Com líder</option>
               </select>
             </label>
-            <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteKindFilter("all"); setRouteStatusFilter("all"); }}>
-              Limpar
-            </button>
           </section>
-
-          <section className="admin-kpi-strip">
-            <div><span>Rotas</span><strong>{filteredRoutes.length}</strong></div>
-            <div><span>Validadas</span><strong>{filteredRoutes.filter((route) => route.validated).length}</strong></div>
-            <div><span>Reações</span><strong>{filteredRoutes.reduce((total, route) => total + route.reactions.length, 0)}</strong></div>
-            <div><span>Clientes online</span><strong>{onlineClients}</strong></div>
-            <div><span>Testes</span><strong>{testRoutes.length}</strong></div>
-            <div><span>Mensagens</span><strong>{filteredUnreadSupport}</strong></div>
-          </section>
-
-          <section className="admin-panorama">
-            <article className="admin-preview-panel test-audit-panel">
-              <div className="admin-preview-heading">
-                <div>
-                  <p className="panel-label">Grupo de teste</p>
-                  <h2>{latestTestRoute?.groupName || "Sem teste recente"}</h2>
-                </div>
-                <button className="button" type="button" onClick={() => { setRouteKindFilter("test"); setActiveSection("routes"); }}>
-                  Ver histórico
-                </button>
-              </div>
-              <div className="detail-list">
-                <span>Cliente: <b>{latestTestRoute?.clientEmail || activeClientLabel}</b></span>
-                <span>Status: <b>{latestTestRoute ? (latestTestRoute.status === "sent" ? "finalizado" : latestTestRoute.status) : "parado"}</b></span>
-                <span>Mensagens: <b>{latestTestRoute ? `${latestTestRoute.confirmedCount}/${latestTestRoute.totalCount}` : "0/0"}</b></span>
-                <span>Último evento: <b>{latestTestRoute ? formatShortDate(latestTestRoute.updatedAt) : "Sem registro"}</b></span>
-              </div>
-            </article>
-            <article className="admin-preview-panel">
-              <div className="admin-preview-heading">
-                <div>
-                  <p className="panel-label">Histórico de disparo</p>
-                  <h2>Separado por origem</h2>
-                </div>
-                <button className="button" type="button" onClick={() => setActiveSection("routes")}>Ver tudo</button>
-              </div>
-              <AdminRouteHistory
-                automaticRoutes={automaticRoutes}
-                manualRoutes={manualRoutes}
-                testRoutes={testRoutes}
-                activeTab={routeHistoryTab}
-                onTabChange={setRouteHistoryTab}
-                compact
-              />
-            </article>
-
-          </section>
+          <AdminRouteHistory
+            automaticRoutes={automaticRoutes}
+            manualRoutes={manualRoutes}
+            testRoutes={testRoutes}
+            activeTab={routeHistoryTab}
+            onTabChange={setRouteHistoryTab}
+            onValidate={validateRoute}
+          />
         </section>
-      </section>
+      ) : null}
+
+      {activeAdminTab === "alerts" ? (
+        <section className="admin-tab-page">
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Alertas</p>
+                <h2>{alerts.length} notificação(ões)</h2>
+              </div>
+              <button className="button" type="button" onClick={enableNotifications}>Ativar notificação</button>
+            </div>
+            <div className="alert-list">
+              {alerts.length ? alerts.map((alert) => (
+                <article className={`alert-row tone-${alert.tone}`} key={alert.id}>
+                  <AlertTriangle size={18} />
+                  <div>
+                    <strong>{alert.title}</strong>
+                    <p>{alert.detail}</p>
+                  </div>
+                  <time>{formatShortDate(alert.time)}</time>
+                </article>
+              )) : <p className="qr-empty">Nenhum alerta no momento.</p>}
+            </div>
+          </article>
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Suporte</p>
+                <h2>{filteredUnreadSupport} não lida(s)</h2>
+              </div>
+            </div>
+            <div className="support-message-list">
+              {filteredSupportMessages.length ? filteredSupportMessages.map((message) => (
+                <SupportMessageRow key={message.id} message={message} onMarkRead={() => readSupportMessage(message.id)} />
+              )) : <p className="qr-empty">Nenhuma mensagem de cliente ainda.</p>}
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {activeAdminTab === "clients" ? (
+        <section className="admin-tab-page">
+          <article className="command-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Clientes</p>
+                <h2>{usersDashboard.users.length} usuário(s)</h2>
+              </div>
+              <button className="button primary" type="button" onClick={() => setEditor(emptyUserEditor)}>
+                <UserPlus size={18} />
+                Adicionar
+              </button>
+            </div>
+            {editor ? (
+              <UserEditor
+                value={editor}
+                onChange={setEditor}
+                onCancel={() => setEditor(undefined)}
+                onSave={() => saveUser()}
+                busy={busy}
+              />
+            ) : null}
+            <div className="user-list">
+              {usersDashboard.users.map((user) => (
+                <AdminUserRow
+                  key={user.email}
+                  user={user}
+                  onDetails={() => openDetails(user.email)}
+                  onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color })}
+                  onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color })}
+                />
+              ))}
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      <nav className="bottom-nav admin-bottom-nav" aria-label="Navegação do admin">
+        {adminTabs.map(({ id, label, Icon, badge }) => (
+          <button className={activeAdminTab === id ? "active" : ""} key={id} type="button" onClick={() => setActiveAdminTab(id)}>
+            {badge ? <b className="nav-badge">{badge}</b> : null}
+            <Icon size={22} />
+            <span>{label}</span>
+          </button>
+        ))}
+      </nav>
 
       {error ? <p className="login-error">{error}</p> : null}
 
