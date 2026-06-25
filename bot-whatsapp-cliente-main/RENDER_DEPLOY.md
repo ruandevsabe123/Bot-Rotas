@@ -4,10 +4,10 @@ Este projeto agora pode rodar como painel web mobile-first no Render.
 
 ## Variáveis obrigatórias/recomendadas
 
-- `PANEL_EMAIL`: email de login do cliente. Obrigatório em produção quando usar apenas um cliente.
-- `PANEL_PASSWORD`: senha de login do cliente. Obrigatório porque o link do Render é público.
-- `PANEL_USERS`: opcional para multiusuário, no formato `email1:senha1,email2:senha2`. Cada email recebe sessão e configuração separadas.
-- `DATA_DIR`: no `render.yaml` já está como `/opt/render/project/src/data`.
+- `PANEL_USERS`: obrigatório em produção, no formato `emailadmin:senhaadmin:admin,emailcliente:senhacliente:client`. As senhas não são impressas no log.
+- `PANEL_ADMIN_EMAILS`: obrigatório para liberar acesso admin, no formato `emailadmin` ou `email1,email2`.
+- `PANEL_SESSION_SECRET`: recomendado/obrigatório para manter sessões estáveis entre restarts. Use um valor longo e aleatório.
+- `DATA_DIR`: no `render.yaml` já está como `/data`.
 - `BOT_PHONE_NUMBER`: opcional. Use somente se quiser gerar código de pareamento pelo número em vez de QR Code. Formato: `55DDDNUMERO`, sem `+`.
 - `KEEP_ALIVE_URL`: opcional, mas recomendado no plano Free para manter o bot acordado quando estiver armado. Use a URL pública do Render, por exemplo `https://seu-servico.onrender.com`.
 
@@ -22,12 +22,12 @@ npm install && npm run build
 Start:
 
 ```bash
-npm start
+node dist/server.js
 ```
 
 ## Persistência
 
-O `render.yaml` cria um disco em `/opt/render/project/src/data`. É nele que ficam:
+O `render.yaml` cria um disco em `/data`. É nele que ficam:
 
 - `auth_info`: sessão do WhatsApp.
 - `config.json`: grupos, nome e mensagens salvas.
@@ -43,7 +43,7 @@ No plano Free, o Render dorme após inatividade. Se você configurar `KEEP_ALIVE
 ## Uso
 
 1. Abra o link do Render pelo celular.
-2. Faça login com o email de `PANEL_EMAIL` e a senha de `PANEL_PASSWORD`.
+2. Faça login com um dos emails/senhas configurados em `PANEL_USERS`.
 3. Toque em `Conectar WhatsApp`.
 4. Escaneie o QR Code pelo WhatsApp.
 5. Atualize grupos, salve grupo alvo/teste e mensagens.

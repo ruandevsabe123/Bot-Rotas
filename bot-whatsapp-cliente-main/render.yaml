@@ -4,17 +4,17 @@ services:
     env: node
     plan: starter
     buildCommand: npm install && npm run build
-    startCommand: npm start
+    startCommand: node dist/server.js
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATA_DIR
-        value: /opt/render/project/src/data
-      - key: PANEL_EMAIL
-        sync: false
-      - key: PANEL_PASSWORD
-        sync: false
+        value: /data
       - key: PANEL_USERS
+        sync: false
+      - key: PANEL_ADMIN_EMAILS
+        sync: false
+      - key: PANEL_SESSION_SECRET
         sync: false
       - key: KEEP_ALIVE_URL
         sync: false
@@ -22,5 +22,5 @@ services:
         sync: false
     disk:
       name: bot-whatsapp-data
-      mountPath: /opt/render/project/src/data
+      mountPath: /data
       sizeGB: 1

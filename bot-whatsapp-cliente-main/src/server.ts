@@ -11,8 +11,6 @@ import { SupportMessageStore } from "./supportMessageStore";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
-const panelEmail = String(process.env.PANEL_EMAIL || "").trim().toLowerCase();
-const panelPassword = String(process.env.PANEL_PASSWORD || "");
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
@@ -86,50 +84,61 @@ function createUserRecord(email: string, password: string, role: PanelUserRole, 
   };
 }
 
-function parsePanelUsers(envUsers: string | undefined, defaultEmail: string, defaultPassword: string, adminEmails: Set<string>) {
+function parsePanelUsers(envUsers: string | undefined, adminEmails: Set<string>) {
   const users = new Map<string, PanelUserRecord>();
   const raw = String(envUsers || "").trim();
   for (const part of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
-    const [email, password, role, color] = part.split(":").map((item) => item.trim());
+    const [email, password, , color] = part.split(":").map((item) => item.trim());
     if (!email || !password) continue;
     const normalizedEmail = email.toLowerCase();
-    users.set(normalizedEmail, createUserRecord(normalizedEmail, password, role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "client", {
+    users.set(normalizedEmail, createUserRecord(normalizedEmail, password, adminEmails.has(normalizedEmail) ? "admin" : "client", {
       color: normalizeUserColor(color, normalizedEmail)
     }));
   }
-  if (defaultEmail && defaultPassword) {
-    const normalizedEmail = defaultEmail.toLowerCase();
-    users.set(normalizedEmail, createUserRecord(normalizedEmail, defaultPassword, adminEmails.has(normalizedEmail) ? "admin" : "client"));
-  }
   return users;
 }
 
-function mergeStoredUsers(users: Map<string, PanelUserRecord>, storedUsers: StoredPanelUser[]) {
+function mergeStoredUsers(users: Map<string, PanelUserRecord>, storedUsers: StoredPanelUser[], adminEmails: Set<string>) {
   for (const storedUser of storedUsers) {
-    users.set(storedUser.email, createUserRecord(storedUser.email, storedUser.password, storedUser.role, storedUser));
+    const configuredUser = users.get(storedUser.email);
+    if (!configuredUser) continue;
+    users.set(storedUser.email, createUserRecord(storedUser.email, configuredUser.password, adminEmails.has(storedUser.email) ? "admin" : "client", {
+      ...storedUser,
+      password: configuredUser.password,
+      role: adminEmails.has(storedUser.email) ? "admin" : "client"
+    }));
   }
   return users;
 }
 
-const configuredAdminEmails = new Set(parseList(process.env.PANEL_ADMIN_EMAILS || process.env.ADMIN_EMAILS).map((item) => item.toLowerCase()));
+const configuredAdminEmails = new Set(parseList(process.env.PANEL_ADMIN_EMAILS).map((item) => item.toLowerCase()));
 const adminPhoneNumbers = parseList(process.env.ADMIN_PHONE_NUMBERS || process.env.ADMIN_PHONES)
   .map(normalizePhone)
   .filter(Boolean);
 const panelUserStore = new PanelUserStore(path.join(dataDir, "panel_users.json"));
 const supportMessageStore = new SupportMessageStore(path.join(dataDir, "support_messages.json"));
 const panelUsers = mergeStoredUsers(parsePanelUsers(
-  process.env.PANEL_USERS || process.env.PANEL_USER || process.env.PAINEL_USER,
-  panelEmail,
-  panelPassword,
+  process.env.PANEL_USERS,
   configuredAdminEmails
-), panelUserStore.all());
-const panelSessionSecret = process.env.PANEL_SESSION_SECRET || Array.from(panelUsers.values())[0]?.password || panelPassword;
+), panelUserStore.all(), configuredAdminEmails);
+const panelSessionSecret = process.env.PANEL_SESSION_SECRET || crypto.randomBytes(32).toString("base64url");
 const keepAliveUrl =
   process.env.KEEP_ALIVE_URL ||
   process.env.RENDER_EXTERNAL_URL ||
   (process.env.RENDER_EXTERNAL_HOSTNAME ? `https://${process.env.RENDER_EXTERNAL_HOSTNAME}` : "");
+const primaryPanelEmail = Array.from(panelUsers.keys())[0] || "";
 
-console.log("Painel de usuarios habilitados:", Array.from(panelUsers.keys()).join(", "));
+console.log("Ambiente:", process.env.RENDER ? "Render/produção" : process.env.NODE_ENV === "production" ? "produção" : "desenvolvimento");
+if (!String(process.env.PANEL_USERS || "").trim()) {
+  console.error("PANEL_USERS não configurado. Login ficará bloqueado até configurar PANEL_USERS=email:senha:role nas variáveis de ambiente.");
+}
+if (!configuredAdminEmails.size) {
+  console.error("PANEL_ADMIN_EMAILS não configurado. Nenhum usuário terá acesso de administrador.");
+}
+if (!process.env.PANEL_SESSION_SECRET) {
+  console.warn("PANEL_SESSION_SECRET não configurado. Sessões serão invalidadas a cada restart.");
+}
+console.log("Painel de usuarios habilitados:", Array.from(panelUsers.keys()).join(", ") || "nenhum");
 console.log("Administradores do painel:", Array.from(panelUsers.entries()).filter(([, user]) => user.role === "admin").map(([email]) => email).join(", ") || "nenhum");
 
 type Client = {
@@ -188,7 +197,7 @@ function getBotForEmail(email: string) {
   const userRouteStorePath = path.join(userDir, "route_history.json");
   const userLogStorePath = path.join(userDir, "bot_logs.json");
 
-  if (normalizedEmail === panelEmail) {
+  if (normalizedEmail === primaryPanelEmail) {
     const legacyAuthDir = path.join(dataDir, "auth_info");
     const legacyConfigPath = path.join(dataDir, "config.json");
     if (!fs.existsSync(userAuthDir) && fs.existsSync(legacyAuthDir)) {
@@ -752,7 +761,7 @@ const server = http.createServer(async (request, response) => {
       const email = String(body.email || "").trim().toLowerCase();
       const password = String(body.password || "");
       if (!panelUsers.size) {
-        sendJson(response, 503, { error: "Configure PANEL_EMAIL e PANEL_PASSWORD ou PANEL_USERS no Render." });
+        sendJson(response, 503, { error: "Configure PANEL_USERS no Render para liberar o login." });
         return;
       }
       const expectedPassword = panelUsers.get(email);
@@ -1000,7 +1009,7 @@ server.listen(port, "0.0.0.0", () => {
   }
   console.log(`Dados persistentes: ${dataDir}`);
   if (!panelUsers.size) {
-    console.log("Aviso: defina PANEL_EMAIL e PANEL_PASSWORD ou PANEL_USERS no Render para liberar e proteger o painel publico.");
+    console.log("Aviso: defina PANEL_USERS e PANEL_ADMIN_EMAILS no Render para liberar e proteger o painel publico.");
   }
   startKeepAlive();
   startDailySessionReset();
