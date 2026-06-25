@@ -138,6 +138,36 @@ const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
   { id: "settings", label: "Ajustes", Icon: Settings }
 ];
 
+function toDateInputValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getCurrentMonthStartInput() {
+  const now = new Date();
+  return toDateInputValue(new Date(now.getFullYear(), now.getMonth(), 1));
+}
+
+function parseDateRange(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T23:59:59.999`);
+  const startMs = Number.isNaN(start.getTime()) ? 0 : start.getTime();
+  const endMs = Number.isNaN(end.getTime()) ? Date.now() : end.getTime();
+  return {
+    startMs: Math.min(startMs, endMs),
+    endMs: Math.max(startMs, endMs)
+  };
+}
+
+function formatReportDateRange(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+  const format = (date: Date) => Number.isNaN(date.getTime()) ? "--/--/----" : date.toLocaleDateString("pt-BR");
+  return `${format(start)} ate ${format(end)}`;
+}
+
 function normalizeMessages(senderName: string, codes: string[]) {
   return codes.map((code) => `${senderName.trim()} ${code.trim().toUpperCase()}`.trim()).filter(Boolean);
 }
@@ -1107,6 +1137,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [cleanupBusy, setCleanupBusy] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [actionToast, setActionToast] = useState("");
+  const [reportStartDate, setReportStartDate] = useState(getCurrentMonthStartInput);
+  const [reportEndDate, setReportEndDate] = useState(() => toDateInputValue(new Date()));
 
   const clientOptions = useMemo(
     () => usersDashboard.users.filter((user) => user.role === "client"),
@@ -1460,22 +1492,21 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     }
   }, [activeAdminTab, notificationsOpen, filteredPendingRoutes.length, alerts.length, onlineClients]);
 
-  const currentMonthLabel = new Date().toLocaleDateString("pt-BR", { month: "long", year: "numeric" });
+  const reportPeriodLabel = formatReportDateRange(reportStartDate, reportEndDate);
   const monthlyReport = useMemo(() => {
-    const now = new Date();
-    const month = now.getMonth();
-    const year = now.getFullYear();
+    const { startMs, endMs } = parseDateRange(reportStartDate, reportEndDate);
     return clientOptions.map((user) => {
       const routes = dashboard.routes.filter((route) => {
         const created = new Date(route.createdAt);
-        return route.clientEmail === user.email && created.getMonth() === month && created.getFullYear() === year;
+        const createdMs = created.getTime();
+        return route.clientEmail === user.email && createdMs >= startMs && createdMs <= endMs;
       });
       const valid = routes.filter((route) => getRouteDecisionStatus(route) === "validated").length;
       const rejected = routes.filter((route) => getRouteDecisionStatus(route) === "rejected").length;
       const pending = routes.filter((route) => getRouteDecisionStatus(route) === "pending").length;
       return { user, routes, valid, rejected, pending };
     }).sort((a, b) => b.valid - a.valid || b.routes.length - a.routes.length);
-  }, [clientOptions, dashboard.routes]);
+  }, [clientOptions, dashboard.routes, reportEndDate, reportStartDate]);
 
   const adminTabs: Array<{ id: AdminMainTab; label: string; Icon: typeof Home; badge?: number }> = [
     { id: "dashboard", label: "Dashboard", Icon: Home },
@@ -1807,22 +1838,38 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             <div className="panel-heading">
               <div>
                 <p className="panel-label">Relatório</p>
-                <h2>{currentMonthLabel}</h2>
+                <h2>{reportPeriodLabel}</h2>
               </div>
               <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("validated"); setActiveAdminTab("history"); }}>Abrir validadas</button>
+            </div>
+            <div className="report-date-filter">
+              <label>
+                <CalendarDays size={18} />
+                <span>Data inicial</span>
+                <input type="date" value={reportStartDate} onChange={(event) => setReportStartDate(event.target.value)} />
+              </label>
+              <label>
+                <CalendarDays size={18} />
+                <span>Data final</span>
+                <input type="date" value={reportEndDate} onChange={(event) => setReportEndDate(event.target.value)} />
+              </label>
             </div>
             <div className="report-list">
               {monthlyReport.length ? monthlyReport.map((item) => (
                 <article className="report-row" key={`report-${item.user.email}`} style={colorStyle(item.user.color)}>
-                  <span className="client-color-dot" />
-                  <div>
-                    <strong>{item.user.email}</strong>
-                    <p>{item.routes.length} rota(s) no mês</p>
+                  <div className="report-client">
+                    <span className="client-color-dot" />
+                    <div>
+                      <strong>{item.user.email}</strong>
+                      <p>{item.routes.length} rota(s) no período</p>
+                    </div>
                   </div>
-                  <b>{item.valid}</b>
-                  <small>válidas</small>
-                  <span>{item.pending} pend.</span>
-                  <span>{item.rejected} não vál.</span>
+                  <div className="report-stats">
+                    <span className="report-stat ok"><small>Válidas</small><b>{item.valid}</b></span>
+                    <span className="report-stat warn"><small>Pendentes</small><b>{item.pending}</b></span>
+                    <span className="report-stat danger"><small>Não válidas</small><b>{item.rejected}</b></span>
+                    <span className="report-stat"><small>Total</small><b>{item.routes.length}</b></span>
+                  </div>
                   <button className="button" type="button" onClick={() => { setClientFilter(item.user.email); setRouteStatusFilter("validated"); setActiveAdminTab("history"); }}>Ver</button>
                 </article>
               )) : <p className="qr-empty">Nenhum cliente no relatório.</p>}
@@ -2293,6 +2340,10 @@ export default function App() {
     return normalizeMessages(senderName, codes || []);
   }
 
+  function isHomeOperationLog(message: string) {
+    return /Bot .*ARMADO|NORMAL ARMADO|NUCLEAR ARMADO|Monitoramento desativado|Parou de escutar|FECHADO|ABRIU|Palavra de abertura|Abertura simulada|Disparo acionado|Rajada instantânea|Mensagem .*?(confirmada|enviada)|Disparo .*?(concluído|concluido|terminou)|Abertura ignorada|falhou|erro/i.test(message);
+  }
+
   function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[]) {
     const selectedGroupName = groupName || group;
     const messages = buildMessagePreview(senderName, codes);
@@ -2541,7 +2592,7 @@ export default function App() {
             groupState={snapshot.groupState}
           />
 
-          <LogsPanel logs={snapshot.logs.slice(-30)} />
+          <LogsPanel logs={snapshot.logs.filter((log) => isHomeOperationLog(log.message)).slice(-30)} />
 
           <PerformanceStrip snapshot={snapshot} />
 
