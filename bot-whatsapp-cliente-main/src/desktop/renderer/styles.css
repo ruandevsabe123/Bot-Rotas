@@ -250,120 +250,6 @@ button {
   margin-bottom: 18px;
 }
 
-.tower-open-button {
-  flex: 0 0 auto;
-  min-height: 46px;
-  border-color: rgba(53, 208, 127, 0.34);
-  color: #dfffee;
-  background:
-    linear-gradient(135deg, rgba(53, 208, 127, 0.14), transparent 48%),
-    #070a0d;
-}
-
-.tower-overlay {
-  position: fixed;
-  inset: 12px;
-  z-index: 70;
-  display: grid;
-  align-items: end;
-  pointer-events: none;
-}
-
-.tower-overlay .tower-panel {
-  pointer-events: auto;
-  max-height: calc(100dvh - 24px);
-  overflow: auto;
-}
-
-.tower-panel {
-  display: grid;
-  gap: 12px;
-  width: min(430px, 100%);
-  justify-self: center;
-  padding: 14px;
-  border: 1px solid rgba(245, 247, 248, 0.14);
-  border-radius: 8px;
-  color: #f4f7f8;
-  background:
-    linear-gradient(135deg, rgba(53, 208, 127, 0.1), transparent 38%),
-    linear-gradient(180deg, #10151b, #030405);
-  box-shadow: 0 22px 80px rgba(0, 0, 0, 0.72);
-}
-
-.tower-header,
-.tower-live .panel-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.tower-header h2 {
-  margin-top: 2px;
-  color: #ffffff;
-  font-size: 1.45rem;
-}
-
-.tower-status-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.tower-status-grid article,
-.tower-live {
-  border: 1px solid rgba(148, 163, 184, 0.14);
-  border-radius: 8px;
-  background: rgba(8, 11, 14, 0.86);
-  padding: 10px;
-}
-
-.tower-status-grid span {
-  display: block;
-  color: #a9b2bb;
-  font-size: 0.78rem;
-  font-weight: 800;
-}
-
-.tower-status-grid strong {
-  display: block;
-  margin-top: 3px;
-  color: #ffffff;
-  overflow-wrap: anywhere;
-}
-
-.tower-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.tower-timeline {
-  display: grid;
-  gap: 8px;
-  max-height: 220px;
-  overflow: auto;
-}
-
-.tower-timeline div {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  gap: 8px;
-  align-items: start;
-}
-
-.tower-timeline time {
-  color: #8e99a3;
-  font-size: 0.82rem;
-}
-
-.tower-timeline p {
-  margin: 0;
-  color: #d4dbe0;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
 .eyebrow,
 .panel-label {
   margin: 0;
@@ -3799,10 +3685,6 @@ h2 {
   .topbar {
     align-items: stretch;
     flex-direction: column;
-  }
-
-  .tower-open-button {
-    width: 100%;
   }
 
   .admin-console-header {
