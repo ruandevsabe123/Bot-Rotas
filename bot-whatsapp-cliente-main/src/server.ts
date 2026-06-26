@@ -576,6 +576,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
     case "start":
       await bot.start(typeof body.pairingPhoneNumber === "string" ? body.pairingPhoneNumber : undefined);
       break;
+    case "request-pairing-code":
+      await bot.requestPairingCode(String(body.phoneNumber || ""));
+      break;
     case "stop":
       await bot.stop();
       break;

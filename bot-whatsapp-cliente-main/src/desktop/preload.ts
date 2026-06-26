@@ -23,6 +23,7 @@ const api: DesktopApi = {
   manualDispatch: () => ipcRenderer.invoke("bot:manualDispatch"),
   simulateTargetDispatch: () => ipcRenderer.invoke("bot:simulateTargetDispatch"),
   restartBot: () => ipcRenderer.invoke("bot:restart"),
+  requestPairingCode: (payload: { phoneNumber: string }) => ipcRenderer.invoke("bot:requestPairingCode", payload),
   clearSession: () => ipcRenderer.invoke("bot:clearSession"),
   factoryReset: () => ipcRenderer.invoke("bot:factoryReset"),
   clearLogs: () => ipcRenderer.invoke("bot:clearLogs"),

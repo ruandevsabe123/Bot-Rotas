@@ -530,6 +530,34 @@ export class BotService extends EventEmitter {
     }
   }
 
+  async requestPairingCode(phoneNumber: string): Promise<string> {
+    const phone = this.normalizePairingPhone(phoneNumber);
+    if (!phone) {
+      throw new Error("Digite o número com DDI, DDD e telefone. Exemplo: 5594999999999.");
+    }
+
+    if (this.status === "connected" || this.sock?.authState?.creds?.registered) {
+      throw new Error("WhatsApp já conectado.");
+    }
+
+    this.pairingPhoneNumber = phone;
+    this.pairingCode = "";
+    this.pairingCodeRequested = false;
+
+    if (!this.sock || this.status === "disconnected" || this.status === "error") {
+      await this.start(phone);
+    }
+
+    const connectionId = this.activeConnectionId;
+    await this.requestPairingCodeIfNeeded(connectionId);
+
+    if (!this.pairingCode) {
+      throw new Error("Não foi possível gerar o código agora. Aguarde alguns instantes e tente novamente.");
+    }
+
+    return this.pairingCode;
+  }
+
   async stop() {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
@@ -1029,30 +1057,26 @@ export class BotService extends EventEmitter {
     if (this.pairingCodeRequested) return;
     if (this.sock.authState?.creds?.registered) return;
 
-    const phone = this.pairingPhoneNumber.replace(/\D/g, "");
-    if (phone.length < 10) {
+    const phone = this.normalizePairingPhone(this.pairingPhoneNumber);
+    if (!phone) {
       this.logger.warning("Número de pareamento inválido. Use formato 55 + DDD + número, sem +.");
       return;
     }
 
-    this.logger.info(`Solicitando código de pareamento para: +${phone}`);
-    console.log(`📞 Número usado no pareamento: +${phone}`);
+    this.logger.info(`Solicitando código de pareamento para: ${this.maskPhone(phone)}`);
 
     this.pairingCodeRequested = true;
     try {
-      await new Promise((resolve) => setTimeout(resolve, 500));
       if (!this.sock || connectionId !== this.activeConnectionId) return;
 
       const code = await this.sock.requestPairingCode(phone);
       this.pairingCode = code;
 
-      this.logger.success(`Código de pareamento gerado: ${code}`);
-      console.log(`\n🔐 CÓDIGO DE PAREAMENTO WHATSAPP: ${code}\n`);
+      this.logger.success("Código de pareamento gerado.");
       this.emitSnapshot();
     } catch (error) {
       this.pairingCodeRequested = false;
-      this.logger.warning(`Falha ao gerar código de pareamento: ${this.getErrorMessage(error)}`);
-      console.log("PAIRING CODE ERROR:", error);
+      this.logger.warning(`Falha ao gerar código de pareamento: ${this.getPairingErrorMessage(error)}`);
       this.emitSnapshot();
     }
   }
@@ -2373,6 +2397,25 @@ export class BotService extends EventEmitter {
   private getErrorMessage(error: unknown) {
     if (error instanceof Error) return error.message;
     return String(error);
+  }
+
+  private normalizePairingPhone(value: string) {
+    const phone = String(value || "").replace(/\D/g, "");
+    return phone.length >= 12 && phone.length <= 15 ? phone : "";
+  }
+
+  private maskPhone(phone: string) {
+    if (phone.length <= 8) return "****";
+    return `${phone.slice(0, 4)}****${phone.slice(-4)}`;
+  }
+
+  private getPairingErrorMessage(error: unknown) {
+    const message = this.getErrorMessage(error);
+    const normalized = message.toLowerCase();
+    if (normalized.includes("registered") || normalized.includes("already")) {
+      return "WhatsApp já conectado.";
+    }
+    return "Não foi possível gerar o código agora. Aguarde alguns instantes e tente novamente.";
   }
 
   private normalizePhoneFromUnknown(value: unknown): string {

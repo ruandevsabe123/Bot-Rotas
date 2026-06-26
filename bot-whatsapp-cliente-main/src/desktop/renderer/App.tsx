@@ -2197,10 +2197,18 @@ export default function App() {
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
   const [actionToast, setActionToast] = useState("");
+  const [pairingPhone, setPairingPhone] = useState("");
+  const [pairingCode, setPairingCode] = useState("");
+  const [pairingError, setPairingError] = useState("");
+  const [pairingBusy, setPairingBusy] = useState(false);
 
   function showActionToast(message: string) {
     setActionToast(message);
     window.setTimeout(() => setActionToast(""), 1000);
+  }
+
+  function sanitizePairingPhone(value: string) {
+    return value.replace(/\D/g, "");
   }
 
 
@@ -2275,6 +2283,17 @@ export default function App() {
     };
   }, [authenticated, userRole]);
 
+  useEffect(() => {
+    if (snapshot.status !== "connected") return;
+    setPairingCode("");
+    setPairingError("");
+    setPairingBusy(false);
+  }, [snapshot.status]);
+
+  useEffect(() => {
+    if (snapshot.pairingCode) setPairingCode(snapshot.pairingCode);
+  }, [snapshot.pairingCode]);
+
   const groupLabel = useMemo(() => {
     return snapshot.config.grupoAlvoNome || "Nenhum grupo alvo";
   }, [snapshot.config]);
@@ -2337,6 +2356,35 @@ export default function App() {
       return snapshot;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function requestPairingCode() {
+    const phoneNumber = sanitizePairingPhone(pairingPhone);
+    setPairingPhone(phoneNumber);
+    setPairingError("");
+
+    if (phoneNumber.length < 12) {
+      setPairingError("Digite DDI + DDD + número. Exemplo: 5594999999999.");
+      return;
+    }
+
+    setPairingBusy(true);
+    try {
+      const nextSnapshot = await botApi.requestPairingCode({ phoneNumber });
+      setSnapshot(nextSnapshot);
+      setPairingCode(nextSnapshot.pairingCode || "");
+      if (!nextSnapshot.pairingCode) {
+        setPairingError("Não consegui gerar o código agora. Aguarde alguns instantes e tente novamente.");
+      }
+    } catch (error) {
+      if (isAuthError(error)) {
+        logout(error instanceof Error ? error.message : "Entre novamente para continuar.");
+        return;
+      }
+      setPairingError(error instanceof Error ? error.message : "Não consegui gerar o código.");
+    } finally {
+      setPairingBusy(false);
     }
   }
 
@@ -2606,6 +2654,40 @@ export default function App() {
           <PerformanceStrip snapshot={snapshot} />
 
           {snapshot.qrCode || snapshot.status === "waiting_qr" ? <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} /> : null}
+          {snapshot.status !== "connected" ? (
+            <section className="panel pairing-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="panel-label">Conectar WhatsApp</p>
+                  <h2>Conectar com número</h2>
+                </div>
+                <span className="mini-badge">alternativa ao QR</span>
+              </div>
+              <p className="pairing-copy">Use quando você está com apenas um celular e não consegue escanear o QR Code.</p>
+              <div className="pairing-form">
+                <input
+                  inputMode="numeric"
+                  placeholder="5594999999999"
+                  value={pairingPhone}
+                  onChange={(event) => {
+                    setPairingPhone(sanitizePairingPhone(event.target.value));
+                    setPairingError("");
+                  }}
+                />
+                <button className="button primary" disabled={pairingBusy || pairingPhone.length < 12} type="button" onClick={requestPairingCode}>
+                  {pairingBusy ? "Gerando..." : "Gerar código"}
+                </button>
+              </div>
+              {pairingError ? <p className="pairing-error">{pairingError}</p> : null}
+              {pairingCode ? (
+                <div className="pairing-code-box">
+                  <span>Código de pareamento</span>
+                  <strong>{pairingCode}</strong>
+                  <p>Abra o WhatsApp no celular &gt; Aparelhos conectados &gt; Conectar aparelho &gt; Conectar com número de telefone &gt; digite o código acima.</p>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
         </section>
       ) : null}
 

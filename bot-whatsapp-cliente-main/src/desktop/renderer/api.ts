@@ -224,6 +224,7 @@ function createWebApi(): DesktopApi {
     startBot: (payload?: StartBotPayload) => action("start", payload),
     stopBot: () => action("stop"),
     restartBot: () => action("restart"),
+    requestPairingCode: (payload: { phoneNumber: string }) => action("request-pairing-code", payload),
     clearSession: () => action("clear-session"),
     factoryReset: () => action("factory-reset"),
     clearLogs: () => action("clear-logs"),

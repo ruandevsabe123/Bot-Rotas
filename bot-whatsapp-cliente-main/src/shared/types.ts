@@ -267,6 +267,7 @@ export type DesktopApi = {
   startBot: (payload?: StartBotPayload) => Promise<BotSnapshot>;
   stopBot: () => Promise<BotSnapshot>;
   restartBot: () => Promise<BotSnapshot>;
+  requestPairingCode: (payload: { phoneNumber: string }) => Promise<BotSnapshot>;
   clearSession: () => Promise<BotSnapshot>;
   factoryReset: () => Promise<BotSnapshot>;
   clearLogs: () => Promise<BotSnapshot>;

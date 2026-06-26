@@ -3517,6 +3517,78 @@ h2 {
   background: #ffffff;
 }
 
+.pairing-panel {
+  display: grid;
+  gap: 12px;
+  border-left: 5px solid #35d07f;
+}
+
+.pairing-copy {
+  margin: 0;
+  color: #a9b2bb;
+  line-height: 1.45;
+}
+
+.pairing-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.pairing-form input {
+  min-height: 46px;
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  color: #f4f7f8;
+  background: #070a0e;
+  padding: 0 12px;
+  font: inherit;
+  font-weight: 800;
+}
+
+.pairing-form input:focus {
+  border-color: rgba(53, 208, 127, 0.46);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(53, 208, 127, 0.1);
+}
+
+.pairing-error {
+  margin: 0;
+  color: #ffafa8;
+  font-weight: 800;
+}
+
+.pairing-code-box {
+  display: grid;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid rgba(53, 208, 127, 0.28);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(53, 208, 127, 0.12), transparent 48%),
+    rgba(8, 11, 14, 0.9);
+}
+
+.pairing-code-box span {
+  color: #a9b2bb;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.pairing-code-box strong {
+  color: #35d07f;
+  font-size: 2rem;
+  letter-spacing: 0;
+}
+
+.pairing-code-box p {
+  margin: 0;
+  color: #d4dbe0;
+  line-height: 1.45;
+}
+
 
 .qr-empty,
 .log-empty {
@@ -4000,7 +4072,8 @@ h2 {
 
   .review-actions,
   .support-card,
-  .support-note {
+  .support-note,
+  .pairing-form {
     grid-template-columns: 1fr;
   }
 
