@@ -1,4 +1,4 @@
-import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -2201,6 +2201,7 @@ export default function App() {
   const [pairingCode, setPairingCode] = useState("");
   const [pairingError, setPairingError] = useState("");
   const [pairingBusy, setPairingBusy] = useState(false);
+  const connectionSectionRef = useRef<HTMLElement | null>(null);
 
   function showActionToast(message: string) {
     setActionToast(message);
@@ -2209,6 +2210,12 @@ export default function App() {
 
   function sanitizePairingPhone(value: string) {
     return value.replace(/\D/g, "");
+  }
+
+  function scrollToConnectionOptions(delayMs = 120) {
+    window.setTimeout(() => {
+      connectionSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, delayMs);
   }
 
 
@@ -2359,6 +2366,11 @@ export default function App() {
     }
   }
 
+  async function startWhatsAppConnection() {
+    await runAction(botApi.startBot);
+    scrollToConnectionOptions(180);
+  }
+
   async function requestPairingCode() {
     const phoneNumber = sanitizePairingPhone(pairingPhone);
     setPairingPhone(phoneNumber);
@@ -2374,6 +2386,7 @@ export default function App() {
       const nextSnapshot = await botApi.requestPairingCode({ phoneNumber });
       setSnapshot(nextSnapshot);
       setPairingCode(nextSnapshot.pairingCode || "");
+      scrollToConnectionOptions(80);
       if (!nextSnapshot.pairingCode) {
         setPairingError("Não consegui gerar o código agora. Aguarde alguns instantes e tente novamente.");
       }
@@ -2385,6 +2398,16 @@ export default function App() {
       setPairingError(error instanceof Error ? error.message : "Não consegui gerar o código.");
     } finally {
       setPairingBusy(false);
+    }
+  }
+
+  async function copyPairingCode() {
+    if (!pairingCode) return;
+    try {
+      await navigator.clipboard.writeText(pairingCode);
+      showActionToast("Código copiado.");
+    } catch {
+      setPairingError("Não consegui copiar automaticamente. Toque e segure no código para copiar.");
     }
   }
 
@@ -2639,7 +2662,7 @@ export default function App() {
           <ControlButtons
             busy={busy}
             status={snapshot.status}
-            onStart={() => runAction(botApi.startBot)}
+            onStart={startWhatsAppConnection}
             onStop={() => runAction(botApi.stopBot)}
             onStartMonitoring={confirmStartMonitoring}
             onStopMonitoring={() => runAction(botApi.stopMonitoring)}
@@ -2653,9 +2676,10 @@ export default function App() {
 
           <PerformanceStrip snapshot={snapshot} />
 
-          {snapshot.qrCode || snapshot.status === "waiting_qr" ? <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} /> : null}
-          {snapshot.status !== "connected" ? (
-            <section className="panel pairing-panel">
+          <section ref={connectionSectionRef} className="connection-anchor">
+            {snapshot.qrCode || snapshot.status === "waiting_qr" ? <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} /> : null}
+            {snapshot.status !== "connected" ? (
+              <section className="panel pairing-panel">
               <div className="panel-heading">
                 <div>
                   <p className="panel-label">Conectar WhatsApp</p>
@@ -2663,7 +2687,7 @@ export default function App() {
                 </div>
                 <span className="mini-badge">alternativa ao QR</span>
               </div>
-              <p className="pairing-copy">Use quando você está com apenas um celular e não consegue escanear o QR Code.</p>
+              <p className="pairing-copy">Digite exatamente o número do WhatsApp que vai autorizar o bot, com DDI e DDD, sem +, espaços ou traços.</p>
               <div className="pairing-form">
                 <input
                   inputMode="numeric"
@@ -2682,12 +2706,18 @@ export default function App() {
               {pairingCode ? (
                 <div className="pairing-code-box">
                   <span>Código de pareamento</span>
-                  <strong>{pairingCode}</strong>
-                  <p>Abra o WhatsApp no celular &gt; Aparelhos conectados &gt; Conectar aparelho &gt; Conectar com número de telefone &gt; digite o código acima.</p>
+                  <div className="pairing-code-row">
+                    <strong>{pairingCode}</strong>
+                    <button className="button secondary" type="button" onClick={copyPairingCode}>
+                      Copiar código
+                    </button>
+                  </div>
+                  <p>Abra o WhatsApp desse mesmo número &gt; Aparelhos conectados &gt; Conectar aparelho &gt; Conectar com número de telefone &gt; digite o código acima.</p>
                 </div>
               ) : null}
-            </section>
-          ) : null}
+              </section>
+            ) : null}
+          </section>
         </section>
       ) : null}
 

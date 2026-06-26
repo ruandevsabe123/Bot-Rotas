@@ -544,6 +544,10 @@ export class BotService extends EventEmitter {
     this.pairingCode = "";
     this.pairingCodeRequested = false;
 
+    if (this.starting) {
+      await this.starting;
+    }
+
     if (!this.sock || this.status === "disconnected" || this.status === "error") {
       await this.start(phone);
     }
@@ -1047,7 +1051,9 @@ export class BotService extends EventEmitter {
       void this.handleMessages(messages, connectionId);
     });
 
-    void this.requestPairingCodeIfNeeded(connectionId);
+    if (this.pairingPhoneNumber) {
+      await this.requestPairingCodeIfNeeded(connectionId);
+    }
   }
 
   private async requestPairingCodeIfNeeded(connectionId: number): Promise<void> {
@@ -1067,6 +1073,7 @@ export class BotService extends EventEmitter {
 
     this.pairingCodeRequested = true;
     try {
+      await this.waitForPairingSocketReady(connectionId);
       if (!this.sock || connectionId !== this.activeConnectionId) return;
 
       const code = await this.sock.requestPairingCode(phone);
@@ -1078,6 +1085,17 @@ export class BotService extends EventEmitter {
       this.pairingCodeRequested = false;
       this.logger.warning(`Falha ao gerar código de pareamento: ${this.getPairingErrorMessage(error)}`);
       this.emitSnapshot();
+    }
+  }
+
+  private async waitForPairingSocketReady(connectionId: number) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (!this.sock || connectionId !== this.activeConnectionId) {
+        throw new Error("Conexão reiniciada antes de gerar o código.");
+      }
+      const ws = this.sock.ws as any;
+      if (!ws || ws.isOpen || ws.readyState === 1) return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
     }
   }
 

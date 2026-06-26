@@ -3517,6 +3517,12 @@ h2 {
   background: #ffffff;
 }
 
+.connection-anchor {
+  display: grid;
+  gap: 12px;
+  scroll-margin-top: 18px;
+}
+
 .pairing-panel {
   display: grid;
   gap: 12px;
@@ -3581,6 +3587,14 @@ h2 {
   color: #35d07f;
   font-size: 2rem;
   letter-spacing: 0;
+}
+
+.pairing-code-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .pairing-code-box p {
@@ -4075,6 +4089,10 @@ h2 {
   .support-note,
   .pairing-form {
     grid-template-columns: 1fr;
+  }
+
+  .pairing-code-row {
+    align-items: stretch;
   }
 
   .user-row-actions {
