@@ -14,7 +14,8 @@ type Props = {
     senderName: string,
     codes: string[],
     messageCount?: number,
-    intervalMs?: number
+    intervalMs?: number,
+    startAfterSave?: boolean
   ) => void;
   onWarmup?: () => void;
 };
@@ -93,7 +94,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     onRefresh();
   }, [busy, groups.length, onRefresh]);
 
-  function submit(event: FormEvent) {
+  function submit(event: Pick<FormEvent, "preventDefault">, startAfterSave = false) {
     event.preventDefault();
     const selectedGroup = groups.find((item) => item.id === selectedGroupId);
     const foundByName = groups.find((item) => item.name.toLowerCase() === group.trim().toLowerCase());
@@ -103,7 +104,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
 
     if (!value || !senderName.trim() || !nextCodes.length) return;
     setCodes(nextCodes.join("\n"));
-    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs);
+    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave);
   }
 
   const previewMessages = parseCodes(codes)
@@ -120,7 +121,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
         <strong>{savedGroupName || label.empty}</strong>
       </div>
 
-      <form className="group-form" onSubmit={submit}>
+      <form className="group-form" onSubmit={(event) => submit(event)}>
         <div className="form-heading-row">
           <label htmlFor={`${kind}-group-search`}>Grupo</label>
           <button className="link-button" disabled={busy} type="button" onClick={onRefresh}>
@@ -207,6 +208,12 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
         <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || !codes.trim()} type="submit">
           {label.action}
         </button>
+        {isTarget ? (
+          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || !codes.trim()} type="button" onClick={(event) => submit(event, true)}>
+            <span aria-hidden="true">☠</span>
+            Salvar e iniciar
+          </button>
+        ) : null}
         {!isTarget && onWarmup ? (
           <button className="button secondary" disabled={busy || !savedGroupName} type="button" onClick={onWarmup}>
             Testar envio

@@ -68,6 +68,7 @@ type MonitoringMode = "target" | "test";
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 3500;
 const HEALTH_CHECK_INTERVAL_MS = 25000;
+const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
 const DEFAULT_LEADER_CONTACTS = [
@@ -97,6 +98,7 @@ export class BotService extends EventEmitter {
   private reconnectAttempts = 0;
   private reconnectTimer?: NodeJS.Timeout;
   private healthCheckTimer?: NodeJS.Timeout;
+  private warmKeepAliveTimer?: NodeJS.Timeout;
   private stopping = false;
   private starting?: Promise<void>;
   private activeConnectionId = 0;
@@ -150,6 +152,10 @@ export class BotService extends EventEmitter {
   private groupMetadataCache = new Map<string, any>();
   private currentUserInTargetGroup = false;
   private groups: BotGroup[] = [];
+  private armedAt?: number;
+  private lastKeepAliveAt?: string;
+  private lastKeepAliveDurationMs = 0;
+  private keepAliveCount = 0;
 
   constructor(options: BotServiceOptions = {}) {
     super();
@@ -192,7 +198,13 @@ export class BotService extends EventEmitter {
       warmupMessagesSent: this.warmupMessagesSent,
       warmupRequiredMessages: this.configStore.load().testMessageCount || WARMUP_MESSAGE_COUNT,
       testStatus: this.getTestStatus(),
-      performanceMetrics: { ...this.performanceMetrics },
+      performanceMetrics: {
+        ...this.performanceMetrics,
+        armedIdleMs: this.monitoringEnabled && this.armedAt ? Date.now() - this.armedAt : 0,
+        lastKeepAliveAt: this.lastKeepAliveAt,
+        lastKeepAliveDurationMs: this.lastKeepAliveDurationMs,
+        keepAliveCount: this.keepAliveCount
+      },
       routeDispatches: this.getRoutes()
     };
   }
@@ -287,7 +299,9 @@ export class BotService extends EventEmitter {
 
     await this.captureInitialGroupState();
     this.monitoringEnabled = true;
+    this.armedAt = Date.now();
     this.startHealthCheck();
+    this.startWarmKeepAlive();
     this.logger.success(useNuclearMode ? "✅ Bot NUCLEAR ARMADO. Aguardando abertura do grupo..." : "✅ Bot NORMAL ARMADO. Aguardando abertura do grupo...");
     this.emitSnapshot();
     return true;
@@ -334,7 +348,9 @@ export class BotService extends EventEmitter {
 
     await this.captureInitialGroupState();
     this.monitoringEnabled = true;
+    this.armedAt = Date.now();
     this.startHealthCheck();
+    this.startWarmKeepAlive();
     this.logger.success("✅ TESTE ARMADO - O grupo de teste será ouvido como grupo real.");
     this.emitSnapshot();
     return true;
@@ -343,6 +359,7 @@ export class BotService extends EventEmitter {
   disableMonitoring(): void {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
+    this.armedAt = undefined;
     this.sendCycleId += 1;
     this.activeSendCycle = undefined;
     this.activeTestRunId += 1;
@@ -360,6 +377,7 @@ export class BotService extends EventEmitter {
       this.logger.warning("Teste interrompido pelo painel do usuário.");
     }
     this.clearHealthCheckTimer();
+    this.clearWarmKeepAliveTimer();
     this.logger.info("⏹️ Monitoramento desativado (Parou de escutar aberturas).");
     this.emitSnapshot();
   }
@@ -526,6 +544,7 @@ export class BotService extends EventEmitter {
     this.activeConnectionId += 1;
     this.clearReconnectTimer();
     this.clearHealthCheckTimer();
+    this.clearWarmKeepAliveTimer();
     this.reconnectAttempts = 0;
     this.qrCode = "";
 
@@ -559,6 +578,7 @@ export class BotService extends EventEmitter {
       this.monitoringEnabled = false;
       this.clearReconnectTimer();
       this.clearHealthCheckTimer();
+      this.clearWarmKeepAliveTimer();
       this.pairingCode = "";
       this.pairingCodeRequested = false;
     }
@@ -600,6 +620,7 @@ export class BotService extends EventEmitter {
       this.monitoringEnabled = false;
       this.clearReconnectTimer();
       this.clearHealthCheckTimer();
+      this.clearWarmKeepAliveTimer();
     }
 
     this.removeAuthDir();
@@ -899,8 +920,10 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number }) {
-    if (this.monitoringEnabled) {
+  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number }) {
+    const currentConfig = this.configStore.load();
+    const changingMode = Boolean(settings.nuclearMode) !== currentConfig.nuclearMode;
+    if (this.monitoringEnabled && changingMode) {
       this.logger.warning("Pare o bot antes de trocar entre modo normal e modo nuclear.");
       this.emitSnapshot();
       return;
@@ -909,9 +932,12 @@ export class BotService extends EventEmitter {
     const nextSettings: Partial<BotConfig> = { nuclearMode: Boolean(settings.nuclearMode) };
     if (settings.fastMode !== undefined) nextSettings.fastMode = Boolean(settings.fastMode);
     if (settings.minSendDelayMs !== undefined) nextSettings.minSendDelayMs = settings.minSendDelayMs;
+    if (settings.alwaysWarmMode !== undefined) nextSettings.alwaysWarmMode = Boolean(settings.alwaysWarmMode);
+    if (settings.keepAliveIntervalMs !== undefined) nextSettings.keepAliveIntervalMs = settings.keepAliveIntervalMs;
     const config = this.configStore.save(nextSettings);
     this.refreshRuntimeSettings(config);
     this.prepareSendPlan();
+    if (this.monitoringEnabled) this.startWarmKeepAlive();
     this.logger.success(config.nuclearMode ? "Modo nuclear ativado." : "Modo nuclear desativado.");
     this.emitSnapshot();
   }
@@ -1073,6 +1099,7 @@ export class BotService extends EventEmitter {
     if (connection === "close") {
       this.sock = undefined;
       this.clearHealthCheckTimer();
+      this.clearWarmKeepAliveTimer();
       if (this.stopping) return;
 
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
@@ -1138,6 +1165,7 @@ export class BotService extends EventEmitter {
   private failConnectionWithoutReconnect(message: string) {
     this.clearReconnectTimer();
     this.clearHealthCheckTimer();
+    this.clearWarmKeepAliveTimer();
     this.reconnectAttempts = MAX_RECONNECT_ATTEMPTS;
     this.error = message;
     this.pairingCodeRequested = false;
@@ -1256,6 +1284,7 @@ export class BotService extends EventEmitter {
     if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       this.clearReconnectTimer();
       this.clearHealthCheckTimer();
+      this.clearWarmKeepAliveTimer();
       this.error =
         "Limite de reconexão atingido. A internet pode estar instável ou a sessão pode estar inválida. Use Limpar sessão para gerar um novo QR Code.";
       this.setStatus("error");
@@ -1795,7 +1824,9 @@ export class BotService extends EventEmitter {
     if (!this.monitoringEnabled) return;
 
     this.monitoringEnabled = false;
+    this.armedAt = undefined;
     this.clearHealthCheckTimer();
+    this.clearWarmKeepAliveTimer();
     this.logger.warning("Disparo no grupo alvo finalizado. Bot parado automaticamente para evitar mensagens duplicadas.");
     this.emitSnapshot();
   }
@@ -1995,6 +2026,45 @@ export class BotService extends EventEmitter {
     }, HEALTH_CHECK_INTERVAL_MS);
   }
 
+  private startWarmKeepAlive() {
+    this.clearWarmKeepAliveTimer();
+    const config = this.configStore.load();
+    if (!config.alwaysWarmMode) return;
+
+    const intervalMs = Math.max(60000, config.keepAliveIntervalMs || DEFAULT_KEEP_ALIVE_INTERVAL_MS);
+    this.warmKeepAliveTimer = setInterval(() => {
+      void this.runWarmKeepAlive("timer");
+    }, intervalMs);
+
+    void this.runWarmKeepAlive("armado");
+  }
+
+  private async runWarmKeepAlive(reason: "timer" | "armado" = "timer") {
+    const config = this.configStore.load();
+    if (!config.alwaysWarmMode || !this.monitoringEnabled || this.status !== "connected" || !this.sock) return false;
+
+    const startedAt = Date.now();
+    try {
+      const activeGroup = this.getActiveMonitoringGroup(config);
+      if (!activeGroup.jid) return false;
+
+      await this.refreshGroupMetadata(activeGroup.jid);
+      this.prepareSendPlan();
+      this.lastKeepAliveAt = new Date().toISOString();
+      this.lastKeepAliveDurationMs = Date.now() - startedAt;
+      this.keepAliveCount += 1;
+      if (reason === "timer") {
+        this.logger.info(`Modo sempre quente: cache do ${activeGroup.label} renovado em ${this.lastKeepAliveDurationMs}ms.`);
+      }
+      this.emitSnapshot();
+      return true;
+    } catch (error) {
+      this.lastKeepAliveDurationMs = Date.now() - startedAt;
+      this.logger.warning(`Modo sempre quente falhou: ${this.getErrorMessage(error)}`);
+      return false;
+    }
+  }
+
   private async runHealthCheck() {
     if (!this.monitoringEnabled || this.status !== "connected" || !this.sock) return;
 
@@ -2181,6 +2251,7 @@ export class BotService extends EventEmitter {
       this.monitoringEnabled = false;
       this.clearReconnectTimer();
       this.clearHealthCheckTimer();
+      this.clearWarmKeepAliveTimer();
     }
 
     this.pairingCode = "";
@@ -2289,6 +2360,13 @@ export class BotService extends EventEmitter {
     if (this.healthCheckTimer) {
       clearInterval(this.healthCheckTimer);
       this.healthCheckTimer = undefined;
+    }
+  }
+
+  private clearWarmKeepAliveTimer() {
+    if (this.warmKeepAliveTimer) {
+      clearInterval(this.warmKeepAliveTimer);
+      this.warmKeepAliveTimer = undefined;
     }
   }
 

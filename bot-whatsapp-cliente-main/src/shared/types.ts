@@ -44,6 +44,8 @@ export type BotConfig = {
   testMessageIntervalMs: number;
   fastMode: boolean;
   minSendDelayMs: number;
+  alwaysWarmMode: boolean;
+  keepAliveIntervalMs: number;
 };
 
 export type BotPerformanceMetrics = {
@@ -56,6 +58,10 @@ export type BotPerformanceMetrics = {
   failedMessages: number;
   activeQueue: number;
   lastDispatchAt?: string;
+  armedIdleMs?: number;
+  lastKeepAliveAt?: string;
+  lastKeepAliveDurationMs?: number;
+  keepAliveCount?: number;
 };
 
 export type BotTestStatus = {
@@ -248,6 +254,8 @@ export type GeneralSettingsPayload = {
   nuclearMode: boolean;
   fastMode?: boolean;
   minSendDelayMs?: number;
+  alwaysWarmMode?: boolean;
+  keepAliveIntervalMs?: number;
 };
 
 export type StartBotPayload = {

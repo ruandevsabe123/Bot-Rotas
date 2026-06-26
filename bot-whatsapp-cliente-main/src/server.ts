@@ -640,7 +640,11 @@ async function handleAction(bot: BotService, action: string, body: any) {
       );
       break;
     case "save-general-settings":
-      bot.setGeneralSettings({ nuclearMode: Boolean(body.nuclearMode) });
+      bot.setGeneralSettings({
+        nuclearMode: Boolean(body.nuclearMode),
+        alwaysWarmMode: body.alwaysWarmMode,
+        keepAliveIntervalMs: body.keepAliveIntervalMs
+      });
       break;
     default:
       throw new Error(`Acao desconhecida: ${action}`);

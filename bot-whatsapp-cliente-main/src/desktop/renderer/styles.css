@@ -2953,6 +2953,31 @@ h2 {
   background: rgba(245, 197, 66, 0.08);
 }
 
+.button.skull-button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: rgba(245, 247, 248, 0.18);
+  color: #f4f7f8;
+  background:
+    linear-gradient(135deg, rgba(255, 81, 72, 0.2), transparent 42%),
+    linear-gradient(180deg, #12161b, #030405);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 14px 34px rgba(0, 0, 0, 0.42);
+}
+
+.button.skull-button span {
+  position: absolute;
+  right: 12px;
+  bottom: -16px;
+  z-index: -1;
+  color: rgba(255, 255, 255, 0.09);
+  font-size: 4.2rem;
+  line-height: 1;
+  transform: rotate(-10deg);
+}
+
 .icon-button {
   display: grid;
   width: 42px;
@@ -3451,6 +3476,26 @@ h2 {
   width: 18px;
   height: 18px;
   accent-color: #f5c542;
+}
+
+.warm-mode-panel {
+  align-items: center;
+}
+
+.keepalive-select {
+  display: grid;
+  gap: 6px;
+  color: #a9b2bb;
+  font-weight: 800;
+}
+
+.keepalive-select select {
+  min-height: 42px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  color: #f4f7f8;
+  background: #070a0e;
+  padding: 0 12px;
 }
 
 .qr-panel {

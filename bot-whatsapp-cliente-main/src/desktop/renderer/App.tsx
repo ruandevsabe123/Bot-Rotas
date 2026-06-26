@@ -106,7 +106,9 @@ const emptySnapshot: BotSnapshot = {
     testMessageCount: 15,
     testMessageIntervalMs: 0,
     fastMode: true,
-    minSendDelayMs: 0
+    minSendDelayMs: 0,
+    alwaysWarmMode: true,
+    keepAliveIntervalMs: 300000
   },
   groups: [],
   readinessChecks: [],
@@ -466,6 +468,7 @@ function PerformanceStrip({ snapshot }: { snapshot: BotSnapshot }) {
       <AdminMetric Icon={Zap} tone="yellow" title="Latência" value={`${metrics.lastDispatchLatencyMs}ms`} detail={`média ${metrics.averageDispatchLatencyMs}ms`} />
       <AdminMetric Icon={Gauge} tone="green" title="Disparo" value={`${metrics.lastDispatchDurationMs}ms`} detail={`${metrics.sentMessages} enviadas`} />
       <AdminMetric Icon={Activity} tone="blue" title="Fila" value={metrics.activeQueue} detail={`${metrics.failedMessages} falha(s)`} />
+      <AdminMetric Icon={Wifi} tone={snapshot.config.alwaysWarmMode ? "green" : "yellow"} title="Sempre quente" value={snapshot.config.alwaysWarmMode ? "ativo" : "off"} detail={metrics.lastKeepAliveAt ? `keep ${metrics.lastKeepAliveDurationMs || 0}ms` : `${formatDuration(metrics.armedIdleMs || 0)} parado`} />
     </section>
   );
 }
@@ -2344,20 +2347,21 @@ export default function App() {
     return /Bot .*ARMADO|NORMAL ARMADO|NUCLEAR ARMADO|Monitoramento desativado|Parou de escutar|FECHADO|ABRIU|Palavra de abertura|Abertura simulada|Disparo acionado|Rajada instantânea|Mensagem .*?(confirmada|enviada)|Disparo .*?(concluído|concluido|terminou)|Abertura ignorada|falhou|erro/i.test(message);
   }
 
-  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[]) {
+  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false) {
     const selectedGroupName = groupName || group;
     const messages = buildMessagePreview(senderName, codes);
 
     setConfirmation({
-      title: "Salvar alvo",
+      title: startAfterSave ? "Salvar e iniciar" : "Salvar alvo",
       message: `Grupo alvo: ${selectedGroupName}`,
       details: messages.length ? messages : ["Nenhuma mensagem pronta."],
-      confirmLabel: "Salvar alvo",
+      confirmLabel: startAfterSave ? "Salvar e iniciar" : "Salvar alvo",
       onConfirm: async () => {
         await runAction(async () => {
           await botApi.saveGroup({ group, groupId, groupName });
+          await botApi.saveTargetMessageSettings({ senderName, codes });
           setGroupEditor(undefined);
-          return botApi.saveTargetMessageSettings({ senderName, codes });
+          return startAfterSave ? botApi.startMonitoring() : botApi.getSnapshot();
         });
       }
     });
@@ -2512,8 +2516,12 @@ export default function App() {
     });
   }
 
-  function saveGeneralSettings(nuclearMode: boolean) {
-    void runAction(() => botApi.saveGeneralSettings({ nuclearMode }));
+  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number }) {
+    void runAction(() => botApi.saveGeneralSettings({
+      nuclearMode: settings.nuclearMode ?? snapshot.config.nuclearMode,
+      alwaysWarmMode: settings.alwaysWarmMode ?? snapshot.config.alwaysWarmMode,
+      keepAliveIntervalMs: settings.keepAliveIntervalMs ?? snapshot.config.keepAliveIntervalMs
+    }));
   }
 
   async function confirmPendingAction() {
@@ -2716,6 +2724,7 @@ export default function App() {
             userEmail={userEmail}
             onClearLogs={confirmClearLogs}
             onFactoryReset={confirmFactoryReset}
+            onSaveGeneralSettings={saveGeneralSettings}
             onLogout={() => {
               logout();
             }}

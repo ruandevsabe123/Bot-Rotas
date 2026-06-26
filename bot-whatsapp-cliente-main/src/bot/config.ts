@@ -14,7 +14,9 @@ export const DEFAULT_CONFIG: BotConfig = {
   testMessageCount: 15,
   testMessageIntervalMs: 0,
   fastMode: true,
-  minSendDelayMs: 0
+  minSendDelayMs: 0,
+  alwaysWarmMode: true,
+  keepAliveIntervalMs: 300000
 };
 
 export class ConfigStore {
@@ -112,6 +114,8 @@ export class ConfigStore {
       testMessageIntervalMs: this.clampNumber(input.testMessageIntervalMs, 0, 10000, DEFAULT_CONFIG.testMessageIntervalMs),
       fastMode: typeof input.fastMode === "boolean" ? input.fastMode : DEFAULT_CONFIG.fastMode,
       minSendDelayMs: this.clampNumber(input.minSendDelayMs, 0, 5000, DEFAULT_CONFIG.minSendDelayMs),
+      alwaysWarmMode: typeof input.alwaysWarmMode === "boolean" ? input.alwaysWarmMode : DEFAULT_CONFIG.alwaysWarmMode,
+      keepAliveIntervalMs: this.clampNumber(input.keepAliveIntervalMs, 60000, 900000, DEFAULT_CONFIG.keepAliveIntervalMs),
       // support legacy `codigosMensagens` if present
       codigosMensagensAlvo: Array.isArray(input.codigosMensagensAlvo)
         ? input.codigosMensagensAlvo.filter((item) => typeof item === "string" && item.trim())
