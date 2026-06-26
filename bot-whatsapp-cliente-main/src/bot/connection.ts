@@ -553,7 +553,11 @@ export class BotService extends EventEmitter {
     }
 
     const connectionId = this.activeConnectionId;
-    await this.requestPairingCodeIfNeeded(connectionId);
+    if (this.qrReceivedInCurrentConnection || this.status === "waiting_qr" || this.status === "connecting") {
+      void this.requestPairingCodeIfNeeded(connectionId);
+    }
+
+    await this.waitForPairingCode(connectionId);
 
     if (!this.pairingCode) {
       throw new Error("Não foi possível gerar o código agora. Aguarde alguns instantes e tente novamente.");
@@ -1051,9 +1055,6 @@ export class BotService extends EventEmitter {
       void this.handleMessages(messages, connectionId);
     });
 
-    if (this.pairingPhoneNumber) {
-      await this.requestPairingCodeIfNeeded(connectionId);
-    }
   }
 
   private async requestPairingCodeIfNeeded(connectionId: number): Promise<void> {
@@ -1099,6 +1100,15 @@ export class BotService extends EventEmitter {
     }
   }
 
+  private async waitForPairingCode(connectionId: number) {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      if (connectionId !== this.activeConnectionId) return;
+      if (this.pairingCode) return;
+      if (this.status === "connected") return;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
   private async handleConnectionUpdate(update: any, connectionId: number) {
     if (connectionId !== this.activeConnectionId) return;
 
@@ -1110,6 +1120,11 @@ export class BotService extends EventEmitter {
       this.qrCode = qr;
       this.setStatus("waiting_qr");
       this.logger.info("QR Code gerado.");
+      void this.requestPairingCodeIfNeeded(connectionId);
+    }
+
+    if (connection === "connecting") {
+      void this.requestPairingCodeIfNeeded(connectionId);
     }
 
     if (connection === "open") {
