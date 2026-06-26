@@ -219,7 +219,6 @@ function getBotForEmail(email: string) {
     logStorePath: userLogStorePath,
     clientEmail: normalizedEmail,
     adminPhoneNumbers,
-    pairingPhoneNumber: process.env.BOT_PHONE_NUMBER || "",
     autoClearInvalidSession: true
   });
 
@@ -561,7 +560,6 @@ function logSnapshot(email: string) {
   if (snapshot.config.grupoAlvoNome || snapshot.config.grupoAlvoJid) {
     console.log("Grupo alvo:", snapshot.config.grupoAlvoNome || snapshot.config.grupoAlvoJid);
   }
-  if (snapshot.pairingCode) console.log("Codigo de pareamento:", snapshot.pairingCode);
   if (snapshot.error) console.log("Erro:", snapshot.error);
   if (lastLog) console.log("Ultimo log:", lastLog.message);
   if (snapshot.qrCode) {
@@ -574,10 +572,7 @@ function logSnapshot(email: string) {
 async function handleAction(bot: BotService, action: string, body: any) {
   switch (action) {
     case "start":
-      await bot.start(typeof body.pairingPhoneNumber === "string" ? body.pairingPhoneNumber : undefined);
-      break;
-    case "request-pairing-code":
-      await bot.requestPairingCode(String(body.phoneNumber || ""));
+      await bot.start();
       break;
     case "stop":
       await bot.stop();

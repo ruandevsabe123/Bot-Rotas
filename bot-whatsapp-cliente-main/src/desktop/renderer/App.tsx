@@ -2197,20 +2197,11 @@ export default function App() {
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
   const [actionToast, setActionToast] = useState("");
-  const [pairingPhone, setPairingPhone] = useState("");
-  const [pairingCode, setPairingCode] = useState("");
-  const [pairingError, setPairingError] = useState("");
-  const [pairingBusy, setPairingBusy] = useState(false);
   const connectionSectionRef = useRef<HTMLElement | null>(null);
-  const [connectionChoice, setConnectionChoice] = useState<"qr" | "number" | undefined>(undefined);
 
   function showActionToast(message: string) {
     setActionToast(message);
     window.setTimeout(() => setActionToast(""), 1000);
-  }
-
-  function sanitizePairingPhone(value: string) {
-    return value.replace(/\D/g, "");
   }
 
   function scrollToConnectionOptions(delayMs = 120) {
@@ -2293,15 +2284,7 @@ export default function App() {
 
   useEffect(() => {
     if (snapshot.status !== "connected") return;
-    setPairingCode("");
-    setPairingError("");
-    setPairingBusy(false);
-    setConnectionChoice(undefined);
   }, [snapshot.status]);
-
-  useEffect(() => {
-    if (snapshot.pairingCode) setPairingCode(snapshot.pairingCode);
-  }, [snapshot.pairingCode]);
 
   const groupLabel = useMemo(() => {
     return snapshot.config.grupoAlvoNome || "Nenhum grupo alvo";
@@ -2368,63 +2351,9 @@ export default function App() {
     }
   }
 
-  function startWhatsAppConnection() {
-    setConnectionChoice(undefined);
-    scrollToConnectionOptions(80);
-  }
-
-  async function chooseQrConnection() {
-    setConnectionChoice("qr");
-    setPairingError("");
-    setPairingCode("");
+  async function startWhatsAppConnection() {
     await runAction(botApi.startBot);
     scrollToConnectionOptions(180);
-  }
-
-  function chooseNumberConnection() {
-    setConnectionChoice("number");
-    setPairingError("");
-    scrollToConnectionOptions(80);
-  }
-
-  async function requestPairingCode() {
-    const phoneNumber = sanitizePairingPhone(pairingPhone);
-    setPairingPhone(phoneNumber);
-    setPairingError("");
-
-    if (phoneNumber.length < 12) {
-      setPairingError("Digite DDI + DDD + número. Exemplo: 5594999999999.");
-      return;
-    }
-
-    setPairingBusy(true);
-    try {
-      const nextSnapshot = await botApi.requestPairingCode({ phoneNumber });
-      setSnapshot(nextSnapshot);
-      setPairingCode(nextSnapshot.pairingCode || "");
-      scrollToConnectionOptions(80);
-      if (!nextSnapshot.pairingCode) {
-        setPairingError("Não consegui gerar o código agora. Aguarde alguns instantes e tente novamente.");
-      }
-    } catch (error) {
-      if (isAuthError(error)) {
-        logout(error instanceof Error ? error.message : "Entre novamente para continuar.");
-        return;
-      }
-      setPairingError(error instanceof Error ? error.message : "Não consegui gerar o código.");
-    } finally {
-      setPairingBusy(false);
-    }
-  }
-
-  async function copyPairingCode() {
-    if (!pairingCode) return;
-    try {
-      await navigator.clipboard.writeText(pairingCode);
-      showActionToast("Código copiado.");
-    } catch {
-      setPairingError("Não consegui copiar automaticamente. Toque e segure no código para copiar.");
-    }
   }
 
   function buildMessagePreview(senderName = snapshot.config.nomeEnvio, codes = snapshot.config.codigosMensagensAlvo) {
@@ -2693,69 +2622,8 @@ export default function App() {
           <PerformanceStrip snapshot={snapshot} />
 
           <section ref={connectionSectionRef} className="connection-anchor">
-            {snapshot.status !== "connected" ? (
-              <section className="panel connection-choice-panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="panel-label">Conectar WhatsApp</p>
-                    <h2>Escolha como conectar</h2>
-                  </div>
-                  <span className="mini-badge">{connectionChoice === "number" ? "número" : connectionChoice === "qr" ? "qr code" : "2 opções"}</span>
-                </div>
-                <div className="connection-method-grid">
-                  <button className={connectionChoice === "qr" ? "connection-method active" : "connection-method"} type="button" onClick={chooseQrConnection}>
-                    <strong>QR Code</strong>
-                    <span>Mais estável. Escaneie com outro aparelho ou pelo WhatsApp do celular.</span>
-                  </button>
-                  <button className={connectionChoice === "number" ? "connection-method active" : "connection-method"} type="button" onClick={chooseNumberConnection}>
-                    <strong>Número</strong>
-                    <span>Gera código de pareamento. Use quando não der para escanear o QR.</span>
-                  </button>
-                </div>
-              </section>
-            ) : null}
-
-            {connectionChoice === "qr" && (snapshot.qrCode || snapshot.status === "waiting_qr" || snapshot.status === "connecting") ? (
+            {snapshot.qrCode || snapshot.status === "waiting_qr" || snapshot.status === "connecting" ? (
               <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
-            ) : null}
-
-            {snapshot.status !== "connected" && connectionChoice === "number" ? (
-              <section className="panel pairing-panel">
-                <div className="panel-heading">
-                  <div>
-                    <p className="panel-label">Conectar WhatsApp</p>
-                    <h2>Conectar com número</h2>
-                  </div>
-                </div>
-                <p className="pairing-copy">Digite exatamente o número do WhatsApp que vai autorizar o bot, com DDI e DDD, sem +, espaços ou traços.</p>
-                <div className="pairing-form">
-                  <input
-                    inputMode="numeric"
-                    placeholder="5594999999999"
-                    value={pairingPhone}
-                    onChange={(event) => {
-                      setPairingPhone(sanitizePairingPhone(event.target.value));
-                      setPairingError("");
-                    }}
-                  />
-                  <button className="button primary" disabled={pairingBusy || pairingPhone.length < 12} type="button" onClick={requestPairingCode}>
-                    {pairingBusy ? "Gerando..." : "Gerar código"}
-                  </button>
-                </div>
-                {pairingError ? <p className="pairing-error">{pairingError}</p> : null}
-                {pairingCode ? (
-                  <div className="pairing-code-box">
-                    <span>Código de pareamento</span>
-                    <div className="pairing-code-row">
-                      <strong>{pairingCode}</strong>
-                      <button className="button secondary" type="button" onClick={copyPairingCode}>
-                        Copiar código
-                      </button>
-                    </div>
-                    <p>Abra o WhatsApp desse mesmo número &gt; Aparelhos conectados &gt; Conectar aparelho &gt; Conectar com número de telefone &gt; digite o código acima.</p>
-                  </div>
-                ) : null}
-              </section>
             ) : null}
           </section>
         </section>

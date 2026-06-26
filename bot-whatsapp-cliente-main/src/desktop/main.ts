@@ -7,8 +7,7 @@ import {
   GeneralSettingsPayload,
   SaveGroupPayload,
   SaveMessageSettingsPayload,
-  SaveWarmupMessageSettingsPayload,
-  StartBotPayload
+  SaveWarmupMessageSettingsPayload
 } from "../shared/types";
 
 app.commandLine.appendSwitch("disable-gpu");
@@ -35,7 +34,6 @@ function createBot() {
     authDir: path.join(dataDir, "auth_info"),
     configPath: path.join(dataDir, "config.json"),
     logStorePath: path.join(dataDir, "bot_logs.json"),
-    pairingPhoneNumber: ""
   });
 
   bot.on("snapshot", (snapshot: BotSnapshot) => {
@@ -72,8 +70,8 @@ function createWindow() {
 
 function registerIpc() {
   ipcMain.handle("bot:getSnapshot", () => bot.getSnapshot());
-  ipcMain.handle("bot:start", async (_event, payload?: StartBotPayload) => {
-    await bot.start(payload?.pairingPhoneNumber);
+  ipcMain.handle("bot:start", async () => {
+    await bot.start();
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:stop", async () => {
@@ -82,10 +80,6 @@ function registerIpc() {
   });
   ipcMain.handle("bot:restart", async () => {
     await bot.restart();
-    return bot.getSnapshot();
-  });
-  ipcMain.handle("bot:requestPairingCode", async (_event, payload?: { phoneNumber?: string }) => {
-    await bot.requestPairingCode(String(payload?.phoneNumber || ""));
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:clearSession", async () => {

@@ -258,16 +258,11 @@ export type GeneralSettingsPayload = {
   keepAliveIntervalMs?: number;
 };
 
-export type StartBotPayload = {
-  pairingPhoneNumber?: string;
-};
-
 export type DesktopApi = {
   getSnapshot: () => Promise<BotSnapshot>;
-  startBot: (payload?: StartBotPayload) => Promise<BotSnapshot>;
+  startBot: () => Promise<BotSnapshot>;
   stopBot: () => Promise<BotSnapshot>;
   restartBot: () => Promise<BotSnapshot>;
-  requestPairingCode: (payload: { phoneNumber: string }) => Promise<BotSnapshot>;
   clearSession: () => Promise<BotSnapshot>;
   factoryReset: () => Promise<BotSnapshot>;
   clearLogs: () => Promise<BotSnapshot>;

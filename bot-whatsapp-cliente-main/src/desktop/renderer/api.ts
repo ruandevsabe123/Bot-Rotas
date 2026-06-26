@@ -13,8 +13,7 @@ import {
   SaveGroupPayload,
   SaveMessageSettingsPayload,
   SaveTargetMessageSettingsPayload,
-  SaveWarmupMessageSettingsPayload,
-  StartBotPayload
+  SaveWarmupMessageSettingsPayload
 } from "../../shared/types";
 
 const AUTH_ERROR_MESSAGES = [
@@ -221,10 +220,9 @@ function action<TPayload = unknown>(name: string, payload?: TPayload) {
 function createWebApi(): DesktopApi {
   return {
     getSnapshot: () => fetchJson<BotSnapshot>("/api/snapshot"),
-    startBot: (payload?: StartBotPayload) => action("start", payload),
+    startBot: () => action("start"),
     stopBot: () => action("stop"),
     restartBot: () => action("restart"),
-    requestPairingCode: (payload: { phoneNumber: string }) => action("request-pairing-code", payload),
     clearSession: () => action("clear-session"),
     factoryReset: () => action("factory-reset"),
     clearLogs: () => action("clear-logs"),

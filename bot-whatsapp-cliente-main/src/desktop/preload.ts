@@ -7,13 +7,12 @@ import {
   SaveGroupPayload,
   SaveMessageSettingsPayload,
   SaveWarmupMessageSettingsPayload,
-  SaveTargetMessageSettingsPayload,
-  StartBotPayload
+  SaveTargetMessageSettingsPayload
 } from "../shared/types";
 
 const api: DesktopApi = {
   getSnapshot: () => ipcRenderer.invoke("bot:getSnapshot"),
-  startBot: (payload?: StartBotPayload) => ipcRenderer.invoke("bot:start", payload),
+  startBot: () => ipcRenderer.invoke("bot:start"),
   stopBot: () => ipcRenderer.invoke("bot:stop"),
   startMonitoring: () => ipcRenderer.invoke("bot:enableMonitoring"),
   startNuclearMonitoring: () => ipcRenderer.invoke("bot:enableNuclearMonitoring"),
@@ -23,7 +22,6 @@ const api: DesktopApi = {
   manualDispatch: () => ipcRenderer.invoke("bot:manualDispatch"),
   simulateTargetDispatch: () => ipcRenderer.invoke("bot:simulateTargetDispatch"),
   restartBot: () => ipcRenderer.invoke("bot:restart"),
-  requestPairingCode: (payload: { phoneNumber: string }) => ipcRenderer.invoke("bot:requestPairingCode", payload),
   clearSession: () => ipcRenderer.invoke("bot:clearSession"),
   factoryReset: () => ipcRenderer.invoke("bot:factoryReset"),
   clearLogs: () => ipcRenderer.invoke("bot:clearLogs"),
