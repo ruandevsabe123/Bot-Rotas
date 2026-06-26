@@ -1,4 +1,5 @@
 import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
   AlertTriangle,
@@ -469,6 +470,105 @@ function PerformanceStrip({ snapshot }: { snapshot: BotSnapshot }) {
       <AdminMetric Icon={Gauge} tone="green" title="Disparo" value={`${metrics.lastDispatchDurationMs}ms`} detail={`${metrics.sentMessages} enviadas`} />
       <AdminMetric Icon={Activity} tone="blue" title="Fila" value={metrics.activeQueue} detail={`${metrics.failedMessages} falha(s)`} />
       <AdminMetric Icon={Wifi} tone={snapshot.config.alwaysWarmMode ? "green" : "yellow"} title="Sempre quente" value={snapshot.config.alwaysWarmMode ? "ativo" : "off"} detail={metrics.lastKeepAliveAt ? `keep ${metrics.lastKeepAliveDurationMs || 0}ms` : `${formatDuration(metrics.armedIdleMs || 0)} parado`} />
+    </section>
+  );
+}
+
+function TowerPanel({
+  snapshot,
+  groupLabel,
+  logs,
+  busy,
+  onConnect,
+  onArm,
+  onStopMonitoring,
+  onEmergency,
+  onClose
+}: {
+  snapshot: BotSnapshot;
+  groupLabel: string;
+  logs: BotSnapshot["logs"];
+  busy: boolean;
+  onConnect: () => void;
+  onArm: () => void;
+  onStopMonitoring: () => void;
+  onEmergency: () => void;
+  onClose?: () => void;
+}) {
+  const metrics = snapshot.performanceMetrics || emptySnapshot.performanceMetrics!;
+  const connected = snapshot.status === "connected";
+  const armed = Boolean(snapshot.monitoringEnabled);
+  const stateCopy = snapshot.groupState === "open" ? "Aberto" : snapshot.groupState === "closed" ? "Fechado" : "Desconhecido";
+
+  return (
+    <section className="tower-panel">
+      <div className="tower-header">
+        <div>
+          <p className="panel-label">Modo Torre</p>
+          <h2>{armed ? "Bot armado" : connected ? "Pronto" : "Desconectado"}</h2>
+        </div>
+        {onClose ? (
+          <button className="icon-button" title="Fechar torre" type="button" onClick={onClose}>
+            <X size={18} />
+          </button>
+        ) : null}
+      </div>
+
+      <div className="tower-status-grid">
+        <article>
+          <span>Grupo</span>
+          <strong>{groupLabel}</strong>
+        </article>
+        <article>
+          <span>Estado</span>
+          <strong>{stateCopy}</strong>
+        </article>
+        <article>
+          <span>Último disparo</span>
+          <strong>{metrics.lastDispatchLatencyMs || 0}ms</strong>
+        </article>
+        <article>
+          <span>Sempre quente</span>
+          <strong>{snapshot.config.alwaysWarmMode ? "Ativo" : "Off"}</strong>
+        </article>
+      </div>
+
+      <div className="tower-actions">
+        {!connected ? (
+          <button className="button primary" disabled={busy} type="button" onClick={onConnect}>
+            Conectar
+          </button>
+        ) : armed ? (
+          <button className="button" disabled={busy} type="button" onClick={onStopMonitoring}>
+            Parar bot
+          </button>
+        ) : (
+          <button className="button primary" disabled={busy} type="button" onClick={onArm}>
+            Armar bot
+          </button>
+        )}
+        <button className="button danger" disabled={busy} type="button" onClick={onEmergency}>
+          Emergência
+        </button>
+      </div>
+
+      <div className="tower-live">
+        <div className="panel-heading">
+          <div>
+            <p className="panel-label">Ao vivo</p>
+            <h2>Operação</h2>
+          </div>
+          <span className={armed ? "mini-badge ok" : "mini-badge"}>{armed ? "monitorando" : "parado"}</span>
+        </div>
+        <div className="tower-timeline">
+          {logs.length ? logs.slice(-8).map((log) => (
+            <div key={`tower-${log.id}`}>
+              <time>{new Date(log.timestamp).toLocaleTimeString("pt-BR")}</time>
+              <p>{log.message}</p>
+            </div>
+          )) : <p className="qr-empty">Aguardando eventos.</p>}
+        </div>
+      </div>
     </section>
   );
 }
@@ -2197,10 +2297,48 @@ export default function App() {
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
   const [actionToast, setActionToast] = useState("");
+  const [towerWindow, setTowerWindow] = useState<Window>();
+  const [towerOverlayOpen, setTowerOverlayOpen] = useState(false);
 
   function showActionToast(message: string) {
     setActionToast(message);
     window.setTimeout(() => setActionToast(""), 1000);
+  }
+
+  function getTowerStyles() {
+    return `
+      body{margin:0;background:#030405;color:#f4f7f8;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+      *{box-sizing:border-box}.tower-panel{min-height:100vh;display:grid;gap:12px;padding:14px;background:linear-gradient(180deg,#10151b,#030405)}
+      .tower-header,.panel-heading{display:flex;align-items:center;justify-content:space-between;gap:10px}.panel-label{margin:0;color:#f5c542;font-size:11px;font-weight:900;text-transform:uppercase}.tower-header h2,.panel-heading h2{margin:2px 0 0;font-size:22px}.icon-button{display:grid;width:38px;height:38px;place-items:center;border:1px solid rgba(255,255,255,.14);border-radius:8px;color:#fff;background:#080b0e}.tower-status-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.tower-status-grid article,.tower-live{border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.04);padding:10px}.tower-status-grid span{display:block;color:#9aa4ad;font-size:12px;font-weight:800}.tower-status-grid strong{display:block;margin-top:3px;overflow-wrap:anywhere}.tower-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px}.button{min-height:42px;border:1px solid rgba(255,255,255,.16);border-radius:8px;color:#f4f7f8;background:#10151b;font-weight:900}.button.primary{border-color:#f5c542;color:#050607;background:#f5c542}.button.danger{border-color:rgba(255,81,72,.36);color:#ffafa8;background:rgba(255,81,72,.1)}.mini-badge{padding:7px 10px;border:1px solid rgba(245,197,66,.28);border-radius:8px;color:#f5c542;background:rgba(245,197,66,.08);font-size:12px;font-weight:900}.mini-badge.ok{border-color:rgba(53,208,127,.28);color:#35d07f;background:rgba(53,208,127,.08)}.tower-timeline{display:grid;gap:8px;max-height:210px;overflow:auto}.tower-timeline div{display:grid;grid-template-columns:64px 1fr;gap:8px;color:#cfd6dd}.tower-timeline time{color:#8e99a3}.tower-timeline p{margin:0;line-height:1.35}.qr-empty{color:#8e99a3}
+    `;
+  }
+
+  async function openTowerMode() {
+    const docPiP = (window as unknown as { documentPictureInPicture?: { requestWindow: (options?: { width?: number; height?: number }) => Promise<Window> } }).documentPictureInPicture;
+    const canUsePiP = Boolean(docPiP) && window.matchMedia("(min-width: 760px)").matches;
+    if (!canUsePiP || !docPiP) {
+      setTowerOverlayOpen(true);
+      return;
+    }
+
+    try {
+      const pipWindow = await docPiP.requestWindow({ width: 390, height: 590 });
+      pipWindow.document.title = "Modo Torre";
+      const style = pipWindow.document.createElement("style");
+      style.textContent = getTowerStyles();
+      pipWindow.document.head.appendChild(style);
+      pipWindow.addEventListener("pagehide", () => setTowerWindow(undefined), { once: true });
+      setTowerWindow(pipWindow);
+      setTowerOverlayOpen(false);
+    } catch {
+      setTowerOverlayOpen(true);
+    }
+  }
+
+  function closeTowerMode() {
+    towerWindow?.close();
+    setTowerWindow(undefined);
+    setTowerOverlayOpen(false);
   }
 
   function logout(message = "") {
@@ -2524,6 +2662,13 @@ export default function App() {
     }));
   }
 
+  async function runEmergencyStop() {
+    await runAction(async () => {
+      await botApi.stopMonitoring();
+      return botApi.stopBot();
+    });
+  }
+
   async function confirmPendingAction() {
     if (!confirmation) return;
     const action = confirmation.onConfirm;
@@ -2563,6 +2708,21 @@ export default function App() {
     );
   }
 
+  const towerLogs = snapshot.logs.filter((log) => isHomeOperationLog(log.message));
+  const towerPanel = (
+    <TowerPanel
+      snapshot={snapshot}
+      groupLabel={snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel}
+      logs={towerLogs}
+      busy={busy}
+      onConnect={() => runAction(botApi.startBot)}
+      onArm={confirmStartMonitoring}
+      onStopMonitoring={() => runAction(botApi.stopMonitoring)}
+      onEmergency={runEmergencyStop}
+      onClose={closeTowerMode}
+    />
+  );
+
   return (
     <main className={alertFlash ? "app-shell alert-flash" : "app-shell"}>
       <section className="topbar app-topbar">
@@ -2574,6 +2734,10 @@ export default function App() {
           <span>{snapshot.monitoringMode === "test" ? "Teste ativo" : "Grupo alvo"}</span>
           <strong>{snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel}</strong>
         </div>
+        <button className="button tower-open-button" type="button" onClick={openTowerMode}>
+          <Bot size={18} />
+          Modo Torre
+        </button>
       </section>
 
       {activeTab === "home" ? (
@@ -2758,6 +2922,8 @@ export default function App() {
       </nav>
 
       {actionToast ? <div className="action-toast">{actionToast}</div> : null}
+      {towerOverlayOpen ? <div className="tower-overlay">{towerPanel}</div> : null}
+      {towerWindow ? createPortal(towerPanel, towerWindow.document.body) : null}
 
       {groupEditor ? (
         <div className="modal-backdrop" role="presentation">
