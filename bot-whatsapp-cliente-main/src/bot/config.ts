@@ -135,7 +135,7 @@ export class ConfigStore {
               cidade: typeof item?.cidade === "string" ? item.cidade.trim() : "",
               bairro: typeof item?.bairro === "string" ? item.bairro.trim() : ""
             }))
-            .filter((item) => item.cidade && item.bairro)
+            .filter((item) => item.bairro)
         : [],
       codigosMensagensTeste: Array.isArray(input.codigosMensagensTeste)
         ? input.codigosMensagensTeste.filter((item) => typeof item === "string" && item.trim())

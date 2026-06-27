@@ -181,7 +181,7 @@ function normalizeMessages(senderName: string, codes: string[]) {
 }
 
 function formatOcrRoutes(routes: string[] = [], detailedRoutes: MonitoredRoute[] = []) {
-  if (detailedRoutes.length) return detailedRoutes.map((route) => `${route.cidade} / ${route.bairro}`);
+  if (detailedRoutes.length) return detailedRoutes.map((route) => route.cidade ? `${route.cidade} / ${route.bairro}` : route.bairro);
   return routes;
 }
 
@@ -2555,7 +2555,7 @@ export default function App() {
       setGroupEditor("image");
       setConfirmation({
         title: "Revise o bot imagem",
-        message: "Falta configurar grupo, nome ou cidade+bairro para leitura de foto.",
+        message: "Falta configurar grupo, nome ou bairro para leitura de foto.",
         details: [
           hasGroup ? `Grupo: ${groupLabel}` : "Grupo alvo ainda não configurado.",
           hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",

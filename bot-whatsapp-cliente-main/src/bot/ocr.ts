@@ -188,13 +188,13 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
 
   const normalizedDetailedRoutes = monitoredRoutes
     .map((route) => ({
-      raw: `${route.cidade.trim()} | ${route.bairro.trim()}`,
+      raw: route.cidade.trim() ? `${route.cidade.trim()} | ${route.bairro.trim()}` : route.bairro.trim(),
       cidade: route.cidade.trim(),
       bairro: route.bairro.trim(),
       normalizedCity: normalizeOcrText(route.cidade),
       normalizedDistrict: normalizeOcrText(route.bairro)
     }))
-    .filter((route) => route.normalizedCity && route.normalizedDistrict);
+    .filter((route) => route.normalizedDistrict);
 
   const normalizedRoutes = legacyRoutes
     .map((route) => ({ raw: route.trim(), normalized: normalizeOcrText(route) }))
@@ -206,8 +206,8 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
       const columns = splitLineIntoRouteColumns(line, layout);
       const normalizedCityColumn = normalizeOcrText(columns.city);
       const normalizedDistrictColumn = normalizeOcrText(columns.district);
-      if (!normalizedCityColumn || !normalizedDistrictColumn) continue;
-      if (!matchesConfiguredText(normalizedCityColumn, route.normalizedCity)) continue;
+      if (!normalizedDistrictColumn) continue;
+      if (route.normalizedCity && (!normalizedCityColumn || !matchesConfiguredText(normalizedCityColumn, route.normalizedCity))) continue;
       if (!matchesConfiguredText(normalizedDistrictColumn, route.normalizedDistrict)) continue;
 
       const code = extractSafeGaiolaCode(line, columns.code);

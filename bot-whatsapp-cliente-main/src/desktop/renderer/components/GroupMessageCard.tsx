@@ -72,14 +72,14 @@ function createEmptyRoute(): MonitoredRoute {
 }
 
 function normalizeRouteKey(route: MonitoredRoute) {
-  return `${route.cidade.trim().toLowerCase()}|${route.bairro.trim().toLowerCase()}`;
+  return route.bairro.trim().toLowerCase();
 }
 
 function normalizeMonitoredRoutes(routes: MonitoredRoute[]) {
   const seen = new Set<string>();
   return routes
     .map((item) => ({ cidade: item.cidade.trim(), bairro: item.bairro.trim() }))
-    .filter((item) => item.cidade && item.bairro)
+    .filter((item) => item.bairro)
     .filter((item) => {
       const key = normalizeRouteKey(item);
       if (seen.has(key)) return false;
@@ -115,7 +115,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     ? config.grupoAlvoNome || ""
     : config.grupoTesteNome || "";
   const savedCodes = useMemo(
-    () => (isImageTarget ? config.rotasMonitoradasDetalhadas?.length ? config.rotasMonitoradasDetalhadas.map((item) => `${item.cidade} | ${item.bairro}`) : config.rotasMonitoradas || [] : isTarget ? config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
+    () => (isImageTarget ? config.rotasMonitoradasDetalhadas?.length ? config.rotasMonitoradasDetalhadas.map((item) => item.bairro) : config.rotasMonitoradas || [] : isTarget ? config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
     [config.codigosMensagensAlvo, config.codigosMensagensTeste, config.rotasMonitoradas, config.rotasMonitoradasDetalhadas, isImageTarget, isTarget]
   );
   const savedCodesKey = savedCodes.join("\n");
@@ -160,7 +160,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     const chosenGroup = selectedGroup || foundByName;
     const value = chosenGroup ? chosenGroup.name : group.trim();
     const nextRoutes = isImageTarget ? normalizeMonitoredRoutes(monitoredRoutes) : [];
-    const nextCodes = isImageTarget ? nextRoutes.map((item) => `${item.cidade} | ${item.bairro}`) : parseCodes(codes);
+    const nextCodes = isImageTarget ? nextRoutes.map((item) => item.bairro) : parseCodes(codes);
 
     if (!value || !senderName.trim() || !nextCodes.length) return;
     setCodes(nextCodes.join("\n"));
@@ -180,7 +180,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   }
 
   const previewMessages = isImageTarget
-    ? normalizeMonitoredRoutes(monitoredRoutes).map((route, index) => `Prioridade ${index + 1}: ${route.cidade} / ${route.bairro}`)
+    ? normalizeMonitoredRoutes(monitoredRoutes).map((route, index) => `Prioridade ${index + 1}: ${route.bairro}`)
     : parseCodes(codes).map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
   const query = group.trim().toLowerCase();
   const filteredGroups = groups
@@ -243,7 +243,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
         {isImageTarget ? (
           <div className="ocr-primary-copy">
             <strong>Configurar rota por imagem</strong>
-            <span>Organize o ranking das rotas. A prioridade 1 é buscada primeiro, depois a 2, e assim por diante.</span>
+            <span>Organize o ranking dos bairros. O bot pega a gaiola da mesma linha do bairro encontrado.</span>
           </div>
         ) : null}
 
@@ -251,21 +251,11 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
           <section className="ocr-route-fields">
             <div className="ocr-route-heading">
               <span>Ranking</span>
-              <span>Cidade</span>
               <span>Bairro</span>
             </div>
             {monitoredRoutes.map((route, index) => (
               <div className="ocr-route-row" key={`ocr-route-${index}`}>
                 <span className="ocr-route-index">Prioridade {index + 1}</span>
-                <input
-                  value={route.cidade}
-                  onChange={(event) => {
-                    const nextRoutes = [...monitoredRoutes];
-                    nextRoutes[index] = { ...route, cidade: event.target.value };
-                    setMonitoredRoutes(nextRoutes);
-                  }}
-                  placeholder="Campos dos Goytacazes"
-                />
                 <input
                   value={route.bairro}
                   onChange={(event) => {

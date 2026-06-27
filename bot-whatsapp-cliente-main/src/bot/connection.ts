@@ -992,7 +992,7 @@ export class BotService extends EventEmitter {
         cidade: String(item?.cidade || "").trim(),
         bairro: String(item?.bairro || "").trim()
       }))
-      .filter((item) => item.cidade && item.bairro);
+      .filter((item) => item.bairro);
     this.configStore.save({
       nomeEnvio: senderName.trim(),
       codigosMensagensAlvo: this.codigosEscolhidos,
@@ -1477,7 +1477,7 @@ export class BotService extends EventEmitter {
       const detected = findConfiguredRouteCodeFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
       if (!detected) {
         const wanted = this.describeConfiguredOcrRoutes(config);
-        this.logger.info(`OCR (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou cidade+bairro nas colunas corretas com gaiola segura. Procurando: ${wanted}.`);
+        this.logger.info(`OCR (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou bairro na coluna correta com gaiola segura na mesma linha. Procurando: ${wanted}.`);
         return;
       }
 
@@ -2308,15 +2308,15 @@ export class BotService extends EventEmitter {
 
   private hasConfiguredOcrRoutes(config = this.configStore.load()) {
     return (
-      (config.rotasMonitoradasDetalhadas || []).some((item) => item.cidade?.trim() && item.bairro?.trim()) ||
+      (config.rotasMonitoradasDetalhadas || []).some((item) => item.bairro?.trim()) ||
       (config.rotasMonitoradas || []).some((item) => item.trim())
     );
   }
 
   private describeConfiguredOcrRoutes(config = this.configStore.load()) {
     const detailed = (config.rotasMonitoradasDetalhadas || [])
-      .filter((item) => item.cidade?.trim() && item.bairro?.trim())
-      .map((item) => `${item.cidade} / ${item.bairro}`);
+      .filter((item) => item.bairro?.trim())
+      .map((item) => item.cidade?.trim() ? `${item.cidade} / ${item.bairro}` : item.bairro);
     if (detailed.length) return detailed.slice(0, 4).join(" | ");
     return (config.rotasMonitoradas || []).slice(0, 4).join(" | ") || "nenhuma rota configurada";
   }
