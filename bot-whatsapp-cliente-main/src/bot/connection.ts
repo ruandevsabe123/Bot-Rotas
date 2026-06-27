@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { findConfiguredRouteCodeDetailed, readImageText } from "./ocr";
+import { findConfiguredRouteCodeFromOcr, readRouteImageOcr } from "./ocr";
 import { RouteStore } from "./routeStore";
 import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotTestStatus, RouteDispatch, RouteReaction } from "../shared/types";
 
@@ -1451,11 +1451,11 @@ export class BotService extends EventEmitter {
       );
 
       fs.writeFileSync(imagePath, buffer);
-      const text = await readImageText(imagePath);
-      const detected = findConfiguredRouteCodeDetailed(text, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
+      const ocr = await readRouteImageOcr(imagePath);
+      const detected = findConfiguredRouteCodeFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
       if (!detected) {
         const wanted = this.describeConfiguredOcrRoutes(config);
-        this.logger.info(`OCR leu imagem, mas não achou cidade+bairro na mesma linha com gaiola. Procurando: ${wanted}.`);
+        this.logger.info(`OCR (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou cidade+bairro com gaiola segura no começo da linha. Procurando: ${wanted}.`);
         return;
       }
 
