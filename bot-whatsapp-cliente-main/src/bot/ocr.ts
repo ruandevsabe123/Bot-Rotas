@@ -46,41 +46,20 @@ export function readImageText(imagePath: string) {
   return readRouteImageOcr(imagePath).then((result) => result.text);
 }
 
-export function readRouteImageOcr(imagePath: string) {
-  return readRouteImageOcrCandidates(imagePath).then((results) => (
-    [...results].sort((left, right) => right.lines.length - left.lines.length)[0] || {
-      text: "",
-      lines: [],
-      source: "empty"
-    }
-  ));
-}
-
-export async function readRouteImageOcrCandidates(imagePath: string) {
-  const variants = await createPreprocessedImageVariants(imagePath);
-  const results: RouteOcrResult[] = [];
+export async function readRouteImageOcr(imagePath: string) {
+  const variant = await createPrimaryPreprocessedImage(imagePath);
 
   try {
-    for (const variant of variants) {
-      try {
-        results.push(await readSingleRouteImageOcr(variant.path, variant.label));
-      } catch {
-        // Se uma variação falhar, as outras ainda podem salvar a leitura.
-      }
-    }
+    return await readSingleRouteImageOcr(variant.path, variant.label);
   } finally {
-    for (const variant of variants) {
-      if (variant.generated) {
-        try {
-          fs.rmSync(variant.path, { force: true });
-        } catch {
-          // Arquivo temporário já pode ter sido removido.
-        }
+    if (variant.generated) {
+      try {
+        fs.rmSync(variant.path, { force: true });
+      } catch {
+        // Arquivo temporário já pode ter sido removido.
       }
     }
   }
-
-  return results.length ? results : [await readSingleRouteImageOcr(imagePath, "original")];
 }
 
 function readSingleRouteImageOcr(imagePath: string, label: string) {
@@ -134,46 +113,34 @@ async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string
   };
 }
 
-async function createPreprocessedImageVariants(imagePath: string) {
-  const variants = [{ path: imagePath, label: "original", generated: false }];
-
+async function createPrimaryPreprocessedImage(imagePath: string) {
   try {
     const { default: sharp } = await import("sharp");
     const metadata = await sharp(imagePath).metadata();
     const width = metadata.width || 0;
+    const height = metadata.height || 0;
     const resizeWidth = width > 0 ? Math.min(3200, Math.max(1800, width * 2)) : 2200;
     const baseName = path.join(os.tmpdir(), `ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    const cleanPath = `${baseName}-clean.png`;
-    const contrastPath = `${baseName}-contrast.png`;
+    const cleanPath = `${baseName}-rota.png`;
+    const topCrop = height > 260 ? Math.floor(height * 0.04) : 0;
+    const cropHeight = height > topCrop ? height - topCrop : height;
 
-    await sharp(imagePath)
-      .rotate()
+    const pipeline = sharp(imagePath).rotate();
+    const focused = width && cropHeight ? pipeline.extract({ left: 0, top: topCrop, width, height: cropHeight }) : pipeline;
+
+    await focused
       .resize({ width: resizeWidth, withoutEnlargement: false })
       .grayscale()
       .normalize()
-      .sharpen({ sigma: 1.2, m1: 1.1, m2: 2.2 })
+      .linear(1.18, -8)
+      .sharpen({ sigma: 1.05, m1: 1.05, m2: 2 })
       .png()
       .toFile(cleanPath);
 
-    await sharp(imagePath)
-      .rotate()
-      .resize({ width: resizeWidth, withoutEnlargement: false })
-      .grayscale()
-      .normalize()
-      .linear(1.35, -18)
-      .threshold(172)
-      .png()
-      .toFile(contrastPath);
-
-    variants.push(
-      { path: cleanPath, label: "nitida", generated: true },
-      { path: contrastPath, label: "contraste", generated: true }
-    );
+    return { path: cleanPath, label: "tratada-principal", generated: true };
   } catch {
-    // Se o tratamento de imagem falhar, o OCR continua na original.
+    return { path: imagePath, label: "original", generated: false };
   }
-
-  return variants;
 }
 
 function getTesseractJsWorker() {
@@ -217,6 +184,7 @@ export function findConfiguredRouteCodeFromOcr(ocr: RouteOcrResult, monitoredRou
 
 function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: MonitoredRoute[] = [], legacyRoutes: string[] = []) {
   const usefulLines = mergeLikelySplitRows(lines);
+  const layout = getTableLayout(usefulLines);
 
   const normalizedDetailedRoutes = monitoredRoutes
     .map((route) => ({
@@ -234,13 +202,15 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
 
   for (const route of normalizedDetailedRoutes) {
     for (const line of usefulLines) {
-      const normalizedLine = normalizeOcrText(line.text);
-      if (!normalizedLine) continue;
       if (line.confidence < 45) continue;
-      if (!matchesConfiguredText(normalizedLine, route.normalizedCity)) continue;
-      if (!matchesConfiguredText(normalizedLine, route.normalizedDistrict)) continue;
+      const columns = splitLineIntoRouteColumns(line, layout);
+      const normalizedCityColumn = normalizeOcrText(columns.city);
+      const normalizedDistrictColumn = normalizeOcrText(columns.district);
+      if (!normalizedCityColumn || !normalizedDistrictColumn) continue;
+      if (!matchesConfiguredText(normalizedCityColumn, route.normalizedCity)) continue;
+      if (!matchesConfiguredText(normalizedDistrictColumn, route.normalizedDistrict)) continue;
 
-      const code = extractSafeGaiolaCode(line);
+      const code = extractSafeGaiolaCode(line, columns.code);
       if (!code) continue;
 
       return {
@@ -257,6 +227,7 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
     const normalizedLine = normalizeOcrText(line.text);
     if (!normalizedLine) continue;
     if (line.confidence < 45) continue;
+    const columns = splitLineIntoRouteColumns(line, layout);
 
     for (const route of normalizedRoutes) {
       const routeIndex = normalizedLine.indexOf(route.normalized);
@@ -265,7 +236,7 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
       const beforeRoute = routeIndex >= 0 ? normalizedLine.slice(0, routeIndex) : "";
       const code = routeIndex >= 0
         ? extractLastGaiolaCode(beforeRoute)
-        : extractSafeGaiolaCode(line);
+        : extractSafeGaiolaCode(line, columns.code);
       if (!code) continue;
 
       return {
@@ -278,6 +249,32 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
   }
 
   return undefined;
+}
+
+function getTableLayout(lines: OcrLine[]) {
+  const words = lines.flatMap((line) => line.words);
+  if (!words.length) return { left: 0, right: 1000, width: 1000 };
+  const left = Math.min(...words.map((word) => word.left));
+  const right = Math.max(...words.map((word) => word.left + word.width));
+  return { left, right, width: Math.max(1, right - left) };
+}
+
+function splitLineIntoRouteColumns(line: OcrLine, layout: { left: number; width: number }) {
+  const words = [...line.words].sort((left, right) => left.left - right.left);
+  const inRange = (start: number, end: number) => words
+    .filter((word) => {
+      const center = word.left + word.width / 2;
+      const ratio = (center - layout.left) / layout.width;
+      return ratio >= start && ratio < end;
+    })
+    .map((word) => word.text)
+    .join(" ");
+
+  return {
+    code: inRange(0, 0.16),
+    city: inRange(0.32, 0.82),
+    district: inRange(0.58, 1.01)
+  };
 }
 
 function matchesConfiguredText(line: string, expected: string) {
@@ -428,7 +425,11 @@ function mergeLikelySplitRows(lines: OcrLine[]) {
   return merged;
 }
 
-function extractSafeGaiolaCode(line: OcrLine) {
+function extractSafeGaiolaCode(line: OcrLine, codeText?: string) {
+  if (codeText !== undefined) {
+    const codeMatches = collectGaiolaCodes(normalizeOcrToken(codeText));
+    return codeMatches.length === 1 ? codeMatches[0] : "";
+  }
   if (collectGaiolaCodes(normalizeOcrToken(line.text)).length !== 1) return "";
   if (!line.words.length) return extractFirstGaiolaCodeBeforeRouteData(line.text);
 

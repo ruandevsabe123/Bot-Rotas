@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { findConfiguredRouteCodeFromOcr, readRouteImageOcrCandidates } from "./ocr";
+import { findConfiguredRouteCodeFromOcr, readRouteImageOcr } from "./ocr";
 import { RouteStore } from "./routeStore";
 import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotTestStatus, RouteDispatch, RouteReaction } from "../shared/types";
 
@@ -1473,36 +1473,11 @@ export class BotService extends EventEmitter {
       );
 
       fs.writeFileSync(imagePath, buffer);
-      const ocrResults = await readRouteImageOcrCandidates(imagePath);
-      const detections = ocrResults
-        .map((ocr) => ({
-          ocr,
-          detected: findConfiguredRouteCodeFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || [])
-        }))
-        .filter((item) => item.detected);
-      const uniqueDetections = new Map(
-        detections.map((item) => [`${normalizarTexto(item.detected!.route)}:${item.detected!.code}`, item])
-      );
-
-      if (uniqueDetections.size > 1) {
-        const found = [...uniqueDetections.values()]
-          .map((item) => `${item.detected!.route} ${item.detected!.code} (${item.ocr.source})`)
-          .join(" | ");
-        this.logger.warning(`OCR recusado por conflito entre versões da imagem: ${found}. Nenhuma mensagem enviada.`);
-        return;
-      }
-
-      const detectedItem = [...uniqueDetections.values()][0];
-      const detected = detectedItem?.detected;
-      if (detected && ocrResults.length > 1 && detections.length < 2) {
-        this.logger.warning(`OCR achou ${detected.route} ${detected.code} em apenas uma versão da imagem (${detectedItem.ocr.source}). Sem confirmação dupla, nenhuma mensagem enviada.`);
-        return;
-      }
-
+      const ocr = await readRouteImageOcr(imagePath);
+      const detected = findConfiguredRouteCodeFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
       if (!detected) {
         const wanted = this.describeConfiguredOcrRoutes(config);
-        const readSummary = ocrResults.map((ocr) => `${ocr.source}: ${ocr.lines.length} linha(s)`).join(" | ");
-        this.logger.info(`OCR leu a imagem tratada (${readSummary}), mas não achou cidade+bairro com gaiola segura no começo da linha. Procurando: ${wanted}.`);
+        this.logger.info(`OCR (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou cidade+bairro nas colunas corretas com gaiola segura. Procurando: ${wanted}.`);
         return;
       }
 
@@ -1519,7 +1494,7 @@ export class BotService extends EventEmitter {
       this.preparedMessages = [message];
       this.rebuildPreparedRelayMessages(groupJid, [message]);
 
-      this.logger.success(`OCR detectou ${detected.route} com gaiola ${detected.code} usando ${detectedItem.ocr.source}. Prioridade configurada respeitada. Mensagem pronta: ${message}.`);
+      this.logger.success(`OCR detectou ${detected.route} com gaiola ${detected.code} usando ${ocr.source}. Linha usada: "${detected.line}". Mensagem pronta: ${message}.`);
 
       if (this.groupState === "open") {
         const cycleId = ++this.sendCycleId;
