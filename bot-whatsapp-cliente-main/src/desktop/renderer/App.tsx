@@ -24,6 +24,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Sparkles,
   SlidersHorizontal,
   TestTube2,
   UserPlus,
@@ -82,8 +83,8 @@ type PendingConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-type AppTab = "home" | "groups" | "messages" | "test" | "settings";
-type GroupEditor = "target" | "test" | undefined;
+type AppTab = "home" | "groups" | "messages" | "image" | "test" | "settings";
+type GroupEditor = "target" | "image" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
 type AdminMainTab = "dashboard" | "validations" | "history" | "logs" | "reports" | "clients" | "settings";
 type RouteStatusFilter = "all" | "pending" | "validated" | "rejected" | "leader";
@@ -102,6 +103,7 @@ const emptySnapshot: BotSnapshot = {
     grupoTesteJid: "",
     grupoTesteNome: "",
     nomeEnvio: "",
+    targetDispatchMode: "manual",
     nuclearMode: false,
     codigosMensagensAlvo: [],
     rotasMonitoradas: [],
@@ -140,6 +142,7 @@ const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
   { id: "home", label: "Inicio", Icon: Home },
   { id: "groups", label: "Grupos", Icon: Route },
   { id: "messages", label: "Mensagens", Icon: MessageSquareText },
+  { id: "image", label: "Imagem", Icon: Sparkles },
   { id: "test", label: "Teste", Icon: TestTube2 },
   { id: "settings", label: "Ajustes", Icon: Settings }
 ];
@@ -2441,22 +2444,29 @@ export default function App() {
     return /Bot .*ARMADO|NORMAL ARMADO|NUCLEAR ARMADO|Monitoramento desativado|Parou de escutar|FECHADO|ABRIU|Palavra de abertura|Abertura simulada|Disparo acionado|Rajada instantânea|Mensagem .*?(confirmada|enviada)|Disparo .*?(concluído|concluido|terminou)|Abertura ignorada|falhou|erro/i.test(message);
   }
 
-  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[]) {
+  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual") {
     const selectedGroupName = groupName || group;
-    const routes = codes;
-    const messages = buildRoutePreview(routes, monitoredRoutes);
+    const isImageMode = targetDispatchMode === "ocr";
+    const routes = isImageMode ? codes : [];
+    const messages = isImageMode ? buildRoutePreview(routes, monitoredRoutes) : buildMessagePreview(senderName, codes);
 
     setConfirmation({
-      title: startAfterSave ? "Salvar e iniciar" : "Salvar alvo",
+      title: startAfterSave ? (isImageMode ? "Salvar e iniciar imagem" : "Salvar e iniciar manual") : isImageMode ? "Salvar bot imagem" : "Salvar mensagens",
       message: `Grupo alvo: ${selectedGroupName}`,
-      details: messages.length ? messages : ["Nenhuma rota monitorada."],
-      confirmLabel: startAfterSave ? "Salvar e iniciar" : "Salvar alvo",
+      details: messages.length ? messages : [isImageMode ? "Nenhuma rota monitorada." : "Nenhuma mensagem manual."],
+      confirmLabel: startAfterSave ? "Salvar e iniciar" : "Salvar",
       onConfirm: async () => {
         await runAction(async () => {
           await botApi.saveGroup({ group, groupId, groupName });
-          await botApi.saveTargetMessageSettings({ senderName, codes: [], routes, monitoredRoutes });
+          await botApi.saveTargetMessageSettings({
+            senderName,
+            codes: isImageMode ? snapshot.config.codigosMensagensAlvo || [] : codes,
+            routes: isImageMode ? routes : snapshot.config.rotasMonitoradas || [],
+            monitoredRoutes: isImageMode ? monitoredRoutes : snapshot.config.rotasMonitoradasDetalhadas || [],
+            targetDispatchMode
+          });
           setGroupEditor(undefined);
-          return startAfterSave ? botApi.startMonitoring() : botApi.getSnapshot();
+          return startAfterSave ? (isImageMode ? botApi.startImageMonitoring() : botApi.startMonitoring()) : botApi.getSnapshot();
         });
       }
     });
@@ -2502,21 +2512,19 @@ export default function App() {
   }
 
   function confirmStartMonitoring() {
-    const ocrRoutes = buildRoutePreview(snapshot.config.rotasMonitoradas || [], snapshot.config.rotasMonitoradasDetalhadas || []);
     const manualMessages = buildMessagePreview();
-    const readyItems = ocrRoutes.length ? ocrRoutes : manualMessages;
     const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
     const hasName = Boolean(snapshot.config.nomeEnvio);
 
-    if (!hasGroup || !hasName || !readyItems.length) {
+    if (!hasGroup || !hasName || !manualMessages.length) {
       setGroupEditor("target");
       setConfirmation({
         title: "Revise o envio",
-        message: "Falta configurar o grupo, o nome ou os bairros para detectar na foto.",
+        message: "Falta configurar o grupo, o nome ou os códigos manuais.",
         details: [
           hasGroup ? `Rota: ${groupLabel}` : "Rota ainda não configurada.",
           hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",
-          readyItems.length ? `Detecção: ${readyItems.join(" | ")}` : "Nenhum bairro OCR configurado."
+          manualMessages.length ? `Mensagens: ${manualMessages.join(" | ")}` : "Nenhum código manual configurado."
         ],
         confirmLabel: "Entendi",
         onConfirm: () => undefined
@@ -2525,16 +2533,52 @@ export default function App() {
     }
 
     setConfirmation({
-      title: "Iniciar bot",
-      message: ocrRoutes.length ? "O bot vai aguardar imagem do analista, ler o bairro e enviar a gaiola atual." : "Confira a rota e as mensagens manuais que serão enviadas.",
+      title: "Iniciar bot manual",
+      message: "Confira a rota e as mensagens manuais que serão enviadas.",
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Nome: ${snapshot.config.nomeEnvio}`,
-        ocrRoutes.length ? `Bairros OCR: ${ocrRoutes.join(" | ")}` : `Mensagens manuais: ${manualMessages.join(" | ")}`
+        `Mensagens manuais: ${manualMessages.join(" | ")}`
       ],
-      confirmLabel: "Iniciar bot",
+      confirmLabel: "Iniciar manual",
       onConfirm: async () => {
         await runAction(botApi.startMonitoring);
+      }
+    });
+  }
+
+  function confirmStartImageMonitoring() {
+    const ocrRoutes = buildRoutePreview(snapshot.config.rotasMonitoradas || [], snapshot.config.rotasMonitoradasDetalhadas || []);
+    const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
+    const hasName = Boolean(snapshot.config.nomeEnvio);
+
+    if (!hasGroup || !hasName || !ocrRoutes.length) {
+      setGroupEditor("image");
+      setConfirmation({
+        title: "Revise o bot imagem",
+        message: "Falta configurar grupo, nome ou cidade+bairro para leitura de foto.",
+        details: [
+          hasGroup ? `Grupo: ${groupLabel}` : "Grupo alvo ainda não configurado.",
+          hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",
+          ocrRoutes.length ? `Rotas imagem: ${ocrRoutes.join(" | ")}` : "Nenhuma rota de imagem configurada."
+        ],
+        confirmLabel: "Entendi",
+        onConfirm: () => undefined
+      });
+      return;
+    }
+
+    setConfirmation({
+      title: "Iniciar bot imagem",
+      message: "O bot vai aguardar foto da tabela e só enviar se achar uma rota segura.",
+      details: [
+        `Grupo alvo: ${groupLabel}`,
+        `Nome: ${snapshot.config.nomeEnvio}`,
+        `Prioridade: ${ocrRoutes.join(" | ")}`
+      ],
+      confirmLabel: "Iniciar imagem",
+      onConfirm: async () => {
+        await runAction(botApi.startImageMonitoring);
       }
     });
   }
@@ -2700,7 +2744,7 @@ export default function App() {
           <LaunchReviewPanel
             snapshot={snapshot}
             groupLabel={groupLabel}
-            messages={(snapshot.config.rotasMonitoradasDetalhadas?.length || snapshot.config.rotasMonitoradas?.length) ? buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas) : normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
+            messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
             onEditTarget={() => setGroupEditor("target")}
           />
 
@@ -2745,7 +2789,7 @@ export default function App() {
               kind="target"
               title="Config grupo alvo"
               group={groupLabel}
-              codes={(snapshot.config.rotasMonitoradasDetalhadas?.length || snapshot.config.rotasMonitoradas?.length) ? buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas).map((item) => item.replace(/^OCR:\s*/, "")) : snapshot.config.codigosMensagensAlvo || []}
+              codes={snapshot.config.codigosMensagensAlvo || []}
               onOpen={() => setGroupEditor("target")}
             />
           </section>
@@ -2764,11 +2808,46 @@ export default function App() {
             </button>
           </section>
           <MessagePreviewStrip
-            title={(snapshot.config.rotasMonitoradasDetalhadas?.length || snapshot.config.rotasMonitoradas?.length) ? "Rotas OCR" : "Mensagens alvo"}
+            title="Mensagens alvo"
             group={groupLabel}
-            messages={(snapshot.config.rotasMonitoradasDetalhadas?.length || snapshot.config.rotasMonitoradas?.length) ? buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas) : normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
+            messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
             onOpen={() => setGroupEditor("target")}
           />
+        </section>
+      ) : null}
+
+      {activeTab === "image" ? (
+        <section className="mobile-home">
+          <section className="quick-panel identity-panel">
+            <div>
+              <p className="panel-label">Bot imagem</p>
+              <h2>{buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas).length || 0} rota(s)</h2>
+            </div>
+            <button className="button" type="button" onClick={() => setGroupEditor("image")}>
+              Configurar
+            </button>
+          </section>
+          <MessagePreviewStrip
+            title="Leitura por foto"
+            group={groupLabel}
+            messages={buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas)}
+            onOpen={() => setGroupEditor("image")}
+          />
+          <ControlButtons
+            busy={busy}
+            status={snapshot.status}
+            onStart={startWhatsAppConnection}
+            onStop={() => runAction(botApi.stopBot)}
+            onStartMonitoring={confirmStartImageMonitoring}
+            onStopMonitoring={() => runAction(botApi.stopMonitoring)}
+            onManualDispatch={confirmManualDispatch}
+            startMonitoringLabel="Iniciar bot imagem"
+            hideManualDispatch
+            monitoringEnabled={snapshot.monitoringEnabled && snapshot.config.targetDispatchMode === "ocr"}
+            monitoringMode={snapshot.monitoringMode}
+            groupState={snapshot.groupState}
+          />
+          <LogsPanel logs={snapshot.logs.filter((log) => /OCR|imagem|foto|rota/i.test(log.message)).slice(-40)} />
         </section>
       ) : null}
 
@@ -2885,20 +2964,21 @@ export default function App() {
             <div className="sheet-heading">
               <div>
                 <p className="panel-label">Configuração</p>
-                <h2 id="group-editor-title">{groupEditor === "target" ? "Grupo alvo" : "Teste abrir/fechar"}</h2>
+                <h2 id="group-editor-title">{groupEditor === "image" ? "Bot imagem" : groupEditor === "target" ? "Mensagens manuais" : "Teste abrir/fechar"}</h2>
               </div>
               <button className="icon-button" title="Fechar" type="button" onClick={() => setGroupEditor(undefined)}>
                 <X size={20} />
               </button>
             </div>
             <GroupMessageCard
-              kind={groupEditor}
+              kind={groupEditor === "image" ? "target" : groupEditor}
+              targetMode={groupEditor === "image" ? "ocr" : "manual"}
               config={snapshot.config}
               groups={snapshot.groups}
               busy={busy}
               onRefresh={() => runAction(botApi.refreshGroups)}
-              onSave={groupEditor === "target" ? confirmSaveTarget : confirmSaveTest}
-              onSaveManual={groupEditor === "target" ? confirmSaveManualTarget : undefined}
+              onSave={groupEditor === "target" || groupEditor === "image" ? confirmSaveTarget : confirmSaveTest}
+              onSaveManual={undefined}
               onWarmup={groupEditor === "test" ? confirmWarmup : undefined}
             />
           </section>

@@ -107,6 +107,14 @@ function registerIpc() {
     }
     return bot.getSnapshot();
   });
+  ipcMain.handle("bot:enableImageMonitoring", async () => {
+    try {
+      await bot.enableImageMonitoring();
+    } catch (err) {
+      // ignore
+    }
+    return bot.getSnapshot();
+  });
   ipcMain.handle("bot:enableNuclearMonitoring", async () => {
     try {
       await bot.enableNuclearMonitoring();
@@ -161,7 +169,7 @@ function registerIpc() {
   });
   ipcMain.handle("bot:saveTargetMessageSettings", async (_event, payload: SaveTargetMessageSettingsPayload) => {
     try {
-      bot.setMessageSettings(payload.senderName, payload.codes, payload.routes, payload.monitoredRoutes);
+      bot.setMessageSettings(payload.senderName, payload.codes, payload.routes, payload.monitoredRoutes, payload.targetDispatchMode);
     } catch (err) {
       // ignore
     }
@@ -180,7 +188,8 @@ function registerIpc() {
       payload.senderName,
       payload.codes,
       (payload as SaveTargetMessageSettingsPayload).routes,
-      (payload as SaveTargetMessageSettingsPayload).monitoredRoutes
+      (payload as SaveTargetMessageSettingsPayload).monitoredRoutes,
+      (payload as SaveTargetMessageSettingsPayload).targetDispatchMode
     );
     return bot.getSnapshot();
   });

@@ -280,22 +280,29 @@ export class BotService extends EventEmitter {
   }
 
   async enableMonitoring(): Promise<boolean> {
-    return this.enableTargetMonitoring(false);
+    return this.enableTargetMonitoring(false, "manual");
+  }
+
+  async enableImageMonitoring(): Promise<boolean> {
+    return this.enableTargetMonitoring(false, "ocr");
   }
 
   async enableNuclearMonitoring(): Promise<boolean> {
-    return this.enableTargetMonitoring(true);
+    return this.enableTargetMonitoring(true, "manual");
   }
 
-  private async enableTargetMonitoring(useNuclearMode: boolean): Promise<boolean> {
+  private async enableTargetMonitoring(useNuclearMode: boolean, targetDispatchMode: BotConfig["targetDispatchMode"]): Promise<boolean> {
     if (this.status !== "connected") {
       this.logger.warning("Conecte o WhatsApp antes de ativar o monitoramento.");
       return false;
     }
 
     this.monitoringMode = "target";
-    this.configStore.save({ nuclearMode: useNuclearMode });
-    this.logger.info(useNuclearMode ? "☢️ Modo nuclear selecionado. O modo normal ficará desligado." : "Modo normal selecionado. O modo nuclear ficará desligado.");
+    const modeLabel = targetDispatchMode === "ocr" ? "bot imagem" : useNuclearMode ? "modo nuclear" : "bot manual";
+    this.configStore.save({ nuclearMode: useNuclearMode, targetDispatchMode });
+    this.pendingOcrMessages = [];
+    this.lastOcrDispatchKey = "";
+    this.logger.info(`Modo ${modeLabel} selecionado. Os outros modos ficarão desligados.`);
 
     if (!this.hasReadyMessages()) {
       this.monitoringEnabled = false;
@@ -316,7 +323,7 @@ export class BotService extends EventEmitter {
     this.armedAt = Date.now();
     this.startHealthCheck();
     this.startWarmKeepAlive();
-    this.logger.success(useNuclearMode ? "✅ Bot NUCLEAR ARMADO. Aguardando abertura do grupo..." : "✅ Bot NORMAL ARMADO. Aguardando abertura do grupo...");
+    this.logger.success(targetDispatchMode === "ocr" ? "✅ BOT IMAGEM ARMADO. Aguardando foto da rota..." : useNuclearMode ? "✅ Bot NUCLEAR ARMADO. Aguardando abertura do grupo..." : "✅ Bot MANUAL ARMADO. Aguardando abertura do grupo...");
     this.emitSnapshot();
     return true;
   }
@@ -976,7 +983,7 @@ export class BotService extends EventEmitter {
     this.logger.success("Mensagens do grupo alvo atualizadas.");
   }
 
-  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: { cidade: string; bairro: string }[]) {
+  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: { cidade: string; bairro: string }[], targetDispatchMode?: BotConfig["targetDispatchMode"]) {
     // Update target (alvo) message settings. Do NOT reset warmup completion.
     this.codigosEscolhidos = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
     const monitoredRoutes = (routes || codes).map((item) => item.trim()).filter(Boolean);
@@ -990,12 +997,14 @@ export class BotService extends EventEmitter {
       nomeEnvio: senderName.trim(),
       codigosMensagensAlvo: this.codigosEscolhidos,
       rotasMonitoradas: monitoredRoutes,
-      rotasMonitoradasDetalhadas: detailedRoutes
+      rotasMonitoradasDetalhadas: detailedRoutes,
+      ...(targetDispatchMode ? { targetDispatchMode } : {})
     });
     this.montarMensagens();
     this.prepareSendPlan();
-    this.logger.success(
-      `Rotas do grupo alvo atualizadas: ${detailedRoutes.length || monitoredRoutes.length} rota(s) monitorada(s).`
+    this.logger.success(targetDispatchMode === "ocr"
+      ? `Bot imagem atualizado: ${detailedRoutes.length || monitoredRoutes.length} rota(s) monitorada(s).`
+      : `Mensagens manuais atualizadas: ${this.codigosEscolhidos.length} código(s).`
     );
   }
 
@@ -1330,6 +1339,12 @@ export class BotService extends EventEmitter {
           return;
         }
 
+        const config = this.configStore.load();
+        if (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
+          this.logger.info("Grupo abriu, mas o bot imagem ainda não tem rota segura lida da foto. Nenhuma mensagem enviada.");
+          return;
+        }
+
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
         this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now());
@@ -1350,12 +1365,13 @@ export class BotService extends EventEmitter {
       this.scheduleReactionProcessing(messages);
       return;
     }
+    const config = this.configStore.load();
 
     for (const msg of messages || []) {
       if (!msg?.message || !msg.key?.remoteJid) continue;
       if (msg.key.remoteJid !== activeGroup.jid) continue;
 
-      if (this.monitoringMode === "target" && msg.message.imageMessage) {
+      if (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && msg.message.imageMessage) {
         this.scheduleRouteImageProcessing(msg, activeGroup.jid);
       }
 
@@ -1377,6 +1393,12 @@ export class BotService extends EventEmitter {
           this.logger.info(
             "Palavra de abertura detectada, mas o grupo ainda não fechou após o bot iniciar. Nenhuma mensagem enviada."
           );
+          this.scheduleReactionProcessing(messages);
+          return;
+        }
+
+        if (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
+          this.logger.info("Palavra de abertura detectada, mas o bot imagem ainda não tem rota segura lida da foto. Nenhuma mensagem enviada.");
           this.scheduleReactionProcessing(messages);
           return;
         }
@@ -1419,7 +1441,7 @@ export class BotService extends EventEmitter {
 
   private scheduleRouteImageProcessing(msg: any, groupJid: string) {
     const config = this.configStore.load();
-    if (!this.hasConfiguredOcrRoutes(config) || !downloadMediaMessage) return;
+    if (config.targetDispatchMode !== "ocr" || !this.hasConfiguredOcrRoutes(config) || !downloadMediaMessage) return;
 
     const messageId = String(msg?.key?.id || "");
     if (!messageId || this.processingImageIds.has(messageId)) return;
@@ -1434,7 +1456,7 @@ export class BotService extends EventEmitter {
 
   private async processRouteImage(msg: any, groupJid: string) {
     const config = this.configStore.load();
-    if (!this.hasConfiguredOcrRoutes(config) || !this.sock) return;
+    if (config.targetDispatchMode !== "ocr" || !this.hasConfiguredOcrRoutes(config) || !this.sock) return;
 
     const messageId = String(msg?.key?.id || Date.now());
     const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
@@ -1472,7 +1494,7 @@ export class BotService extends EventEmitter {
       this.preparedMessages = [message];
       this.rebuildPreparedRelayMessages(groupJid, [message]);
 
-      this.logger.success(`OCR detectou ${detected.route} com gaiola ${detected.code}. Mensagem pronta: ${message}.`);
+      this.logger.success(`OCR detectou ${detected.route} com gaiola ${detected.code}. Prioridade configurada respeitada. Mensagem pronta: ${message}.`);
 
       if (this.groupState === "open") {
         const cycleId = ++this.sendCycleId;
@@ -2040,8 +2062,10 @@ export class BotService extends EventEmitter {
     this.preparedTargetJid = activeGroup.jid;
     this.preparedMessages = this.monitoringMode === "test"
       ? this.buildWarmupMessages()
-      : this.pendingOcrMessages.length
+      : config.targetDispatchMode === "ocr"
+      ? this.pendingOcrMessages.length
       ? [...this.pendingOcrMessages]
+      : []
       : [...this.mensagensProntasAlvo];
 
     if (this.monitoringMode === "target" && this.preparedMessages.length > MAX_OUTGOING_MESSAGES) {
@@ -2060,7 +2084,7 @@ export class BotService extends EventEmitter {
 
     return Boolean(
       this.preparedTargetJid &&
-      (this.preparedMessages.length || (this.monitoringMode === "target" && this.hasConfiguredOcrRoutes(config)))
+      (this.preparedMessages.length || (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && this.hasConfiguredOcrRoutes(config)))
     );
   }
 
@@ -2277,8 +2301,9 @@ export class BotService extends EventEmitter {
   private hasReadyMessages(mode: MonitoringMode = this.monitoringMode) {
     const config = this.configStore.load();
     const codes = mode === "test" ? config.codigosMensagensTeste : config.codigosMensagensAlvo;
+    if (mode === "target" && config.targetDispatchMode === "ocr") return this.hasConfiguredOcrRoutes(config);
     if ((codes || []).some((item) => item.trim())) return true;
-    return mode === "target" && this.hasConfiguredOcrRoutes(config);
+    return false;
   }
 
   private hasConfiguredOcrRoutes(config = this.configStore.load()) {

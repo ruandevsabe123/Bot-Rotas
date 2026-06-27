@@ -34,6 +34,7 @@ export type BotConfig = {
   grupoTesteJid: string;
   grupoTesteNome: string;
   nomeEnvio: string;
+  targetDispatchMode: "manual" | "ocr";
   nuclearMode: boolean;
   // mensagens específicas para o uso do bot
   // mensagens enviadas no grupo alvo
@@ -258,6 +259,7 @@ export type SaveTargetMessageSettingsPayload = {
   codes: string[];
   routes?: string[];
   monitoredRoutes?: MonitoredRoute[];
+  targetDispatchMode?: "manual" | "ocr";
 };
 
 export type GeneralSettingsPayload = {
@@ -278,6 +280,7 @@ export type DesktopApi = {
   clearLogs: () => Promise<BotSnapshot>;
   refreshGroups: () => Promise<BotSnapshot>;
   startMonitoring: () => Promise<BotSnapshot>;
+  startImageMonitoring: () => Promise<BotSnapshot>;
   startNuclearMonitoring: () => Promise<BotSnapshot>;
   startTestMonitoring: () => Promise<BotSnapshot>;
   stopMonitoring: () => Promise<BotSnapshot>;

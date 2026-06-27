@@ -150,13 +150,12 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
     .map((route) => ({ raw: route.trim(), normalized: normalizeOcrText(route) }))
     .filter((route) => route.normalized);
 
-  for (const line of usefulLines) {
-    const normalizedLine = normalizeOcrText(line.text);
-    if (!normalizedLine) continue;
-
-    for (const route of normalizedDetailedRoutes) {
-      if (!matchesRoutePart(normalizedLine, route.normalizedCity)) continue;
-      if (!matchesRoutePart(normalizedLine, route.normalizedDistrict)) continue;
+  for (const route of normalizedDetailedRoutes) {
+    for (const line of usefulLines) {
+      const normalizedLine = normalizeOcrText(line.text);
+      if (!normalizedLine) continue;
+      if (!matchesConfiguredText(normalizedLine, route.normalizedCity)) continue;
+      if (!matchesConfiguredText(normalizedLine, route.normalizedDistrict)) continue;
 
       const code = extractSafeGaiolaCode(line);
       if (!code) continue;
@@ -169,6 +168,11 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
         line: line.text
       };
     }
+  }
+
+  for (const line of usefulLines) {
+    const normalizedLine = normalizeOcrText(line.text);
+    if (!normalizedLine) continue;
 
     for (const route of normalizedRoutes) {
       const routeIndex = normalizedLine.indexOf(route.normalized);
@@ -190,6 +194,26 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
   }
 
   return undefined;
+}
+
+function matchesConfiguredText(line: string, expected: string) {
+  if (line.includes(expected)) return true;
+  const expectedWords = expected.split(/\s+/).filter((word) => word.length > 1);
+  if (!expectedWords.length) return false;
+  const lineWords = line.split(/\s+/).filter(Boolean);
+  let cursor = 0;
+
+  for (const expectedWord of expectedWords) {
+    const foundIndex = lineWords.findIndex((word, index) => index >= cursor && (
+      word === expectedWord ||
+      (expectedWord.length >= 4 && word.includes(expectedWord)) ||
+      (word.length >= 4 && expectedWord.includes(word))
+    ));
+    if (foundIndex < 0) return false;
+    cursor = foundIndex + 1;
+  }
+
+  return true;
 }
 
 function parseTsvLines(tsv: string): OcrLine[] {
@@ -321,6 +345,7 @@ function mergeLikelySplitRows(lines: OcrLine[]) {
 }
 
 function extractSafeGaiolaCode(line: OcrLine) {
+  if (collectGaiolaCodes(normalizeOcrToken(line.text)).length !== 1) return "";
   if (!line.words.length) return extractFirstGaiolaCodeBeforeRouteData(line.text);
 
   const sortedWords = [...line.words].sort((left, right) => left.left - right.left);

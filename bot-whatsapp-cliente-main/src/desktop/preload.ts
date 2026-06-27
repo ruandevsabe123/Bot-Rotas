@@ -15,6 +15,7 @@ const api: DesktopApi = {
   startBot: () => ipcRenderer.invoke("bot:start"),
   stopBot: () => ipcRenderer.invoke("bot:stop"),
   startMonitoring: () => ipcRenderer.invoke("bot:enableMonitoring"),
+  startImageMonitoring: () => ipcRenderer.invoke("bot:enableImageMonitoring"),
   startNuclearMonitoring: () => ipcRenderer.invoke("bot:enableNuclearMonitoring"),
   startTestMonitoring: () => ipcRenderer.invoke("bot:enableTestMonitoring"),
   stopMonitoring: () => ipcRenderer.invoke("bot:disableMonitoring"),

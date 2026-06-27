@@ -9,6 +9,8 @@ type Props = {
   onStartMonitoring: () => void;
   onStopMonitoring: () => void;
   onManualDispatch: () => void;
+  startMonitoringLabel?: string;
+  hideManualDispatch?: boolean;
   monitoringEnabled?: boolean;
   monitoringMode?: "target" | "test";
   groupState?: BotGroupState;
@@ -22,6 +24,8 @@ export function ControlButtons({
   onStartMonitoring,
   onStopMonitoring,
   onManualDispatch,
+  startMonitoringLabel = "Iniciar bot",
+  hideManualDispatch = false,
   monitoringEnabled,
   monitoringMode,
   groupState
@@ -52,16 +56,18 @@ export function ControlButtons({
         </button>
         <button className="button primary" disabled={!canStartMonitoring} onClick={onStartMonitoring}>
           <Play size={18} />
-          Iniciar bot
+          {startMonitoringLabel}
         </button>
         <button className="button" disabled={!canStopMonitoring} onClick={onStopMonitoring}>
           <Square size={18} />
           Parar bot{monitoringMode === "test" ? " teste" : ""}
         </button>
-        <button className="button accent" disabled={!canManualDispatch} onClick={onManualDispatch}>
-          <Send size={18} />
-          Disparo manual{groupState === "closed" ? " (fechado)" : ""}
-        </button>
+        {!hideManualDispatch ? (
+          <button className="button accent" disabled={!canManualDispatch} onClick={onManualDispatch}>
+            <Send size={18} />
+            Disparo manual{groupState === "closed" ? " (fechado)" : ""}
+          </button>
+        ) : null}
       </div>
     </article>
   );

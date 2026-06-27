@@ -228,6 +228,7 @@ function createWebApi(): DesktopApi {
     clearLogs: () => action("clear-logs"),
     refreshGroups: () => action("refresh-groups"),
     startMonitoring: () => action("start-monitoring"),
+    startImageMonitoring: () => action("start-image-monitoring"),
     startNuclearMonitoring: () => action("start-nuclear-monitoring"),
     startTestMonitoring: () => action("start-test-monitoring"),
     stopMonitoring: () => action("stop-monitoring"),

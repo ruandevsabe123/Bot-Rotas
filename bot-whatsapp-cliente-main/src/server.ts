@@ -595,6 +595,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
     case "start-monitoring":
       await bot.enableMonitoring();
       break;
+    case "start-image-monitoring":
+      await bot.enableImageMonitoring();
+      break;
     case "start-nuclear-monitoring":
       await bot.enableNuclearMonitoring();
       break;
@@ -631,7 +634,8 @@ async function handleAction(bot: BotService, action: string, body: any) {
         String(body.senderName || ""),
         Array.isArray(body.codes) ? body.codes : [],
         Array.isArray(body.routes) ? body.routes : undefined,
-        Array.isArray(body.monitoredRoutes) ? body.monitoredRoutes : undefined
+        Array.isArray(body.monitoredRoutes) ? body.monitoredRoutes : undefined,
+        body.targetDispatchMode === "ocr" ? "ocr" : body.targetDispatchMode === "manual" ? "manual" : undefined
       );
       break;
     case "save-warmup-message-settings":

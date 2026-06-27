@@ -3,6 +3,7 @@ import { BotConfig, BotGroup, MonitoredRoute } from "../../../shared/types";
 
 type Props = {
   kind: "target" | "test";
+  targetMode?: "manual" | "ocr";
   config: BotConfig;
   groups: BotGroup[];
   busy: boolean;
@@ -16,7 +17,8 @@ type Props = {
     messageCount?: number,
     intervalMs?: number,
     startAfterSave?: boolean,
-    monitoredRoutes?: MonitoredRoute[]
+    monitoredRoutes?: MonitoredRoute[],
+    targetDispatchMode?: "manual" | "ocr"
   ) => void;
   onSaveManual?: (
     group: string,
@@ -85,7 +87,7 @@ function normalizeMonitoredRoutes(routes: MonitoredRoute[]) {
     });
 }
 
-export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup }: Props) {
+export function GroupMessageCard({ kind, targetMode = "manual", config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup }: Props) {
   const [group, setGroup] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [senderName, setSenderName] = useState("");
@@ -98,13 +100,14 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
   const requestedGroupsRef = useRef(false);
 
   const isTarget = kind === "target";
+  const isImageTarget = isTarget && targetMode === "ocr";
   const label = labels[kind];
   const savedGroupName = isTarget
     ? config.grupoAlvoNome || ""
     : config.grupoTesteNome || "";
   const savedCodes = useMemo(
-    () => (isTarget ? config.rotasMonitoradasDetalhadas?.length ? config.rotasMonitoradasDetalhadas.map((item) => `${item.cidade} | ${item.bairro}`) : config.rotasMonitoradas?.length ? config.rotasMonitoradas : config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
-    [config.codigosMensagensAlvo, config.codigosMensagensTeste, config.rotasMonitoradas, config.rotasMonitoradasDetalhadas, isTarget]
+    () => (isImageTarget ? config.rotasMonitoradasDetalhadas?.length ? config.rotasMonitoradasDetalhadas.map((item) => `${item.cidade} | ${item.bairro}`) : config.rotasMonitoradas || [] : isTarget ? config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
+    [config.codigosMensagensAlvo, config.codigosMensagensTeste, config.rotasMonitoradas, config.rotasMonitoradasDetalhadas, isImageTarget, isTarget]
   );
   const savedCodesKey = savedCodes.join("\n");
 
@@ -147,12 +150,12 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     const foundByName = groups.find((item) => item.name.toLowerCase() === group.trim().toLowerCase());
     const chosenGroup = selectedGroup || foundByName;
     const value = chosenGroup ? chosenGroup.name : group.trim();
-    const nextRoutes = normalizeMonitoredRoutes(monitoredRoutes);
-    const nextCodes = isTarget ? nextRoutes.map((item) => `${item.cidade} | ${item.bairro}`) : parseCodes(codes);
+    const nextRoutes = isImageTarget ? normalizeMonitoredRoutes(monitoredRoutes) : [];
+    const nextCodes = isImageTarget ? nextRoutes.map((item) => `${item.cidade} | ${item.bairro}`) : parseCodes(codes);
 
     if (!value || !senderName.trim() || !nextCodes.length) return;
     setCodes(nextCodes.join("\n"));
-    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes);
+    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes, isImageTarget ? "ocr" : "manual");
   }
 
   function submitManual(event: Pick<FormEvent, "preventDefault">) {
@@ -167,7 +170,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     onSaveManual(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes);
   }
 
-  const previewMessages = isTarget
+  const previewMessages = isImageTarget
     ? normalizeMonitoredRoutes(monitoredRoutes).map((route) => `OCR: ${route.cidade} / ${route.bairro}`)
     : parseCodes(codes).map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
   const query = group.trim().toLowerCase();
@@ -228,14 +231,14 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           placeholder="Digite seu nome"
         />
 
-        {isTarget ? (
+        {isImageTarget ? (
           <div className="ocr-primary-copy">
             <strong>Principal: detectar gaiola pela foto</strong>
             <span>Cadastre quantas rotas quiser. Quando o analista mandar a tabela, o bot testa todas e só aceita a gaiola da rota onde cidade e bairro aparecem na mesma linha.</span>
           </div>
         ) : null}
 
-        {isTarget ? (
+        {isImageTarget ? (
           <section className="ocr-route-fields">
             <div className="ocr-route-heading">
               <span>Rota</span>
@@ -319,11 +322,11 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           </div>
         ) : null}
 
-        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || (isTarget ? !normalizeMonitoredRoutes(monitoredRoutes).length : !codes.trim())} type="submit">
+        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || (isImageTarget ? !normalizeMonitoredRoutes(monitoredRoutes).length : !codes.trim())} type="submit">
           {label.action}
         </button>
         {isTarget ? (
-          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || !normalizeMonitoredRoutes(monitoredRoutes).length} type="button" onClick={(event) => submit(event, true)}>
+          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || (isImageTarget ? !normalizeMonitoredRoutes(monitoredRoutes).length : !codes.trim())} type="button" onClick={(event) => submit(event, true)}>
             <span aria-hidden="true">☠</span>
             Salvar e iniciar
           </button>
@@ -335,13 +338,13 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
         ) : null}
 
         <div className="message-preview compact-preview">
-          <strong>{previewMessages.length} {isTarget ? "rota(s)" : "mensagem(ns)"}</strong>
+          <strong>{previewMessages.length} {isImageTarget ? "rota(s)" : "mensagem(ns)"}</strong>
           {previewMessages.slice(0, 3).map((message, index) => (
             <span key={`${message}-${index}`}>{message}</span>
           ))}
         </div>
 
-        {isTarget ? (
+        {false && isTarget && !isImageTarget ? (
           <section className="manual-fallback-panel">
             <button className="link-button" type="button" onClick={() => setManualOpen((current) => !current)}>
               {manualOpen ? "Ocultar envio manual" : "Configurar envio manual avançado"}
