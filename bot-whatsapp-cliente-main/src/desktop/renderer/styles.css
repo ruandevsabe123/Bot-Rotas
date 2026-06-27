@@ -2192,6 +2192,16 @@ h2 {
   gap: 8px;
 }
 
+.admin-log-list.full {
+  max-height: min(66vh, 760px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.admin-live-log-panel {
+  min-height: 420px;
+}
+
 .admin-log-row {
   display: grid;
   gap: 8px;
@@ -2591,6 +2601,11 @@ h2 {
   color: #ffffff;
 }
 
+.scrollable-detail-list {
+  max-height: 360px;
+  overflow: auto;
+}
+
 .user-detail-dialog {
   width: min(920px, 100%);
   background:
@@ -2787,6 +2802,35 @@ h2 {
 
 .group-message-test .panel-label {
   color: #aeb7bf;
+}
+
+.ocr-primary-copy,
+.manual-fallback-panel {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid rgba(53, 208, 127, 0.2);
+  border-radius: 8px;
+  background: rgba(53, 208, 127, 0.08);
+}
+
+.ocr-primary-copy strong {
+  color: #ffffff;
+}
+
+.ocr-primary-copy span {
+  color: #a9b2bb;
+  line-height: 1.45;
+}
+
+.manual-fallback-panel {
+  border-color: rgba(126, 135, 146, 0.2);
+  background: rgba(126, 135, 146, 0.08);
+}
+
+.manual-fallback-body {
+  display: grid;
+  gap: 10px;
 }
 
 .compact-preview {

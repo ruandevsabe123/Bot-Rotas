@@ -17,6 +17,13 @@ type Props = {
     intervalMs?: number,
     startAfterSave?: boolean
   ) => void;
+  onSaveManual?: (
+    group: string,
+    groupId: string | undefined,
+    groupName: string | undefined,
+    senderName: string,
+    codes: string[]
+  ) => void;
   onWarmup?: () => void;
 };
 
@@ -56,11 +63,13 @@ function parseRoutes(value: string) {
     .filter(Boolean);
 }
 
-export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave, onWarmup }: Props) {
+export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup }: Props) {
   const [group, setGroup] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [senderName, setSenderName] = useState("");
   const [codes, setCodes] = useState("");
+  const [manualCodes, setManualCodes] = useState("");
+  const [manualOpen, setManualOpen] = useState(false);
   const [messageCount, setMessageCount] = useState(15);
   const [intervalMs, setIntervalMs] = useState(0);
   const requestedGroupsRef = useRef(false);
@@ -81,6 +90,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     setSelectedGroupId(isTarget ? config.grupoAlvoJid || "" : config.grupoTesteJid || "");
     setSenderName(config.nomeEnvio);
     setCodes(savedCodesKey);
+    setManualCodes((config.codigosMensagensAlvo || []).join("\n"));
     setMessageCount(config.testMessageCount || 15);
     setIntervalMs(config.testMessageIntervalMs || 0);
   }, [
@@ -112,6 +122,18 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     if (!value || !senderName.trim() || !nextCodes.length) return;
     setCodes(nextCodes.join("\n"));
     onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave);
+  }
+
+  function submitManual(event: Pick<FormEvent, "preventDefault">) {
+    event.preventDefault();
+    const selectedGroup = groups.find((item) => item.id === selectedGroupId);
+    const foundByName = groups.find((item) => item.name.toLowerCase() === group.trim().toLowerCase());
+    const chosenGroup = selectedGroup || foundByName;
+    const value = chosenGroup ? chosenGroup.name : group.trim();
+    const nextCodes = parseCodes(manualCodes);
+    if (!value || !senderName.trim() || !nextCodes.length || !onSaveManual) return;
+    setManualCodes(nextCodes.join("\n"));
+    onSaveManual(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes);
   }
 
   const previewMessages = isTarget
@@ -167,7 +189,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           </div>
         )}
 
-        <label htmlFor={`${kind}-sender-name`}>Nome na mensagem</label>
+        <label htmlFor={`${kind}-sender-name`}>Nome fixo na mensagem</label>
         <input
           id={`${kind}-sender-name`}
           value={senderName}
@@ -175,14 +197,21 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           placeholder="Digite seu nome"
         />
 
-        <label htmlFor={`${kind}-codes`}>{isTarget ? "Rotas para detectar na foto" : "Códigos"}</label>
+        {isTarget ? (
+          <div className="ocr-primary-copy">
+            <strong>Principal: detectar gaiola pela foto</strong>
+            <span>Cadastre o bairro. Quando o analista mandar a tabela, o bot encontra a linha do bairro e pega a gaiola atual.</span>
+          </div>
+        ) : null}
+
+        <label htmlFor={`${kind}-codes`}>{isTarget ? "Bairros para detectar na foto" : "Códigos"}</label>
         <textarea
           id={`${kind}-codes`}
           value={codes}
           onChange={(event) => setCodes(event.target.value)}
           onBlur={() => setCodes((isTarget ? parseRoutes(codes) : parseCodes(codes)).join("\n"))}
-          placeholder={isTarget ? "Ex: Parque Guaruis" : "Ex: P-12"}
-          rows={3}
+          placeholder={isTarget ? "Ex: Parque Guarus" : "Ex: P-12"}
+          rows={isTarget ? 4 : 3}
         />
 
         {!isTarget ? (
@@ -234,6 +263,30 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
             <span key={`${message}-${index}`}>{message}</span>
           ))}
         </div>
+
+        {isTarget ? (
+          <section className="manual-fallback-panel">
+            <button className="link-button" type="button" onClick={() => setManualOpen((current) => !current)}>
+              {manualOpen ? "Ocultar envio manual" : "Configurar envio manual avançado"}
+            </button>
+            {manualOpen ? (
+              <div className="manual-fallback-body">
+                <label htmlFor={`${kind}-manual-codes`}>Códigos manuais de reserva</label>
+                <textarea
+                  id={`${kind}-manual-codes`}
+                  value={manualCodes}
+                  onChange={(event) => setManualCodes(event.target.value)}
+                  onBlur={() => setManualCodes(parseCodes(manualCodes).join("\n"))}
+                  placeholder="Ex: F-14"
+                  rows={3}
+                />
+                <button className="button secondary" disabled={busy || !group.trim() || !senderName.trim() || !manualCodes.trim()} type="button" onClick={submitManual}>
+                  Salvar manual
+                </button>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
       </form>
     </article>
   );

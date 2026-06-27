@@ -84,11 +84,12 @@ type PendingConfirmation = {
 type AppTab = "home" | "groups" | "messages" | "test" | "settings";
 type GroupEditor = "target" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
-type AdminMainTab = "dashboard" | "validations" | "history" | "reports" | "clients" | "settings";
+type AdminMainTab = "dashboard" | "validations" | "history" | "logs" | "reports" | "clients" | "settings";
 type RouteStatusFilter = "all" | "pending" | "validated" | "rejected" | "leader";
 type RouteKindFilter = "all" | "automatic" | "manual" | "test";
 type RouteHistoryTab = "automatic" | "manual" | "test";
 type CleanupTarget = "logs" | "routes" | "support" | "all";
+type AdminLogLevelFilter = "all" | "info" | "success" | "warning" | "error";
 
 const emptySnapshot: BotSnapshot = {
   status: "disconnected",
@@ -488,13 +489,14 @@ function LaunchReviewPanel({
   const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
   const hasName = Boolean(snapshot.config.nomeEnvio);
   const hasMessages = messages.length > 0;
+  const ocrMode = messages.some((message) => message.startsWith("OCR:"));
 
   return (
     <section className="quick-panel launch-review-panel">
       <div className="panel-heading">
         <div>
           <p className="panel-label">Revisão antes de iniciar</p>
-          <h2>Rota e mensagens</h2>
+          <h2>{ocrMode ? "Foto da rota" : "Rota e mensagens"}</h2>
         </div>
         <button className="button" type="button" onClick={onEditTarget}>
           <SlidersHorizontal size={18} />
@@ -511,16 +513,16 @@ function LaunchReviewPanel({
           <strong>{snapshot.config.nomeEnvio || "Não configurado"}</strong>
         </article>
         <article className={hasMessages ? "review-item ok" : "review-item pending"}>
-          <span>Mensagens</span>
-          <strong>{messages.length ? `${messages.length} pronta(s)` : "Nenhuma"}</strong>
+          <span>{ocrMode ? "Bairros OCR" : "Mensagens"}</span>
+          <strong>{messages.length ? `${messages.length} salvo(s)` : "Nenhuma"}</strong>
         </article>
       </div>
       <div className="review-messages">
-        {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{message}</span>) : <span>Configure as mensagens que serão enviadas antes de iniciar.</span>}
+        {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{message}</span>) : <span>Configure os bairros para detectar na foto antes de iniciar.</span>}
       </div>
       <div className="review-actions">
         <button className="button" type="button" onClick={onEditTarget}>
-          Configurar envio real
+          Configurar bairros da foto
         </button>
       </div>
     </section>
@@ -952,9 +954,9 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
         </section>
 
         <section className="detail-section">
-          <p className="panel-label">Últimos logs do bot</p>
-          <div className="detail-list">
-            {detail.logs.length ? detail.logs.slice(0, 8).map((log) => (
+          <p className="panel-label">Logs recentes do bot</p>
+          <div className="detail-list scrollable-detail-list">
+            {detail.logs.length ? detail.logs.slice(0, 60).map((log) => (
               <span key={log.id}>{formatDate(log.timestamp)} · {log.message}</span>
             )) : <span>Nenhum log registrado.</span>}
           </div>
@@ -1134,6 +1136,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [routeKindFilter, setRouteKindFilter] = useState<RouteKindFilter>("all");
   const [routeHistoryTab, setRouteHistoryTab] = useState<RouteHistoryTab>("automatic");
   const [routeSearch, setRouteSearch] = useState("");
+  const [adminLogLevelFilter, setAdminLogLevelFilter] = useState<AdminLogLevelFilter>("all");
+  const [adminLogSearch, setAdminLogSearch] = useState("");
   const [lastSeenLogAt, setLastSeenLogAt] = useState(() => new Date().toISOString());
   const [seenAdminCounts, setSeenAdminCounts] = useState({ validations: 0, alerts: 0, clients: 0 });
   const [logToast, setLogToast] = useState<AdminLogEntry>();
@@ -1183,10 +1187,17 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     () => dashboard.pendingReactionRoutes.filter((route) => getRouteDecisionStatus(route) === "pending" && (clientFilter === "all" || route.clientEmail === clientFilter)),
     [clientFilter, dashboard.pendingReactionRoutes]
   );
-  const filteredLogs = useMemo(
-    () => adminLogs.filter((log) => clientFilter === "all" || log.clientEmail === clientFilter),
-    [adminLogs, clientFilter]
-  );
+  const filteredLogs = useMemo(() => {
+    const search = adminLogSearch.trim().toLowerCase();
+    return adminLogs.filter((log) => {
+      const matchesClient = clientFilter === "all" || log.clientEmail === clientFilter;
+      const matchesLevel = adminLogLevelFilter === "all" || log.level === adminLogLevelFilter;
+      const matchesSearch =
+        !search ||
+        [log.clientEmail, log.level, log.message, log.timestamp].some((item) => String(item || "").toLowerCase().includes(search));
+      return matchesClient && matchesLevel && matchesSearch;
+    });
+  }, [adminLogLevelFilter, adminLogSearch, adminLogs, clientFilter]);
   const filteredSupportMessages = useMemo(
     () => supportDashboard.messages.filter((message) => clientFilter === "all" || message.email === clientFilter),
     [clientFilter, supportDashboard.messages]
@@ -1209,7 +1220,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       return {
         ...current,
         ...(summary || {}),
-        logs: snapshot.logs.filter((log) => log.clientEmail === current.email).slice(0, 40),
+        logs: snapshot.logs.filter((log) => log.clientEmail === current.email).slice(0, 250),
         routes: snapshot.routes.routes.filter((route) => route.clientEmail === current.email)
       };
     });
@@ -1245,21 +1256,21 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   }, [activeSection, detail, routeDetail, leaderAlert]);
 
   useEffect(() => {
-    if (activeSection !== "logs") return;
+    if (activeSection !== "logs" && activeAdminTab !== "logs") return;
     const newestLog = adminLogs[0];
     if (newestLog) setLastSeenLogAt(newestLog.timestamp);
     setLogToast(undefined);
-  }, [activeSection, adminLogs]);
+  }, [activeAdminTab, activeSection, adminLogs]);
 
   useEffect(() => {
-    if (activeSection === "logs") return;
+    if (activeSection === "logs" || activeAdminTab === "logs") return;
     const newestLog = adminLogs[0];
     if (!newestLog) return;
     if (new Date(newestLog.timestamp).getTime() <= new Date(lastSeenLogAt).getTime()) return;
     setLogToast(newestLog);
     const timer = window.setTimeout(() => setLogToast(undefined), 5200);
     return () => window.clearTimeout(timer);
-  }, [activeSection, adminLogs, lastSeenLogAt]);
+  }, [activeAdminTab, activeSection, adminLogs, lastSeenLogAt]);
 
   useEffect(() => {
     const latestUnread = supportDashboard.messages.find((message) => !message.read);
@@ -1517,6 +1528,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     { id: "dashboard", label: "Dashboard", Icon: Home },
     { id: "validations", label: "Validações", Icon: ShieldCheck, badge: activeAdminTab === "validations" ? 0 : Math.max(0, filteredPendingRoutes.length - seenAdminCounts.validations) },
     { id: "history", label: "Histórico", Icon: Clock3 },
+    { id: "logs", label: "Logs", Icon: Activity, badge: activeAdminTab === "logs" ? 0 : unreadLogCount },
     { id: "reports", label: "Relatório", Icon: Gauge },
     { id: "clients", label: "Clientes", Icon: UserPlus, badge: activeAdminTab === "clients" ? 0 : Math.max(0, onlineClients - seenAdminCounts.clients) },
     { id: "settings", label: "Config", Icon: Settings }
@@ -1527,7 +1539,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       <section className="admin-mobile-header">
         <span className="admin-app-icon">{activeAdminTab === "validations" ? <ShieldCheck size={25} /> : <Activity size={24} />}</span>
         <div>
-          <h1>{activeAdminTab === "validations" ? "Validações e histórico" : activeAdminTab === "history" ? "Histórico permanente" : activeAdminTab === "reports" ? "Relatório mensal" : activeAdminTab === "clients" ? "Clientes" : activeAdminTab === "settings" ? "Configurações" : "Central de comando"}</h1>
+          <h1>{activeAdminTab === "validations" ? "Validações e histórico" : activeAdminTab === "history" ? "Histórico permanente" : activeAdminTab === "logs" ? "Logs ao vivo" : activeAdminTab === "reports" ? "Relatório mensal" : activeAdminTab === "clients" ? "Clientes" : activeAdminTab === "settings" ? "Configurações" : "Central de comando"}</h1>
           <p>
             {activeAdminTab === "dashboard" ? "Dados ao vivo de todos os clientes" : activeAdminTab === "validations" ? "Monitore, valide e audite todas as rotas do bot" : activeClientLabel}
             {activeAdminTab === "dashboard" ? <span className="online-copy">Tudo online</span> : null}
@@ -1834,6 +1846,58 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
             onFilterClient={filterRouteClient}
             onDetails={setRouteDetail}
           />
+        </section>
+      ) : null}
+
+      {activeAdminTab === "logs" ? (
+        <section className="admin-tab-page">
+          <section className="history-filter-bar">
+            <label className="history-search">
+              <Search size={18} />
+              <input
+                value={adminLogSearch}
+                onChange={(event) => setAdminLogSearch(event.target.value)}
+                placeholder="Buscar log, cliente, erro, OCR..."
+              />
+            </label>
+            <label>
+              <select value={adminLogLevelFilter} onChange={(event) => setAdminLogLevelFilter(event.target.value as AdminLogLevelFilter)}>
+                <option value="all">Todos os níveis</option>
+                <option value="success">Sucesso</option>
+                <option value="info">Info</option>
+                <option value="warning">Avisos</option>
+                <option value="error">Erros</option>
+              </select>
+            </label>
+            <button className="button" type="button" onClick={() => { setAdminLogSearch(""); setAdminLogLevelFilter("all"); }}>
+              Limpar filtro
+            </button>
+          </section>
+
+          <section className="command-metrics-grid compact">
+            <AdminMetric Icon={Activity} tone="blue" title="Logs visíveis" value={filteredLogs.length} detail={activeClientLabel} />
+            <AdminMetric Icon={CheckCircle2} tone="green" title="Sucessos" value={filteredLogs.filter((log) => log.level === "success").length} detail="eventos ok" />
+            <AdminMetric Icon={AlertTriangle} tone="yellow" title="Avisos" value={filteredLogs.filter((log) => log.level === "warning").length} detail="atenção" />
+            <AdminMetric Icon={Ban} tone="red" title="Erros" value={filteredLogs.filter((log) => log.level === "error").length} detail="falhas" />
+          </section>
+
+          <article className="command-panel admin-live-log-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Tempo real por cliente</p>
+                <h2>{filteredLogs.length} evento(s)</h2>
+              </div>
+              <button className="button" type="button" onClick={refresh}>
+                <RefreshCw size={18} />
+                Atualizar
+              </button>
+            </div>
+            <div className="admin-log-list full">
+              {filteredLogs.length ? filteredLogs.map((log) => (
+                <AdminLogRow key={`tab-${log.clientEmail}-${log.id}`} log={log} />
+              )) : <p className="qr-empty">Nenhum log encontrado com os filtros atuais.</p>}
+            </div>
+          </article>
         </section>
       ) : null}
 
@@ -2410,20 +2474,42 @@ export default function App() {
     });
   }
 
+  function confirmSaveManualTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[]) {
+    const selectedGroupName = groupName || group;
+    const messages = buildMessagePreview(senderName, codes);
+
+    setConfirmation({
+      title: "Salvar manual avançado",
+      message: `Grupo alvo: ${selectedGroupName}`,
+      details: messages.length ? messages : ["Nenhum código manual."],
+      confirmLabel: "Salvar manual",
+      onConfirm: async () => {
+        await runAction(async () => {
+          await botApi.saveGroup({ group, groupId, groupName });
+          await botApi.saveTargetMessageSettings({ senderName, codes, routes: snapshot.config.rotasMonitoradas || [] });
+          setGroupEditor(undefined);
+          return botApi.getSnapshot();
+        });
+      }
+    });
+  }
+
   function confirmStartMonitoring() {
-    const messages = buildMessagePreview();
+    const ocrRoutes = buildRoutePreview(snapshot.config.rotasMonitoradas || []);
+    const manualMessages = buildMessagePreview();
+    const readyItems = ocrRoutes.length ? ocrRoutes : manualMessages;
     const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
     const hasName = Boolean(snapshot.config.nomeEnvio);
 
-    if (!hasGroup || !hasName || !messages.length) {
+    if (!hasGroup || !hasName || !readyItems.length) {
       setGroupEditor("target");
       setConfirmation({
         title: "Revise o envio",
-        message: "Falta configurar a rota, o nome ou as mensagens antes de iniciar.",
+        message: "Falta configurar o grupo, o nome ou os bairros para detectar na foto.",
         details: [
           hasGroup ? `Rota: ${groupLabel}` : "Rota ainda não configurada.",
           hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",
-          messages.length ? `Mensagens: ${messages.join(" | ")}` : "Nenhuma mensagem configurada."
+          readyItems.length ? `Detecção: ${readyItems.join(" | ")}` : "Nenhum bairro OCR configurado."
         ],
         confirmLabel: "Entendi",
         onConfirm: () => undefined
@@ -2433,11 +2519,11 @@ export default function App() {
 
     setConfirmation({
       title: "Iniciar bot",
-      message: "Confira a rota e as mensagens que serão enviadas.",
+      message: ocrRoutes.length ? "O bot vai aguardar imagem do analista, ler o bairro e enviar a gaiola atual." : "Confira a rota e as mensagens manuais que serão enviadas.",
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Nome: ${snapshot.config.nomeEnvio}`,
-        `Mensagens: ${messages.join(" | ")}`
+        ocrRoutes.length ? `Bairros OCR: ${ocrRoutes.join(" | ")}` : `Mensagens manuais: ${manualMessages.join(" | ")}`
       ],
       confirmLabel: "Iniciar bot",
       onConfirm: async () => {
@@ -2491,7 +2577,7 @@ export default function App() {
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Estado atual: ${snapshot.groupState === "open" ? "aberto" : snapshot.groupState === "closed" ? "fechado" : "desconhecido"}`,
-        messages.length ? `Mensagens: ${messages.join(" | ")}` : "Nenhuma mensagem configurada."
+        messages.length ? `Mensagens manuais: ${messages.join(" | ")}` : "Nenhuma mensagem manual configurada. O modo principal usa foto/OCR."
       ],
       confirmLabel: "Disparar agora",
       onConfirm: async () => {
@@ -2805,6 +2891,7 @@ export default function App() {
               busy={busy}
               onRefresh={() => runAction(botApi.refreshGroups)}
               onSave={groupEditor === "target" ? confirmSaveTarget : confirmSaveTest}
+              onSaveManual={groupEditor === "target" ? confirmSaveManualTarget : undefined}
               onWarmup={groupEditor === "test" ? confirmWarmup : undefined}
             />
           </section>
