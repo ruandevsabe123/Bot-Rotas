@@ -49,6 +49,13 @@ function parseCodes(value: string) {
     .filter(Boolean);
 }
 
+function parseRoutes(value: string) {
+  return value
+    .split(/\r?\n|,/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
 export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave, onWarmup }: Props) {
   const [group, setGroup] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
@@ -64,8 +71,8 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     ? config.grupoAlvoNome || ""
     : config.grupoTesteNome || "";
   const savedCodes = useMemo(
-    () => (isTarget ? config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
-    [config.codigosMensagensAlvo, config.codigosMensagensTeste, isTarget]
+    () => (isTarget ? config.rotasMonitoradas?.length ? config.rotasMonitoradas : config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
+    [config.codigosMensagensAlvo, config.codigosMensagensTeste, config.rotasMonitoradas, isTarget]
   );
   const savedCodesKey = savedCodes.join("\n");
 
@@ -100,15 +107,16 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     const foundByName = groups.find((item) => item.name.toLowerCase() === group.trim().toLowerCase());
     const chosenGroup = selectedGroup || foundByName;
     const value = chosenGroup ? chosenGroup.name : group.trim();
-    const nextCodes = parseCodes(codes);
+    const nextCodes = isTarget ? parseRoutes(codes) : parseCodes(codes);
 
     if (!value || !senderName.trim() || !nextCodes.length) return;
     setCodes(nextCodes.join("\n"));
     onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave);
   }
 
-  const previewMessages = parseCodes(codes)
-    .map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
+  const previewMessages = isTarget
+    ? parseRoutes(codes).map((route) => `OCR: ${route}`)
+    : parseCodes(codes).map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
   const query = group.trim().toLowerCase();
   const filteredGroups = groups
     .filter((item) => !query || item.name.toLowerCase().includes(query))
@@ -167,13 +175,13 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           placeholder="Digite seu nome"
         />
 
-        <label htmlFor={`${kind}-codes`}>Códigos</label>
+        <label htmlFor={`${kind}-codes`}>{isTarget ? "Rotas para detectar na foto" : "Códigos"}</label>
         <textarea
           id={`${kind}-codes`}
           value={codes}
           onChange={(event) => setCodes(event.target.value)}
-          onBlur={() => setCodes(parseCodes(codes).join("\n"))}
-          placeholder="Ex: P-12"
+          onBlur={() => setCodes((isTarget ? parseRoutes(codes) : parseCodes(codes)).join("\n"))}
+          placeholder={isTarget ? "Ex: Parque Guaruis" : "Ex: P-12"}
           rows={3}
         />
 
@@ -221,7 +229,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
         ) : null}
 
         <div className="message-preview compact-preview">
-          <strong>{previewMessages.length} mensagem(ns)</strong>
+          <strong>{previewMessages.length} {isTarget ? "rota(s)" : "mensagem(ns)"}</strong>
           {previewMessages.slice(0, 3).map((message, index) => (
             <span key={`${message}-${index}`}>{message}</span>
           ))}

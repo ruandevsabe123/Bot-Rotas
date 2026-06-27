@@ -1,10 +1,8 @@
 services:
   - type: web
     name: bot-whatsapp-painel
-    env: node
+    env: docker
     plan: starter
-    buildCommand: npm install --include=dev && npm run build
-    startCommand: node dist/server.js
     envVars:
       - key: NODE_ENV
         value: production

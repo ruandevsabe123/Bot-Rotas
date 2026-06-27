@@ -2,11 +2,13 @@ import { Boom } from "@hapi/boom";
 import P from "pino";
 import fs from "fs";
 import path from "path";
+import os from "os";
 import { webcrypto } from "crypto";
 import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
+import { findConfiguredRouteCode, readImageText } from "./ocr";
 import { RouteStore } from "./routeStore";
 import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotTestStatus, RouteDispatch, RouteReaction } from "../shared/types";
 
@@ -29,6 +31,7 @@ let fetchLatestBaileysVersion: any;
 let useMultiFileAuthState: any;
 let generateMessageIDV2: any;
 let generateWAMessageFromContent: any;
+let downloadMediaMessage: any;
 let Browsers: any;
 let baileysLoadPromise: Promise<void> | undefined;
 
@@ -44,6 +47,7 @@ function loadBaileys(): Promise<void> {
     useMultiFileAuthState = baileys.useMultiFileAuthState;
     generateMessageIDV2 = baileys.generateMessageIDV2;
     generateWAMessageFromContent = baileys.generateWAMessageFromContent;
+    downloadMediaMessage = baileys.downloadMediaMessage;
     Browsers = baileys.Browsers;
   })();
 
@@ -70,6 +74,15 @@ const HEALTH_CHECK_INTERVAL_MS = 25000;
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
+const OPENING_TRIGGER_WORDS = [
+  "abriu",
+  "aberto",
+  "liberado",
+  "liberou",
+  "pode mandar",
+  "podem mandar",
+  "grupo aberto"
+].map((item) => normalizarTexto(item));
 const DEFAULT_LEADER_CONTACTS = [
   { name: "Gabriel Melo - Analista de Transporte", phone: "5511940670165" },
   { name: "André Bomfim", phone: "5521998970947" },
@@ -104,6 +117,9 @@ export class BotService extends EventEmitter {
   private unknownDisconnects = 0;
   private sendCycleId = 0;
   private activeSendCycle?: Promise<void>;
+  private criticalDispatchInProgress = false;
+  private pendingReactionBatch?: any[];
+  private reactionProcessingScheduled = false;
   private monitoringEnabled = false;
   private monitoringMode: MonitoringMode = "target";
   private estadoInicialDoGrupoCapturado = false;
@@ -116,6 +132,9 @@ export class BotService extends EventEmitter {
   private preparedMessages: string[] = [];
   private preparedRelayMessages: any[] = []; // esse aqui
   private preparedRelaySignature = "";
+  private pendingOcrMessages: string[] = [];
+  private lastOcrDispatchKey = "";
+  private processingImageIds = new Set<string>();
   private warmupMessagesSent = 0;
   private warmupCompleted = false;
   private activeTestRunId = 0;
@@ -357,6 +376,7 @@ export class BotService extends EventEmitter {
     this.armedAt = undefined;
     this.sendCycleId += 1;
     this.activeSendCycle = undefined;
+    this.criticalDispatchInProgress = false;
     this.activeTestRunId += 1;
     if (this.testStatus.active) {
       this.testStatus = {
@@ -555,6 +575,11 @@ export class BotService extends EventEmitter {
     this.sock = undefined;
     this.groupState = "unknown";
     this.currentUserInTargetGroup = false;
+    this.criticalDispatchInProgress = false;
+    this.pendingReactionBatch = undefined;
+    this.reactionProcessingScheduled = false;
+    this.pendingOcrMessages = [];
+    this.processingImageIds.clear();
     this.preparedTargetJid = "";
     this.preparedMessages = [];
     this.preparedRelayMessages = []; // esse aqui
@@ -634,6 +659,12 @@ export class BotService extends EventEmitter {
     this.unknownDisconnects = 0;
     this.sendCycleId += 1;
     this.monitoringEnabled = false;
+    this.criticalDispatchInProgress = false;
+    this.pendingReactionBatch = undefined;
+    this.reactionProcessingScheduled = false;
+    this.pendingOcrMessages = [];
+    this.lastOcrDispatchKey = "";
+    this.processingImageIds.clear();
     this.estadoInicialDoGrupoCapturado = false;
     this.grupoJaFechouDepoisDoInicio = false;
     this.currentUserInTargetGroup = false;
@@ -661,6 +692,8 @@ export class BotService extends EventEmitter {
     this.preparedMessages = [];
     this.preparedRelayMessages = [];
     this.preparedRelaySignature = "";
+    this.pendingOcrMessages = [];
+    this.lastOcrDispatchKey = "";
     this.logger.success(`Grupo alterado para: ${config.grupoAlvoNome || config.grupoAlvoJid}`);
 
     if (this.sock && this.status === "connected") {
@@ -943,17 +976,19 @@ export class BotService extends EventEmitter {
     this.logger.success("Mensagens do grupo alvo atualizadas.");
   }
 
-  setMessageSettings(senderName: string, codes: string[]) {
+  setMessageSettings(senderName: string, codes: string[], routes?: string[]) {
     // Update target (alvo) message settings. Do NOT reset warmup completion.
     this.codigosEscolhidos = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
+    const monitoredRoutes = (routes || codes).map((item) => item.trim()).filter(Boolean);
     this.configStore.save({
       nomeEnvio: senderName.trim(),
-      codigosMensagensAlvo: this.codigosEscolhidos
+      codigosMensagensAlvo: this.codigosEscolhidos,
+      rotasMonitoradas: monitoredRoutes
     });
     this.montarMensagens();
     this.prepareSendPlan();
     this.logger.success(
-      `Nome e mensagens do grupo alvo atualizados: ${this.codigosEscolhidos.length} mensagens prontas (${this.codigosEscolhidos.join(", ")}).`
+      `Rotas do grupo alvo atualizadas: ${monitoredRoutes.length} rota(s) monitorada(s).`
     );
   }
 
@@ -1273,6 +1308,8 @@ export class BotService extends EventEmitter {
         this.groupState = "closed";
         this.grupoJaFechouDepoisDoInicio = true;
         this.sendCycleId += 1;
+        this.activeSendCycle = undefined;
+        this.criticalDispatchInProgress = false;
         this.logger.info(`🔒 ${activeGroup.label} FECHADO. Bot armado para próxima abertura.`);
         this.prepareSendPlan();
         this.logger.info("Plano de disparo preparado em memória para a próxima abertura.");
@@ -1296,17 +1333,24 @@ export class BotService extends EventEmitter {
   }
   private async handleMessages(messages: any[], connectionId: number) {
     if (connectionId !== this.activeConnectionId) return;
-    void this.handleReactions(messages).catch((error) => {
-      this.logger.warning(`Reações processadas fora do caminho crítico falharam: ${this.getErrorMessage(error)}`);
-    });
-    if (!this.monitoringEnabled) return;
+    if (!this.monitoringEnabled) {
+      this.scheduleReactionProcessing(messages);
+      return;
+    }
 
     const activeGroup = this.getActiveMonitoringGroup();
-    if (!activeGroup.jid) return;
+    if (!activeGroup.jid) {
+      this.scheduleReactionProcessing(messages);
+      return;
+    }
 
     for (const msg of messages || []) {
       if (!msg?.message || !msg.key?.remoteJid) continue;
       if (msg.key.remoteJid !== activeGroup.jid) continue;
+
+      if (this.monitoringMode === "target" && msg.message.imageMessage) {
+        this.scheduleRouteImageProcessing(msg, activeGroup.jid);
+      }
 
       const texto =
         msg.message.conversation ||
@@ -1317,25 +1361,16 @@ export class BotService extends EventEmitter {
 
       if (!texto) continue;
 
-      const palavrasAbertura = [
-        "abriu",
-        "aberto",
-        "liberado",
-        "liberou",
-        "pode mandar",
-        "podem mandar",
-        "grupo aberto"
-      ];
+      const textoNormalizado = normalizarTexto(texto);
 
-      const detectouAbertura = palavrasAbertura.some((palavra) =>
-        normalizarTexto(texto).includes(normalizarTexto(palavra))
-      );
+      const detectouAbertura = OPENING_TRIGGER_WORDS.some((palavra) => textoNormalizado.includes(palavra));
 
       if (detectouAbertura) {
         if (!this.grupoJaFechouDepoisDoInicio) {
           this.logger.info(
             "Palavra de abertura detectada, mas o grupo ainda não fechou após o bot iniciar. Nenhuma mensagem enviada."
           );
+          this.scheduleReactionProcessing(messages);
           return;
         }
 
@@ -1343,13 +1378,123 @@ export class BotService extends EventEmitter {
         this.grupoJaFechouDepoisDoInicio = false;
         this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now());
         this.logger.info("Palavra de abertura detectada. Rajada instantânea acionada.");
+        this.scheduleReactionProcessing(messages);
         return;
+      }
+    }
+
+    this.scheduleReactionProcessing(messages);
+  }
+
+  private scheduleReactionProcessing(messages: any[]) {
+    const reactions = (messages || []).filter((msg) => msg?.message?.reactionMessage);
+    if (!reactions.length) return;
+
+    this.pendingReactionBatch = [...(this.pendingReactionBatch || []), ...reactions].slice(-100);
+    if (this.reactionProcessingScheduled) return;
+
+    this.reactionProcessingScheduled = true;
+    setTimeout(() => {
+      const batch = this.pendingReactionBatch || [];
+      this.pendingReactionBatch = undefined;
+      this.reactionProcessingScheduled = false;
+
+      if (this.criticalDispatchInProgress) {
+        this.scheduleReactionProcessing(batch);
+        return;
+      }
+
+      void this.handleReactions(batch).catch((error) => {
+        this.logger.warning(`Reações processadas fora do caminho crítico falharam: ${this.getErrorMessage(error)}`);
+      });
+    }, this.criticalDispatchInProgress ? 3000 : this.monitoringEnabled ? 5000 : 0);
+  }
+
+  private scheduleRouteImageProcessing(msg: any, groupJid: string) {
+    const config = this.configStore.load();
+    if (!config.rotasMonitoradas.length || !downloadMediaMessage) return;
+
+    const messageId = String(msg?.key?.id || "");
+    if (!messageId || this.processingImageIds.has(messageId)) return;
+
+    this.processingImageIds.add(messageId);
+    setTimeout(() => {
+      void this.processRouteImage(msg, groupJid).finally(() => {
+        this.processingImageIds.delete(messageId);
+      });
+    }, this.criticalDispatchInProgress ? 3000 : 0);
+  }
+
+  private async processRouteImage(msg: any, groupJid: string) {
+    const config = this.configStore.load();
+    if (!config.rotasMonitoradas.length || !this.sock) return;
+
+    const messageId = String(msg?.key?.id || Date.now());
+    const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
+
+    try {
+      const buffer = await downloadMediaMessage(
+        msg,
+        "buffer",
+        {},
+        {
+          logger: P({ level: "silent" }),
+          reuploadRequest: this.sock.updateMediaMessage
+        }
+      );
+
+      fs.writeFileSync(imagePath, buffer);
+      const text = await readImageText(imagePath);
+      const detected = findConfiguredRouteCode(text, config.rotasMonitoradas);
+      if (!detected) {
+        this.logger.info("OCR leu imagem de rota, mas nenhuma rota monitorada foi encontrada.");
+        return;
+      }
+
+      const message = `${config.nomeEnvio} ${detected.code}`.trim();
+      const dispatchKey = `${groupJid}:${normalizarTexto(detected.route)}:${detected.code}`;
+      if (this.lastOcrDispatchKey === dispatchKey) {
+        this.logger.info(`OCR ignorou rota duplicada: ${detected.route} ${detected.code}.`);
+        return;
+      }
+
+      this.lastOcrDispatchKey = dispatchKey;
+      this.pendingOcrMessages = [message];
+      this.preparedTargetJid = groupJid;
+      this.preparedMessages = [message];
+      this.rebuildPreparedRelayMessages(groupJid, [message]);
+
+      this.logger.success(`OCR detectou ${detected.route} com gaiola ${detected.code}. Mensagem pronta: ${message}.`);
+
+      if (this.groupState === "open") {
+        const cycleId = ++this.sendCycleId;
+        this.enviarMensagensRapidas(cycleId, "automatic", Date.now());
+        this.logger.info("Grupo aberto: disparo por OCR acionado.");
+        return;
+      }
+
+      this.logger.info("Grupo fechado: rota do OCR preparada para disparar quando abrir.");
+      this.emitSnapshot();
+    } catch (error) {
+      this.logger.warning(`OCR da imagem falhou: ${this.getErrorMessage(error)}`);
+    } finally {
+      try {
+        fs.rmSync(imagePath, { force: true });
+      } catch {
+        // Arquivo temporário já pode ter sido removido.
       }
     }
   }
 
   private async handleReactions(messages: any[]) {
-    for (const msg of messages || []) {
+    const batch = messages || [];
+    for (let index = 0; index < batch.length; index += 1) {
+      if (this.criticalDispatchInProgress) {
+        this.scheduleReactionProcessing(batch.slice(index));
+        return;
+      }
+
+      const msg = batch[index];
       const reaction = msg?.message?.reactionMessage;
       const reactedMessageId = reaction?.key?.id;
       if (!reaction || !reactedMessageId) continue;
@@ -1580,6 +1725,7 @@ export class BotService extends EventEmitter {
     this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
     this.performanceMetrics.activeQueue = mensagens.length;
     const sendStartedAt = Date.now();
+    this.criticalDispatchInProgress = true;
     const sendCycle =
       this.monitoringMode === "test"
         ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger)
@@ -1590,6 +1736,7 @@ export class BotService extends EventEmitter {
     this.activeSendCycle = sendCycle.finally(() => {
       if (cycleId === this.sendCycleId) {
         this.activeSendCycle = undefined;
+        this.criticalDispatchInProgress = false;
       }
     });
 
@@ -1883,7 +2030,11 @@ export class BotService extends EventEmitter {
     const activeGroup = this.getActiveMonitoringGroup(config);
 
     this.preparedTargetJid = activeGroup.jid;
-    this.preparedMessages = this.monitoringMode === "test" ? this.buildWarmupMessages() : [...this.mensagensProntasAlvo];
+    this.preparedMessages = this.monitoringMode === "test"
+      ? this.buildWarmupMessages()
+      : this.pendingOcrMessages.length
+      ? [...this.pendingOcrMessages]
+      : [...this.mensagensProntasAlvo];
 
     if (this.monitoringMode === "target" && this.preparedMessages.length > MAX_OUTGOING_MESSAGES) {
       this.preparedMessages = this.preparedMessages.slice(0, MAX_OUTGOING_MESSAGES);
@@ -1899,7 +2050,10 @@ export class BotService extends EventEmitter {
     this.preparedRelaySignature =
       this.sock && this.preparedTargetJid ? this.getRelaySignature(this.preparedTargetJid, this.preparedMessages) : "";
 
-    return Boolean(this.preparedTargetJid && this.preparedMessages.length);
+    return Boolean(
+      this.preparedTargetJid &&
+      (this.preparedMessages.length || (this.monitoringMode === "target" && config.rotasMonitoradas.length))
+    );
   }
 
   private resetWarmupState() {
@@ -1998,6 +2152,7 @@ export class BotService extends EventEmitter {
   private async runWarmKeepAlive(reason: "timer" | "armado" = "timer") {
     const config = this.configStore.load();
     if (!config.alwaysWarmMode || !this.monitoringEnabled || this.status !== "connected" || !this.sock) return false;
+    if (this.criticalDispatchInProgress || this.activeSendCycle) return false;
 
     const startedAt = Date.now();
     try {
@@ -2023,6 +2178,7 @@ export class BotService extends EventEmitter {
 
   private async runHealthCheck() {
     if (!this.monitoringEnabled || this.status !== "connected" || !this.sock) return;
+    if (this.criticalDispatchInProgress || this.activeSendCycle) return;
 
     try {
       await this.prewarmConnection();
@@ -2113,7 +2269,8 @@ export class BotService extends EventEmitter {
   private hasReadyMessages(mode: MonitoringMode = this.monitoringMode) {
     const config = this.configStore.load();
     const codes = mode === "test" ? config.codigosMensagensTeste : config.codigosMensagensAlvo;
-    return (codes || []).some((item) => item.trim());
+    if ((codes || []).some((item) => item.trim())) return true;
+    return mode === "target" && (config.rotasMonitoradas || []).some((item) => item.trim());
   }
 
   private async waitUntilGroupAcceptsMessages(jid: string, cycleId: number) {

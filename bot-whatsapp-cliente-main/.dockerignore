@@ -1,0 +1,11 @@
+node_modules
+dist
+release
+.git
+.tmp-local-data
+users
+auth_info
+*.log
+bot_logs.json
+route_history.json
+config.json

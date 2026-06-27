@@ -38,6 +38,8 @@ export type BotConfig = {
   // mensagens específicas para o uso do bot
   // mensagens enviadas no grupo alvo
   codigosMensagensAlvo: string[];
+  // nomes de rotas procuradas nas imagens do grupo alvo
+  rotasMonitoradas: string[];
   // mensagens enviadas durante o aquecimento (grupo de teste)
   codigosMensagensTeste: string[];
   testMessageCount: number;
@@ -248,6 +250,7 @@ export type SaveWarmupMessageSettingsPayload = {
 export type SaveTargetMessageSettingsPayload = {
   senderName: string;
   codes: string[];
+  routes?: string[];
 };
 
 export type GeneralSettingsPayload = {

@@ -102,6 +102,7 @@ const emptySnapshot: BotSnapshot = {
     nomeEnvio: "",
     nuclearMode: false,
     codigosMensagensAlvo: [],
+    rotasMonitoradas: [],
     codigosMensagensTeste: [],
     testMessageCount: 15,
     testMessageIntervalMs: 0,
@@ -935,6 +936,7 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
             <span>Nome configurado: <b>{detail.config.nomeEnvio || "Não configurado"}</b></span>
             <span>Grupo alvo: <b>{detail.config.grupoAlvoNome || detail.config.grupoAlvoJid || "Não configurado"}</b></span>
             <span>Grupo teste: <b>{detail.config.grupoTesteNome || detail.config.grupoTesteJid || "Não configurado"}</b></span>
+            <span>Rotas OCR: <b>{(detail.config.rotasMonitoradas || []).join(", ") || "Nenhuma"}</b></span>
             <span>Mensagens alvo: <b>{(detail.config.codigosMensagensAlvo || []).join(", ") || "Nenhuma"}</b></span>
             <span>Mensagens teste: <b>{(detail.config.codigosMensagensTeste || []).join(", ") || "Nenhuma"}</b></span>
           </div>
@@ -2360,23 +2362,28 @@ export default function App() {
     return normalizeMessages(senderName, codes || []);
   }
 
+  function buildRoutePreview(routes = snapshot.config.rotasMonitoradas) {
+    return (routes || []).map((route) => `OCR: ${route}`);
+  }
+
   function isHomeOperationLog(message: string) {
     return /Bot .*ARMADO|NORMAL ARMADO|NUCLEAR ARMADO|Monitoramento desativado|Parou de escutar|FECHADO|ABRIU|Palavra de abertura|Abertura simulada|Disparo acionado|Rajada instantânea|Mensagem .*?(confirmada|enviada)|Disparo .*?(concluído|concluido|terminou)|Abertura ignorada|falhou|erro/i.test(message);
   }
 
   function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false) {
     const selectedGroupName = groupName || group;
-    const messages = buildMessagePreview(senderName, codes);
+    const routes = codes;
+    const messages = buildRoutePreview(routes);
 
     setConfirmation({
       title: startAfterSave ? "Salvar e iniciar" : "Salvar alvo",
       message: `Grupo alvo: ${selectedGroupName}`,
-      details: messages.length ? messages : ["Nenhuma mensagem pronta."],
+      details: messages.length ? messages : ["Nenhuma rota monitorada."],
       confirmLabel: startAfterSave ? "Salvar e iniciar" : "Salvar alvo",
       onConfirm: async () => {
         await runAction(async () => {
           await botApi.saveGroup({ group, groupId, groupName });
-          await botApi.saveTargetMessageSettings({ senderName, codes });
+          await botApi.saveTargetMessageSettings({ senderName, codes: [], routes });
           setGroupEditor(undefined);
           return startAfterSave ? botApi.startMonitoring() : botApi.getSnapshot();
         });
@@ -2600,7 +2607,7 @@ export default function App() {
           <LaunchReviewPanel
             snapshot={snapshot}
             groupLabel={groupLabel}
-            messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
+            messages={snapshot.config.rotasMonitoradas?.length ? buildRoutePreview(snapshot.config.rotasMonitoradas) : normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
             onEditTarget={() => setGroupEditor("target")}
           />
 
@@ -2645,7 +2652,7 @@ export default function App() {
               kind="target"
               title="Config grupo alvo"
               group={groupLabel}
-              codes={snapshot.config.codigosMensagensAlvo || []}
+              codes={snapshot.config.rotasMonitoradas?.length ? snapshot.config.rotasMonitoradas : snapshot.config.codigosMensagensAlvo || []}
               onOpen={() => setGroupEditor("target")}
             />
           </section>
@@ -2664,9 +2671,9 @@ export default function App() {
             </button>
           </section>
           <MessagePreviewStrip
-            title="Mensagens alvo"
+            title={snapshot.config.rotasMonitoradas?.length ? "Rotas OCR" : "Mensagens alvo"}
             group={groupLabel}
-            messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
+            messages={snapshot.config.rotasMonitoradas?.length ? buildRoutePreview(snapshot.config.rotasMonitoradas) : normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
             onOpen={() => setGroupEditor("target")}
           />
         </section>

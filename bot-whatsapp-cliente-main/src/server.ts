@@ -627,7 +627,11 @@ async function handleAction(bot: BotService, action: string, body: any) {
       break;
     case "save-message-settings":
     case "save-target-message-settings":
-      bot.setMessageSettings(String(body.senderName || ""), Array.isArray(body.codes) ? body.codes : []);
+      bot.setMessageSettings(
+        String(body.senderName || ""),
+        Array.isArray(body.codes) ? body.codes : [],
+        Array.isArray(body.routes) ? body.routes : undefined
+      );
       break;
     case "save-warmup-message-settings":
       bot.setWarmupMessageSettings(

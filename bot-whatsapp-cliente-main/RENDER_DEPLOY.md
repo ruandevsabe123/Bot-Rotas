@@ -11,7 +11,16 @@ Este projeto agora pode rodar como painel web mobile-first no Render.
 - `BOT_PHONE_NUMBER`: opcional. Use somente se quiser gerar código de pareamento pelo número em vez de QR Code. Formato: `55DDDNUMERO`, sem `+`.
 - `KEEP_ALIVE_URL`: opcional, mas recomendado no plano Free para manter o bot acordado quando estiver armado. Use a URL pública do Render, por exemplo `https://seu-servico.onrender.com`.
 
-## Comandos
+## Docker/Tesseract
+
+O deploy usa `Dockerfile` para instalar Node.js e Tesseract OCR no servidor do Render. Isso permite que o OCR rode no Render para todos os clientes, sem instalar nada no PC deles.
+
+Pacotes instalados no container:
+
+- `tesseract-ocr`
+- `tesseract-ocr-por`
+
+## Comandos locais
 
 Build:
 
@@ -24,6 +33,8 @@ Start:
 ```bash
 node dist/server.js
 ```
+
+No Render, o build/start vem do `Dockerfile`, porque o `render.yaml` usa `env: docker`.
 
 ## Persistência
 

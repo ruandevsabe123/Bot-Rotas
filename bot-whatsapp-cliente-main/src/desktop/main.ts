@@ -7,6 +7,7 @@ import {
   GeneralSettingsPayload,
   SaveGroupPayload,
   SaveMessageSettingsPayload,
+  SaveTargetMessageSettingsPayload,
   SaveWarmupMessageSettingsPayload
 } from "../shared/types";
 
@@ -158,10 +159,9 @@ function registerIpc() {
     }
     return bot.getSnapshot();
   });
-  ipcMain.handle("bot:saveTargetMessageSettings", async (_event, payload: SaveMessageSettingsPayload) => {
+  ipcMain.handle("bot:saveTargetMessageSettings", async (_event, payload: SaveTargetMessageSettingsPayload) => {
     try {
-      // @ts-ignore - call backend method
-      bot.setMessageSettings(payload.senderName, payload.codes);
+      bot.setMessageSettings(payload.senderName, payload.codes, payload.routes);
     } catch (err) {
       // ignore
     }
@@ -176,7 +176,7 @@ function registerIpc() {
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveMessageSettings", async (_event, payload: SaveMessageSettingsPayload) => {
-    bot.setMessageSettings(payload.senderName, payload.codes);
+    bot.setMessageSettings(payload.senderName, payload.codes, (payload as SaveTargetMessageSettingsPayload).routes);
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveGeneralSettings", async (_event, payload: GeneralSettingsPayload) => {
