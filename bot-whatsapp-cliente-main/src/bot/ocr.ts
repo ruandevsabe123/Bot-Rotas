@@ -1,5 +1,6 @@
 import { execFile } from "child_process";
 import { recognize } from "tesseract.js";
+import { MonitoredRoute } from "../shared/types";
 
 export function normalizeOcrText(text: string) {
   return text
@@ -49,18 +50,48 @@ function isMissingTesseractBinary(error: unknown) {
 }
 
 export function findConfiguredRouteCode(ocrText: string, routes: string[]) {
+  return findConfiguredRouteCodeDetailed(ocrText, [], routes);
+}
+
+export function findConfiguredRouteCodeDetailed(ocrText: string, monitoredRoutes: MonitoredRoute[] = [], legacyRoutes: string[] = []) {
   const lines = ocrText
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
 
-  const normalizedRoutes = routes
+  const normalizedDetailedRoutes = monitoredRoutes
+    .map((route) => ({
+      raw: `${route.cidade.trim()} | ${route.bairro.trim()}`,
+      cidade: route.cidade.trim(),
+      bairro: route.bairro.trim(),
+      normalizedCity: normalizeOcrText(route.cidade),
+      normalizedDistrict: normalizeOcrText(route.bairro)
+    }))
+    .filter((route) => route.normalizedCity && route.normalizedDistrict);
+
+  const normalizedRoutes = legacyRoutes
     .map((route) => ({ raw: route.trim(), normalized: normalizeOcrText(route) }))
     .filter((route) => route.normalized);
 
   for (const line of lines) {
     const normalizedLine = normalizeOcrText(line);
     if (!normalizedLine) continue;
+
+    for (const route of normalizedDetailedRoutes) {
+      if (!matchesRoutePart(normalizedLine, route.normalizedCity)) continue;
+      if (!matchesRoutePart(normalizedLine, route.normalizedDistrict)) continue;
+
+      const code = extractOnlyGaiolaCode(normalizedLine);
+      if (!code) continue;
+
+      return {
+        route: route.raw,
+        cidade: route.cidade,
+        bairro: route.bairro,
+        code,
+        line
+      };
+    }
 
     for (const route of normalizedRoutes) {
       const routeIndex = normalizedLine.indexOf(route.normalized);
@@ -74,6 +105,7 @@ export function findConfiguredRouteCode(ocrText: string, routes: string[]) {
 
       return {
         route: route.raw,
+        bairro: route.raw,
         code,
         line
       };
@@ -81,6 +113,10 @@ export function findConfiguredRouteCode(ocrText: string, routes: string[]) {
   }
 
   return undefined;
+}
+
+function matchesRoutePart(line: string, routePart: string) {
+  return line.includes(routePart) || looselyMatchesRoute(line, routePart);
 }
 
 function extractLastGaiolaCode(text: string) {
@@ -94,7 +130,7 @@ function extractOnlyGaiolaCode(text: string) {
 }
 
 function collectGaiolaCodes(text: string) {
-  const matches = [...text.matchAll(/\b([a-z])\s*[-.:]?\s*(\d{1,4})\b/gi)];
+  const matches = [...text.matchAll(/\b([a-z])\s*[-.:]?\s*(\d{1,2})\b/gi)];
   return matches
     .map((match) => `${match[1].toUpperCase()}-${match[2]}`)
     .filter((code) => !/^AT-\d/i.test(code));

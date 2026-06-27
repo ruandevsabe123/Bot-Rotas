@@ -40,6 +40,7 @@ export type BotConfig = {
   codigosMensagensAlvo: string[];
   // nomes de rotas procuradas nas imagens do grupo alvo
   rotasMonitoradas: string[];
+  rotasMonitoradasDetalhadas: MonitoredRoute[];
   // mensagens enviadas durante o aquecimento (grupo de teste)
   codigosMensagensTeste: string[];
   testMessageCount: number;
@@ -48,6 +49,11 @@ export type BotConfig = {
   minSendDelayMs: number;
   alwaysWarmMode: boolean;
   keepAliveIntervalMs: number;
+};
+
+export type MonitoredRoute = {
+  cidade: string;
+  bairro: string;
 };
 
 export type BotPerformanceMetrics = {
@@ -251,6 +257,7 @@ export type SaveTargetMessageSettingsPayload = {
   senderName: string;
   codes: string[];
   routes?: string[];
+  monitoredRoutes?: MonitoredRoute[];
 };
 
 export type GeneralSettingsPayload = {

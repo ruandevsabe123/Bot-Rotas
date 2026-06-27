@@ -630,7 +630,8 @@ async function handleAction(bot: BotService, action: string, body: any) {
       bot.setMessageSettings(
         String(body.senderName || ""),
         Array.isArray(body.codes) ? body.codes : [],
-        Array.isArray(body.routes) ? body.routes : undefined
+        Array.isArray(body.routes) ? body.routes : undefined,
+        Array.isArray(body.monitoredRoutes) ? body.monitoredRoutes : undefined
       );
       break;
     case "save-warmup-message-settings":

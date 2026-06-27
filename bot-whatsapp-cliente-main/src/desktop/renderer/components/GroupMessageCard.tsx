@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { BotConfig, BotGroup } from "../../../shared/types";
+import { BotConfig, BotGroup, MonitoredRoute } from "../../../shared/types";
 
 type Props = {
   kind: "target" | "test";
@@ -15,7 +15,8 @@ type Props = {
     codes: string[],
     messageCount?: number,
     intervalMs?: number,
-    startAfterSave?: boolean
+    startAfterSave?: boolean,
+    monitoredRoutes?: MonitoredRoute[]
   ) => void;
   onSaveManual?: (
     group: string,
@@ -63,11 +64,16 @@ function parseRoutes(value: string) {
     .filter(Boolean);
 }
 
+function createEmptyRoute(): MonitoredRoute {
+  return { cidade: "", bairro: "" };
+}
+
 export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup }: Props) {
   const [group, setGroup] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [senderName, setSenderName] = useState("");
   const [codes, setCodes] = useState("");
+  const [monitoredRoutes, setMonitoredRoutes] = useState<MonitoredRoute[]>([createEmptyRoute()]);
   const [manualCodes, setManualCodes] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [messageCount, setMessageCount] = useState(15);
@@ -80,8 +86,8 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     ? config.grupoAlvoNome || ""
     : config.grupoTesteNome || "";
   const savedCodes = useMemo(
-    () => (isTarget ? config.rotasMonitoradas?.length ? config.rotasMonitoradas : config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
-    [config.codigosMensagensAlvo, config.codigosMensagensTeste, config.rotasMonitoradas, isTarget]
+    () => (isTarget ? config.rotasMonitoradasDetalhadas?.length ? config.rotasMonitoradasDetalhadas.map((item) => `${item.cidade} | ${item.bairro}`) : config.rotasMonitoradas?.length ? config.rotasMonitoradas : config.codigosMensagensAlvo : config.codigosMensagensTeste) || [],
+    [config.codigosMensagensAlvo, config.codigosMensagensTeste, config.rotasMonitoradas, config.rotasMonitoradasDetalhadas, isTarget]
   );
   const savedCodesKey = savedCodes.join("\n");
 
@@ -90,6 +96,13 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     setSelectedGroupId(isTarget ? config.grupoAlvoJid || "" : config.grupoTesteJid || "");
     setSenderName(config.nomeEnvio);
     setCodes(savedCodesKey);
+    setMonitoredRoutes(
+      config.rotasMonitoradasDetalhadas?.length
+        ? config.rotasMonitoradasDetalhadas
+        : config.rotasMonitoradas?.length
+        ? config.rotasMonitoradas.map((bairro) => ({ cidade: "", bairro }))
+        : [createEmptyRoute()]
+    );
     setManualCodes((config.codigosMensagensAlvo || []).join("\n"));
     setMessageCount(config.testMessageCount || 15);
     setIntervalMs(config.testMessageIntervalMs || 0);
@@ -117,11 +130,14 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     const foundByName = groups.find((item) => item.name.toLowerCase() === group.trim().toLowerCase());
     const chosenGroup = selectedGroup || foundByName;
     const value = chosenGroup ? chosenGroup.name : group.trim();
-    const nextCodes = isTarget ? parseRoutes(codes) : parseCodes(codes);
+    const nextRoutes = monitoredRoutes
+      .map((item) => ({ cidade: item.cidade.trim(), bairro: item.bairro.trim() }))
+      .filter((item) => item.cidade && item.bairro);
+    const nextCodes = isTarget ? nextRoutes.map((item) => `${item.cidade} | ${item.bairro}`) : parseCodes(codes);
 
     if (!value || !senderName.trim() || !nextCodes.length) return;
     setCodes(nextCodes.join("\n"));
-    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave);
+    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes);
   }
 
   function submitManual(event: Pick<FormEvent, "preventDefault">) {
@@ -137,7 +153,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
   }
 
   const previewMessages = isTarget
-    ? parseRoutes(codes).map((route) => `OCR: ${route}`)
+    ? monitoredRoutes.filter((route) => route.cidade.trim() && route.bairro.trim()).map((route) => `OCR: ${route.cidade} / ${route.bairro}`)
     : parseCodes(codes).map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
   const query = group.trim().toLowerCase();
   const filteredGroups = groups
@@ -200,19 +216,60 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
         {isTarget ? (
           <div className="ocr-primary-copy">
             <strong>Principal: detectar gaiola pela foto</strong>
-            <span>Cadastre o bairro. Quando o analista mandar a tabela, o bot encontra a linha do bairro e pega a gaiola atual.</span>
+            <span>Cadastre cidade e bairro. Quando o analista mandar a tabela, o bot só aceita a gaiola se os dois aparecerem na mesma linha.</span>
           </div>
         ) : null}
 
-        <label htmlFor={`${kind}-codes`}>{isTarget ? "Bairros para detectar na foto" : "Códigos"}</label>
-        <textarea
-          id={`${kind}-codes`}
-          value={codes}
-          onChange={(event) => setCodes(event.target.value)}
-          onBlur={() => setCodes((isTarget ? parseRoutes(codes) : parseCodes(codes)).join("\n"))}
-          placeholder={isTarget ? "Ex: Parque Guarus" : "Ex: P-12"}
-          rows={isTarget ? 4 : 3}
-        />
+        {isTarget ? (
+          <section className="ocr-route-fields">
+            <div className="ocr-route-heading">
+              <span>Cidade</span>
+              <span>Bairro</span>
+            </div>
+            {monitoredRoutes.map((route, index) => (
+              <div className="ocr-route-row" key={`ocr-route-${index}`}>
+                <input
+                  value={route.cidade}
+                  onChange={(event) => {
+                    const nextRoutes = [...monitoredRoutes];
+                    nextRoutes[index] = { ...route, cidade: event.target.value };
+                    setMonitoredRoutes(nextRoutes);
+                  }}
+                  placeholder="Campos dos Goytacazes"
+                />
+                <input
+                  value={route.bairro}
+                  onChange={(event) => {
+                    const nextRoutes = [...monitoredRoutes];
+                    nextRoutes[index] = { ...route, bairro: event.target.value };
+                    setMonitoredRoutes(nextRoutes);
+                  }}
+                  placeholder="Parque Penha"
+                />
+                {monitoredRoutes.length > 1 ? (
+                  <button className="icon-button" title="Remover rota" type="button" onClick={() => setMonitoredRoutes(monitoredRoutes.filter((_, itemIndex) => itemIndex !== index))}>
+                    ×
+                  </button>
+                ) : null}
+              </div>
+            ))}
+            <button className="button secondary" type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute()])}>
+              Adicionar rota
+            </button>
+          </section>
+        ) : (
+          <>
+            <label htmlFor={`${kind}-codes`}>Códigos</label>
+            <textarea
+              id={`${kind}-codes`}
+              value={codes}
+              onChange={(event) => setCodes(event.target.value)}
+              onBlur={() => setCodes(parseCodes(codes).join("\n"))}
+              placeholder="Ex: P-12"
+              rows={3}
+            />
+          </>
+        )}
 
         {!isTarget ? (
           <div className="test-settings-grid">
@@ -242,11 +299,11 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           </div>
         ) : null}
 
-        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || !codes.trim()} type="submit">
+        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || (isTarget ? !monitoredRoutes.some((route) => route.cidade.trim() && route.bairro.trim()) : !codes.trim())} type="submit">
           {label.action}
         </button>
         {isTarget ? (
-          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || !codes.trim()} type="button" onClick={(event) => submit(event, true)}>
+          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || !monitoredRoutes.some((route) => route.cidade.trim() && route.bairro.trim())} type="button" onClick={(event) => submit(event, true)}>
             <span aria-hidden="true">☠</span>
             Salvar e iniciar
           </button>

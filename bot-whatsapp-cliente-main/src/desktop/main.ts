@@ -161,7 +161,7 @@ function registerIpc() {
   });
   ipcMain.handle("bot:saveTargetMessageSettings", async (_event, payload: SaveTargetMessageSettingsPayload) => {
     try {
-      bot.setMessageSettings(payload.senderName, payload.codes, payload.routes);
+      bot.setMessageSettings(payload.senderName, payload.codes, payload.routes, payload.monitoredRoutes);
     } catch (err) {
       // ignore
     }
@@ -176,7 +176,12 @@ function registerIpc() {
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveMessageSettings", async (_event, payload: SaveMessageSettingsPayload) => {
-    bot.setMessageSettings(payload.senderName, payload.codes, (payload as SaveTargetMessageSettingsPayload).routes);
+    bot.setMessageSettings(
+      payload.senderName,
+      payload.codes,
+      (payload as SaveTargetMessageSettingsPayload).routes,
+      (payload as SaveTargetMessageSettingsPayload).monitoredRoutes
+    );
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveGeneralSettings", async (_event, payload: GeneralSettingsPayload) => {

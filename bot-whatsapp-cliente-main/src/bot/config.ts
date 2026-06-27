@@ -11,6 +11,7 @@ export const DEFAULT_CONFIG: BotConfig = {
   nuclearMode: false,
   codigosMensagensAlvo: [],
   rotasMonitoradas: [],
+  rotasMonitoradasDetalhadas: [],
   codigosMensagensTeste: [],
   testMessageCount: 15,
   testMessageIntervalMs: 0,
@@ -125,6 +126,14 @@ export class ConfigStore {
         : [],
       rotasMonitoradas: Array.isArray(input.rotasMonitoradas)
         ? input.rotasMonitoradas.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim())
+        : [],
+      rotasMonitoradasDetalhadas: Array.isArray(input.rotasMonitoradasDetalhadas)
+        ? input.rotasMonitoradasDetalhadas
+            .map((item: any) => ({
+              cidade: typeof item?.cidade === "string" ? item.cidade.trim() : "",
+              bairro: typeof item?.bairro === "string" ? item.bairro.trim() : ""
+            }))
+            .filter((item) => item.cidade && item.bairro)
         : [],
       codigosMensagensTeste: Array.isArray(input.codigosMensagensTeste)
         ? input.codigosMensagensTeste.filter((item) => typeof item === "string" && item.trim())

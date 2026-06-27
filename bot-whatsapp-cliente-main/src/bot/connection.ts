@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { findConfiguredRouteCode, readImageText } from "./ocr";
+import { findConfiguredRouteCodeDetailed, readImageText } from "./ocr";
 import { RouteStore } from "./routeStore";
 import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotTestStatus, RouteDispatch, RouteReaction } from "../shared/types";
 
@@ -976,19 +976,26 @@ export class BotService extends EventEmitter {
     this.logger.success("Mensagens do grupo alvo atualizadas.");
   }
 
-  setMessageSettings(senderName: string, codes: string[], routes?: string[]) {
+  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: { cidade: string; bairro: string }[]) {
     // Update target (alvo) message settings. Do NOT reset warmup completion.
     this.codigosEscolhidos = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
     const monitoredRoutes = (routes || codes).map((item) => item.trim()).filter(Boolean);
+    const detailedRoutes = (monitoredRouteDetails || [])
+      .map((item) => ({
+        cidade: String(item?.cidade || "").trim(),
+        bairro: String(item?.bairro || "").trim()
+      }))
+      .filter((item) => item.cidade && item.bairro);
     this.configStore.save({
       nomeEnvio: senderName.trim(),
       codigosMensagensAlvo: this.codigosEscolhidos,
-      rotasMonitoradas: monitoredRoutes
+      rotasMonitoradas: monitoredRoutes,
+      rotasMonitoradasDetalhadas: detailedRoutes
     });
     this.montarMensagens();
     this.prepareSendPlan();
     this.logger.success(
-      `Rotas do grupo alvo atualizadas: ${monitoredRoutes.length} rota(s) monitorada(s).`
+      `Rotas do grupo alvo atualizadas: ${detailedRoutes.length || monitoredRoutes.length} rota(s) monitorada(s).`
     );
   }
 
@@ -1412,7 +1419,7 @@ export class BotService extends EventEmitter {
 
   private scheduleRouteImageProcessing(msg: any, groupJid: string) {
     const config = this.configStore.load();
-    if (!config.rotasMonitoradas.length || !downloadMediaMessage) return;
+    if (!this.hasConfiguredOcrRoutes(config) || !downloadMediaMessage) return;
 
     const messageId = String(msg?.key?.id || "");
     if (!messageId || this.processingImageIds.has(messageId)) return;
@@ -1427,7 +1434,7 @@ export class BotService extends EventEmitter {
 
   private async processRouteImage(msg: any, groupJid: string) {
     const config = this.configStore.load();
-    if (!config.rotasMonitoradas.length || !this.sock) return;
+    if (!this.hasConfiguredOcrRoutes(config) || !this.sock) return;
 
     const messageId = String(msg?.key?.id || Date.now());
     const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
@@ -1445,9 +1452,10 @@ export class BotService extends EventEmitter {
 
       fs.writeFileSync(imagePath, buffer);
       const text = await readImageText(imagePath);
-      const detected = findConfiguredRouteCode(text, config.rotasMonitoradas);
+      const detected = findConfiguredRouteCodeDetailed(text, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
       if (!detected) {
-        this.logger.info("OCR leu imagem de rota, mas nenhuma rota monitorada foi encontrada.");
+        const wanted = this.describeConfiguredOcrRoutes(config);
+        this.logger.info(`OCR leu imagem, mas não achou cidade+bairro na mesma linha com gaiola. Procurando: ${wanted}.`);
         return;
       }
 
@@ -2052,7 +2060,7 @@ export class BotService extends EventEmitter {
 
     return Boolean(
       this.preparedTargetJid &&
-      (this.preparedMessages.length || (this.monitoringMode === "target" && config.rotasMonitoradas.length))
+      (this.preparedMessages.length || (this.monitoringMode === "target" && this.hasConfiguredOcrRoutes(config)))
     );
   }
 
@@ -2270,7 +2278,22 @@ export class BotService extends EventEmitter {
     const config = this.configStore.load();
     const codes = mode === "test" ? config.codigosMensagensTeste : config.codigosMensagensAlvo;
     if ((codes || []).some((item) => item.trim())) return true;
-    return mode === "target" && (config.rotasMonitoradas || []).some((item) => item.trim());
+    return mode === "target" && this.hasConfiguredOcrRoutes(config);
+  }
+
+  private hasConfiguredOcrRoutes(config = this.configStore.load()) {
+    return (
+      (config.rotasMonitoradasDetalhadas || []).some((item) => item.cidade?.trim() && item.bairro?.trim()) ||
+      (config.rotasMonitoradas || []).some((item) => item.trim())
+    );
+  }
+
+  private describeConfiguredOcrRoutes(config = this.configStore.load()) {
+    const detailed = (config.rotasMonitoradasDetalhadas || [])
+      .filter((item) => item.cidade?.trim() && item.bairro?.trim())
+      .map((item) => `${item.cidade} / ${item.bairro}`);
+    if (detailed.length) return detailed.slice(0, 4).join(" | ");
+    return (config.rotasMonitoradas || []).slice(0, 4).join(" | ") || "nenhuma rota configurada";
   }
 
   private async waitUntilGroupAcceptsMessages(jid: string, cycleId: number) {

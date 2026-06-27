@@ -2833,6 +2833,51 @@ h2 {
   gap: 10px;
 }
 
+.ocr-route-fields {
+  display: grid;
+  gap: 10px;
+}
+
+.ocr-route-heading,
+.ocr-route-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.ocr-route-heading {
+  color: #8e99a3;
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.ocr-route-row .icon-button {
+  width: 38px;
+  height: 38px;
+}
+
+@media (max-width: 560px) {
+  .ocr-route-heading {
+    display: none;
+  }
+
+  .ocr-route-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .ocr-route-row input:first-child,
+  .ocr-route-row input:nth-child(2) {
+    grid-column: 1 / 2;
+  }
+
+  .ocr-route-row .icon-button {
+    grid-column: 2 / 3;
+    grid-row: 1 / span 2;
+  }
+}
+
 .compact-preview {
   padding: 10px;
 }
