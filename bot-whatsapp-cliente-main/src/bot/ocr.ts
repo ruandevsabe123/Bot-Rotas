@@ -66,9 +66,10 @@ export function findConfiguredRouteCode(ocrText: string, routes: string[]) {
       const routeIndex = normalizedLine.indexOf(route.normalized);
       if (routeIndex < 0 && !looselyMatchesRoute(normalizedLine, route.normalized)) continue;
 
-      const afterRoute = routeIndex >= 0 ? normalizedLine.slice(routeIndex + route.normalized.length) : normalizedLine;
       const beforeRoute = routeIndex >= 0 ? normalizedLine.slice(0, routeIndex) : "";
-      const code = extractGaiolaCode(beforeRoute) || extractGaiolaCode(normalizedLine) || extractGaiolaCode(afterRoute);
+      const code = routeIndex >= 0
+        ? extractLastGaiolaCode(beforeRoute)
+        : extractOnlyGaiolaCode(normalizedLine);
       if (!code) continue;
 
       return {
@@ -79,29 +80,24 @@ export function findConfiguredRouteCode(ocrText: string, routes: string[]) {
     }
   }
 
-  const normalizedFullText = normalizeOcrText(ocrText);
-  for (const route of normalizedRoutes) {
-    const routeIndex = normalizedFullText.indexOf(route.normalized);
-    if (routeIndex < 0) continue;
-
-    const afterRoute = normalizedFullText.slice(routeIndex + route.normalized.length, routeIndex + route.normalized.length + 40);
-    const code = extractGaiolaCode(afterRoute) || extractGaiolaCode(normalizedFullText.slice(Math.max(0, routeIndex - 80), routeIndex));
-    if (code) {
-      return {
-        route: route.raw,
-        code,
-        line: route.raw
-      };
-    }
-  }
-
   return undefined;
 }
 
-function extractGaiolaCode(text: string) {
-  const match = text.match(/\b([a-z])\s*[-.:]?\s*(\d{1,4})\b/i);
-  if (!match) return "";
-  return `${match[1].toUpperCase()}-${match[2]}`;
+function extractLastGaiolaCode(text: string) {
+  const matches = collectGaiolaCodes(text);
+  return matches[matches.length - 1] || "";
+}
+
+function extractOnlyGaiolaCode(text: string) {
+  const matches = collectGaiolaCodes(text);
+  return matches.length === 1 ? matches[0] : "";
+}
+
+function collectGaiolaCodes(text: string) {
+  const matches = [...text.matchAll(/\b([a-z])\s*[-.:]?\s*(\d{1,4})\b/gi)];
+  return matches
+    .map((match) => `${match[1].toUpperCase()}-${match[2]}`)
+    .filter((code) => !/^AT-\d/i.test(code));
 }
 
 function looselyMatchesRoute(line: string, route: string) {
