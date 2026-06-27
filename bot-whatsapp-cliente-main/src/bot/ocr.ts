@@ -1,4 +1,7 @@
 import { execFile } from "child_process";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { createWorker } from "tesseract.js";
 import { MonitoredRoute } from "../shared/types";
 
@@ -24,7 +27,7 @@ export type OcrLine = {
 export type RouteOcrResult = {
   text: string;
   lines: OcrLine[];
-  source: "tesseract-binary" | "tesseract-js";
+  source: string;
 };
 
 let tesseractJsWorkerPromise: ReturnType<typeof createWorker> | undefined;
@@ -44,13 +47,50 @@ export function readImageText(imagePath: string) {
 }
 
 export function readRouteImageOcr(imagePath: string) {
-  return readRouteImageOcrWithBinary(imagePath).catch((error) => {
+  return readRouteImageOcrCandidates(imagePath).then((results) => (
+    [...results].sort((left, right) => right.lines.length - left.lines.length)[0] || {
+      text: "",
+      lines: [],
+      source: "empty"
+    }
+  ));
+}
+
+export async function readRouteImageOcrCandidates(imagePath: string) {
+  const variants = await createPreprocessedImageVariants(imagePath);
+  const results: RouteOcrResult[] = [];
+
+  try {
+    for (const variant of variants) {
+      try {
+        results.push(await readSingleRouteImageOcr(variant.path, variant.label));
+      } catch {
+        // Se uma variação falhar, as outras ainda podem salvar a leitura.
+      }
+    }
+  } finally {
+    for (const variant of variants) {
+      if (variant.generated) {
+        try {
+          fs.rmSync(variant.path, { force: true });
+        } catch {
+          // Arquivo temporário já pode ter sido removido.
+        }
+      }
+    }
+  }
+
+  return results.length ? results : [await readSingleRouteImageOcr(imagePath, "original")];
+}
+
+function readSingleRouteImageOcr(imagePath: string, label: string) {
+  return readRouteImageOcrWithBinary(imagePath, label).catch((error) => {
     if (!isMissingTesseractBinary(error)) throw error;
-    return readRouteImageOcrWithTesseractJs(imagePath);
+    return readRouteImageOcrWithTesseractJs(imagePath, label);
   });
 }
 
-function readRouteImageOcrWithBinary(imagePath: string) {
+function readRouteImageOcrWithBinary(imagePath: string, label: string) {
   return new Promise<RouteOcrResult>((resolve, reject) => {
     execFile(
       "tesseract",
@@ -66,14 +106,14 @@ function readRouteImageOcrWithBinary(imagePath: string) {
         resolve({
           text: lines.map((line) => line.text).join("\n"),
           lines,
-          source: "tesseract-binary"
+          source: `tesseract-binary:${label}`
         });
       }
     );
   });
 }
 
-async function readRouteImageOcrWithTesseractJs(imagePath: string): Promise<RouteOcrResult> {
+async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string): Promise<RouteOcrResult> {
   const worker = await getTesseractJsWorker();
 
   const result = await worker.recognize(
@@ -90,8 +130,50 @@ async function readRouteImageOcrWithTesseractJs(imagePath: string): Promise<Rout
   return {
     text: blockLines.map((line) => line.text).join("\n") || result.data.text || "",
     lines: blockLines,
-    source: "tesseract-js"
+    source: `tesseract-js:${label}`
   };
+}
+
+async function createPreprocessedImageVariants(imagePath: string) {
+  const variants = [{ path: imagePath, label: "original", generated: false }];
+
+  try {
+    const { default: sharp } = await import("sharp");
+    const metadata = await sharp(imagePath).metadata();
+    const width = metadata.width || 0;
+    const resizeWidth = width > 0 ? Math.min(3200, Math.max(1800, width * 2)) : 2200;
+    const baseName = path.join(os.tmpdir(), `ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    const cleanPath = `${baseName}-clean.png`;
+    const contrastPath = `${baseName}-contrast.png`;
+
+    await sharp(imagePath)
+      .rotate()
+      .resize({ width: resizeWidth, withoutEnlargement: false })
+      .grayscale()
+      .normalize()
+      .sharpen({ sigma: 1.2, m1: 1.1, m2: 2.2 })
+      .png()
+      .toFile(cleanPath);
+
+    await sharp(imagePath)
+      .rotate()
+      .resize({ width: resizeWidth, withoutEnlargement: false })
+      .grayscale()
+      .normalize()
+      .linear(1.35, -18)
+      .threshold(172)
+      .png()
+      .toFile(contrastPath);
+
+    variants.push(
+      { path: cleanPath, label: "nitida", generated: true },
+      { path: contrastPath, label: "contraste", generated: true }
+    );
+  } catch {
+    // Se o tratamento de imagem falhar, o OCR continua na original.
+  }
+
+  return variants;
 }
 
 function getTesseractJsWorker() {
@@ -154,6 +236,7 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
     for (const line of usefulLines) {
       const normalizedLine = normalizeOcrText(line.text);
       if (!normalizedLine) continue;
+      if (line.confidence < 45) continue;
       if (!matchesConfiguredText(normalizedLine, route.normalizedCity)) continue;
       if (!matchesConfiguredText(normalizedLine, route.normalizedDistrict)) continue;
 
@@ -173,6 +256,7 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
   for (const line of usefulLines) {
     const normalizedLine = normalizeOcrText(line.text);
     if (!normalizedLine) continue;
+    if (line.confidence < 45) continue;
 
     for (const route of normalizedRoutes) {
       const routeIndex = normalizedLine.indexOf(route.normalized);
