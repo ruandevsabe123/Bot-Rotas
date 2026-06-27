@@ -83,7 +83,7 @@ type PendingConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-type AppTab = "home" | "groups" | "messages" | "image" | "test" | "settings";
+type AppTab = "home" | "groups" | "image" | "test" | "settings";
 type GroupEditor = "target" | "image" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
 type AdminMainTab = "dashboard" | "validations" | "history" | "logs" | "reports" | "clients" | "settings";
@@ -141,7 +141,6 @@ const emptySnapshot: BotSnapshot = {
 const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
   { id: "home", label: "Inicio", Icon: Home },
   { id: "groups", label: "Grupos", Icon: Route },
-  { id: "messages", label: "Mensagens", Icon: MessageSquareText },
   { id: "image", label: "Imagem", Icon: Sparkles },
   { id: "test", label: "Teste", Icon: TestTube2 },
   { id: "settings", label: "Ajustes", Icon: Settings }
@@ -523,16 +522,16 @@ function LaunchReviewPanel({
           <strong>{snapshot.config.nomeEnvio || "Não configurado"}</strong>
         </article>
         <article className={hasMessages ? "review-item ok" : "review-item pending"}>
-          <span>{ocrMode ? "Bairros OCR" : "Mensagens"}</span>
+          <span>{ocrMode ? "Ranking OCR" : "Mensagens"}</span>
           <strong>{messages.length ? `${messages.length} salvo(s)` : "Nenhuma"}</strong>
         </article>
       </div>
       <div className="review-messages">
-        {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{message}</span>) : <span>Configure os bairros para detectar na foto antes de iniciar.</span>}
+        {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{message}</span>) : <span>Configure a rota antes de iniciar.</span>}
       </div>
       <div className="review-actions">
         <button className="button" type="button" onClick={onEditTarget}>
-          Configurar bairros da foto
+          Configurar rota
         </button>
       </div>
     </section>
@@ -2437,7 +2436,7 @@ export default function App() {
   }
 
   function buildRoutePreview(routes = snapshot.config.rotasMonitoradas, detailedRoutes = snapshot.config.rotasMonitoradasDetalhadas) {
-    return formatOcrRoutes(routes || [], detailedRoutes || []).map((route) => `OCR: ${route}`);
+    return formatOcrRoutes(routes || [], detailedRoutes || []).map((route, index) => `Prioridade ${index + 1}: ${route}`);
   }
 
   function isHomeOperationLog(message: string) {
@@ -2796,26 +2795,6 @@ export default function App() {
         </section>
       ) : null}
 
-      {activeTab === "messages" ? (
-        <section className="mobile-home">
-          <section className="quick-panel identity-panel">
-            <div>
-              <p className="panel-label">Nome nas mensagens</p>
-              <h2>{snapshot.config.nomeEnvio || "Digite seu nome"}</h2>
-            </div>
-            <button className="button" type="button" onClick={() => setGroupEditor("target")}>
-              Configurar
-            </button>
-          </section>
-          <MessagePreviewStrip
-            title="Mensagens alvo"
-            group={groupLabel}
-            messages={normalizeMessages(snapshot.config.nomeEnvio, snapshot.config.codigosMensagensAlvo || [])}
-            onOpen={() => setGroupEditor("target")}
-          />
-        </section>
-      ) : null}
-
       {activeTab === "image" ? (
         <section className="mobile-home">
           <section className="quick-panel identity-panel">
@@ -2824,11 +2803,11 @@ export default function App() {
               <h2>{buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas).length || 0} rota(s)</h2>
             </div>
             <button className="button" type="button" onClick={() => setGroupEditor("image")}>
-              Configurar
+              Configurar rota
             </button>
           </section>
           <MessagePreviewStrip
-            title="Leitura por foto"
+            title="Ranking de rotas"
             group={groupLabel}
             messages={buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas)}
             onOpen={() => setGroupEditor("image")}

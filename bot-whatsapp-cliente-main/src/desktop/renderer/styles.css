@@ -2858,6 +2858,12 @@ h2 {
   height: 38px;
 }
 
+.ocr-route-rank-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 38px);
+  gap: 6px;
+}
+
 .ocr-route-index {
   color: #f4f7f8;
   font-size: 0.78rem;
@@ -2894,8 +2900,14 @@ h2 {
   }
 
   .ocr-route-row .icon-button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .ocr-route-rank-actions {
     grid-column: 2 / 3;
-    grid-row: 1 / span 2;
+    grid-row: 1 / span 3;
+    grid-template-columns: 36px;
   }
 }
 
@@ -3359,9 +3371,9 @@ h2 {
   bottom: 18px;
   z-index: 18;
   display: grid;
-  grid-template-columns: repeat(6, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: 6px;
-  width: min(520px, calc(100vw - 28px));
+  width: min(420px, calc(100vw - 28px));
   padding: 8px;
   border: 1px solid rgba(245, 247, 248, 0.1);
   border-radius: 28px;

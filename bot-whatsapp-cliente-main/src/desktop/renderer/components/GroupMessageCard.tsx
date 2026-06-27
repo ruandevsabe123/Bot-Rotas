@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ArrowDown, ArrowUp } from "lucide-react";
 import { BotConfig, BotGroup, MonitoredRoute } from "../../../shared/types";
 
 type Props = {
@@ -87,6 +88,14 @@ function normalizeMonitoredRoutes(routes: MonitoredRoute[]) {
     });
 }
 
+function moveRoute(routes: MonitoredRoute[], fromIndex: number, toIndex: number) {
+  if (toIndex < 0 || toIndex >= routes.length) return routes;
+  const nextRoutes = [...routes];
+  const [route] = nextRoutes.splice(fromIndex, 1);
+  nextRoutes.splice(toIndex, 0, route);
+  return nextRoutes;
+}
+
 export function GroupMessageCard({ kind, targetMode = "manual", config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup }: Props) {
   const [group, setGroup] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
@@ -171,7 +180,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   }
 
   const previewMessages = isImageTarget
-    ? normalizeMonitoredRoutes(monitoredRoutes).map((route) => `OCR: ${route.cidade} / ${route.bairro}`)
+    ? normalizeMonitoredRoutes(monitoredRoutes).map((route, index) => `Prioridade ${index + 1}: ${route.cidade} / ${route.bairro}`)
     : parseCodes(codes).map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
   const query = group.trim().toLowerCase();
   const filteredGroups = groups
@@ -233,21 +242,21 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
 
         {isImageTarget ? (
           <div className="ocr-primary-copy">
-            <strong>Principal: detectar gaiola pela foto</strong>
-            <span>Cadastre quantas rotas quiser. Quando o analista mandar a tabela, o bot testa todas e só aceita a gaiola da rota onde cidade e bairro aparecem na mesma linha.</span>
+            <strong>Configurar rota por imagem</strong>
+            <span>Organize o ranking das rotas. A prioridade 1 é buscada primeiro, depois a 2, e assim por diante.</span>
           </div>
         ) : null}
 
         {isImageTarget ? (
           <section className="ocr-route-fields">
             <div className="ocr-route-heading">
-              <span>Rota</span>
+              <span>Ranking</span>
               <span>Cidade</span>
               <span>Bairro</span>
             </div>
             {monitoredRoutes.map((route, index) => (
               <div className="ocr-route-row" key={`ocr-route-${index}`}>
-                <span className="ocr-route-index">Rota {index + 1}</span>
+                <span className="ocr-route-index">Prioridade {index + 1}</span>
                 <input
                   value={route.cidade}
                   onChange={(event) => {
@@ -267,9 +276,17 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
                   placeholder="Parque Penha"
                 />
                 {monitoredRoutes.length > 1 ? (
-                  <button className="icon-button" title="Remover rota" type="button" onClick={() => setMonitoredRoutes(monitoredRoutes.filter((_, itemIndex) => itemIndex !== index))}>
-                    ×
-                  </button>
+                  <div className="ocr-route-rank-actions">
+                    <button className="icon-button" disabled={index === 0} title="Subir no ranking" type="button" onClick={() => setMonitoredRoutes(moveRoute(monitoredRoutes, index, index - 1))}>
+                      <ArrowUp size={16} />
+                    </button>
+                    <button className="icon-button" disabled={index === monitoredRoutes.length - 1} title="Descer no ranking" type="button" onClick={() => setMonitoredRoutes(moveRoute(monitoredRoutes, index, index + 1))}>
+                      <ArrowDown size={16} />
+                    </button>
+                    <button className="icon-button" title="Remover rota" type="button" onClick={() => setMonitoredRoutes(monitoredRoutes.filter((_, itemIndex) => itemIndex !== index))}>
+                      ×
+                    </button>
+                  </div>
                 ) : null}
               </div>
             ))}
@@ -277,7 +294,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               <button className="button secondary" type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute()])}>
                 Adicionar outra rota
               </button>
-              <small>{normalizeMonitoredRoutes(monitoredRoutes).length} rota(s) pronta(s) para o OCR testar.</small>
+              <small>{normalizeMonitoredRoutes(monitoredRoutes).length} rota(s) no ranking. A ordem salva define qual rota o bot tenta pegar primeiro.</small>
             </div>
           </section>
         ) : (
