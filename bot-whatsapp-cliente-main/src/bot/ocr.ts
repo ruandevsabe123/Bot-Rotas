@@ -1,4 +1,5 @@
 import { execFile } from "child_process";
+import { recognize } from "tesseract.js";
 
 export function normalizeOcrText(text: string) {
   return text
@@ -11,6 +12,13 @@ export function normalizeOcrText(text: string) {
 }
 
 export function readImageText(imagePath: string) {
+  return readImageTextWithBinary(imagePath).catch((error) => {
+    if (!isMissingTesseractBinary(error)) throw error;
+    return readImageTextWithTesseractJs(imagePath);
+  });
+}
+
+function readImageTextWithBinary(imagePath: string) {
   return new Promise<string>((resolve, reject) => {
     execFile(
       "tesseract",
@@ -26,6 +34,18 @@ export function readImageText(imagePath: string) {
       }
     );
   });
+}
+
+async function readImageTextWithTesseractJs(imagePath: string) {
+  const result = await recognize(imagePath, "por", {
+    logger: () => undefined
+  });
+  return result.data.text || "";
+}
+
+function isMissingTesseractBinary(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return message.includes("ENOENT") || message.toLowerCase().includes("spawn tesseract");
 }
 
 export function findConfiguredRouteCode(ocrText: string, routes: string[]) {
