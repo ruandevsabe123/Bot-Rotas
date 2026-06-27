@@ -2841,7 +2841,7 @@ h2 {
 .ocr-route-heading,
 .ocr-route-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
 }
@@ -2858,6 +2858,23 @@ h2 {
   height: 38px;
 }
 
+.ocr-route-index {
+  color: #f4f7f8;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.ocr-route-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.ocr-route-actions small {
+  color: #8e99a3;
+  line-height: 1.35;
+}
+
 @media (max-width: 560px) {
   .ocr-route-heading {
     display: none;
@@ -2867,8 +2884,12 @@ h2 {
     grid-template-columns: minmax(0, 1fr) auto;
   }
 
-  .ocr-route-row input:first-child,
-  .ocr-route-row input:nth-child(2) {
+  .ocr-route-index {
+    grid-column: 1 / 2;
+  }
+
+  .ocr-route-row input:nth-child(2),
+  .ocr-route-row input:nth-child(3) {
     grid-column: 1 / 2;
   }
 

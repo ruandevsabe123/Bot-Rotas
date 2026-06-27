@@ -68,6 +68,23 @@ function createEmptyRoute(): MonitoredRoute {
   return { cidade: "", bairro: "" };
 }
 
+function normalizeRouteKey(route: MonitoredRoute) {
+  return `${route.cidade.trim().toLowerCase()}|${route.bairro.trim().toLowerCase()}`;
+}
+
+function normalizeMonitoredRoutes(routes: MonitoredRoute[]) {
+  const seen = new Set<string>();
+  return routes
+    .map((item) => ({ cidade: item.cidade.trim(), bairro: item.bairro.trim() }))
+    .filter((item) => item.cidade && item.bairro)
+    .filter((item) => {
+      const key = normalizeRouteKey(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
 export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup }: Props) {
   const [group, setGroup] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
@@ -130,9 +147,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
     const foundByName = groups.find((item) => item.name.toLowerCase() === group.trim().toLowerCase());
     const chosenGroup = selectedGroup || foundByName;
     const value = chosenGroup ? chosenGroup.name : group.trim();
-    const nextRoutes = monitoredRoutes
-      .map((item) => ({ cidade: item.cidade.trim(), bairro: item.bairro.trim() }))
-      .filter((item) => item.cidade && item.bairro);
+    const nextRoutes = normalizeMonitoredRoutes(monitoredRoutes);
     const nextCodes = isTarget ? nextRoutes.map((item) => `${item.cidade} | ${item.bairro}`) : parseCodes(codes);
 
     if (!value || !senderName.trim() || !nextCodes.length) return;
@@ -153,7 +168,7 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
   }
 
   const previewMessages = isTarget
-    ? monitoredRoutes.filter((route) => route.cidade.trim() && route.bairro.trim()).map((route) => `OCR: ${route.cidade} / ${route.bairro}`)
+    ? normalizeMonitoredRoutes(monitoredRoutes).map((route) => `OCR: ${route.cidade} / ${route.bairro}`)
     : parseCodes(codes).map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
   const query = group.trim().toLowerCase();
   const filteredGroups = groups
@@ -216,18 +231,20 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
         {isTarget ? (
           <div className="ocr-primary-copy">
             <strong>Principal: detectar gaiola pela foto</strong>
-            <span>Cadastre cidade e bairro. Quando o analista mandar a tabela, o bot só aceita a gaiola se os dois aparecerem na mesma linha.</span>
+            <span>Cadastre quantas rotas quiser. Quando o analista mandar a tabela, o bot testa todas e só aceita a gaiola da rota onde cidade e bairro aparecem na mesma linha.</span>
           </div>
         ) : null}
 
         {isTarget ? (
           <section className="ocr-route-fields">
             <div className="ocr-route-heading">
+              <span>Rota</span>
               <span>Cidade</span>
               <span>Bairro</span>
             </div>
             {monitoredRoutes.map((route, index) => (
               <div className="ocr-route-row" key={`ocr-route-${index}`}>
+                <span className="ocr-route-index">Rota {index + 1}</span>
                 <input
                   value={route.cidade}
                   onChange={(event) => {
@@ -253,9 +270,12 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
                 ) : null}
               </div>
             ))}
-            <button className="button secondary" type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute()])}>
-              Adicionar rota
-            </button>
+            <div className="ocr-route-actions">
+              <button className="button secondary" type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute()])}>
+                Adicionar outra rota
+              </button>
+              <small>{normalizeMonitoredRoutes(monitoredRoutes).length} rota(s) pronta(s) para o OCR testar.</small>
+            </div>
           </section>
         ) : (
           <>
@@ -299,11 +319,11 @@ export function GroupMessageCard({ kind, config, groups, busy, onRefresh, onSave
           </div>
         ) : null}
 
-        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || (isTarget ? !monitoredRoutes.some((route) => route.cidade.trim() && route.bairro.trim()) : !codes.trim())} type="submit">
+        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || (isTarget ? !normalizeMonitoredRoutes(monitoredRoutes).length : !codes.trim())} type="submit">
           {label.action}
         </button>
         {isTarget ? (
-          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || !monitoredRoutes.some((route) => route.cidade.trim() && route.bairro.trim())} type="button" onClick={(event) => submit(event, true)}>
+          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || !normalizeMonitoredRoutes(monitoredRoutes).length} type="button" onClick={(event) => submit(event, true)}>
             <span aria-hidden="true">☠</span>
             Salvar e iniciar
           </button>
