@@ -7,6 +7,7 @@ import {
   BotSnapshot,
   DesktopApi,
   GeneralSettingsPayload,
+  LeaderContact,
   PanelUser,
   PanelUserRole,
   SaveCodesPayload,
@@ -174,6 +175,19 @@ export function runAdminUserBotAction(email: string, actionName: string, payload
   return fetchJson<AdminUserDetail>(`/api/admin/users/${encodeURIComponent(email)}/action/${encodeURIComponent(actionName)}`, {
     method: "POST",
     body: JSON.stringify(payload)
+  });
+}
+
+export function saveAdminLeader(payload: LeaderContact) {
+  return fetchJson<{ leaders: LeaderContact[] }>("/api/admin/leaders", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function removeAdminLeader(phone: string) {
+  return fetchJson<{ leaders: LeaderContact[] }>(`/api/admin/leaders/${encodeURIComponent(phone)}`, {
+    method: "DELETE"
   });
 }
 

@@ -5,10 +5,11 @@ import path from "path";
 import crypto from "crypto";
 import QRCode from "qrcode";
 import qrcodeTerminal from "qrcode-terminal";
-import { BotService } from "./bot/connection";
+import { BotService, DEFAULT_LEADER_CONTACTS } from "./bot/connection";
+import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderStore";
 import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
-import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, PanelUserRole, UserPresenceStatus } from "./shared/types";
+import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
@@ -117,6 +118,13 @@ const configuredAdminEmails = new Set(parseList(process.env.PANEL_ADMIN_EMAILS).
 const adminPhoneNumbers = parseList(process.env.ADMIN_PHONE_NUMBERS || process.env.ADMIN_PHONES)
   .map(normalizePhone)
   .filter(Boolean);
+const envLeaderContacts: LeaderContact[] = parseList(process.env.LEADER_CONTACTS)
+  .map((item) => {
+    const [name, phone] = item.split(":").map((part) => part.trim());
+    return { name, phone: normalizeLeaderPhone(phone || "") };
+  })
+  .filter((item) => item.name && item.phone);
+const leaderStore = new LeaderStore(path.join(dataDir, "leaders.json"), [...DEFAULT_LEADER_CONTACTS, ...envLeaderContacts]);
 const panelUserStore = new PanelUserStore(path.join(dataDir, "panel_users.json"));
 const supportMessageStore = new SupportMessageStore(path.join(dataDir, "support_messages.json"));
 const panelUsers = mergeStoredUsers(parsePanelUsers(
@@ -219,6 +227,7 @@ function getBotForEmail(email: string) {
     logStorePath: userLogStorePath,
     clientEmail: normalizedEmail,
     adminPhoneNumbers,
+    leaderContacts: leaderStore.all(),
     autoClearInvalidSession: true
   });
 
@@ -507,8 +516,17 @@ function getAdminMonitorSnapshot(): AdminMonitorSnapshot {
     routes: getAdminRoutesSnapshot(),
     users: getAdminUsersSnapshot(),
     support: getAdminSupportMessagesSnapshot(),
-    logs: getAdminLogsSnapshot()
+    logs: getAdminLogsSnapshot(),
+    leaders: leaderStore.all()
   };
+}
+
+function broadcastLeadersToBots() {
+  const leaders = leaderStore.all();
+  for (const bot of bots.values()) {
+    bot.setLeaderContacts(leaders);
+  }
+  broadcastAdminSnapshot();
 }
 
 function getMaintenanceEmails(clientEmail?: string) {
@@ -964,6 +982,30 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/admin/support/messages") {
       if (!requireAdmin(authorizedEmail, response)) return;
       sendJson(response, 200, getAdminSupportMessagesSnapshot());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/admin/leaders") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      sendJson(response, 200, { leaders: leaderStore.all() });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/admin/leaders") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const body = await readJsonBody<{ name?: string; phone?: string }>(request);
+      leaderStore.upsert({ name: String(body.name || ""), phone: String(body.phone || "") });
+      broadcastLeadersToBots();
+      sendJson(response, 200, { leaders: leaderStore.all() });
+      return;
+    }
+
+    if (request.method === "DELETE" && url.pathname.startsWith("/api/admin/leaders/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const phone = decodeURIComponent(url.pathname.replace("/api/admin/leaders/", ""));
+      leaderStore.remove(phone);
+      broadcastLeadersToBots();
+      sendJson(response, 200, { leaders: leaderStore.all() });
       return;
     }
 

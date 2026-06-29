@@ -10,7 +10,7 @@ import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { findConfiguredRouteCodeFromOcr, readRouteImageOcr } from "./ocr";
 import { RouteStore } from "./routeStore";
-import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, RouteDispatch, RouteOcrInsight, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, RouteDispatch, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -61,6 +61,7 @@ type BotServiceOptions = {
   logStorePath?: string;
   clientEmail?: string;
   adminPhoneNumbers?: string[];
+  leaderContacts?: LeaderContact[];
   terminalMode?: boolean;
   initialCodes?: string[];
   autoClearInvalidSession?: boolean;
@@ -83,7 +84,7 @@ const OPENING_TRIGGER_WORDS = [
   "podem mandar",
   "grupo aberto"
 ].map((item) => normalizarTexto(item));
-const DEFAULT_LEADER_CONTACTS = [
+export const DEFAULT_LEADER_CONTACTS: LeaderContact[] = [
   { name: "Gabriel Melo - Analista de Transporte", phone: "5511940670165" },
   { name: "André Bomfim", phone: "5521998970947" },
   { name: "Júlia Moura - Analista de Transporte", phone: "5522992143214" },
@@ -172,6 +173,7 @@ export class BotService extends EventEmitter {
   private statusEvents: BotStatusEvent[] = [];
   private clientEmail = "";
   private adminPhoneNumbers = new Set<string>();
+  private extraAdminPhoneNumbers: string[] = [];
   private leaderContacts = new Map<string, string>();
   private activeRouteByCycle = new Map<number, string>();
   private targetSimulationCycles = new Set<number>();
@@ -194,10 +196,12 @@ export class BotService extends EventEmitter {
     this.statusEventsPath = path.join(path.dirname(options.routeStorePath || path.resolve(process.cwd(), "route_history.json")), "status_events.json");
     this.statusEvents = this.loadStatusEvents();
     this.clientEmail = options.clientEmail || "";
-    this.leaderContacts = new Map(DEFAULT_LEADER_CONTACTS.map((item) => [this.normalizePhone(item.phone), item.name]));
+    const initialLeaders = options.leaderContacts?.length ? options.leaderContacts : DEFAULT_LEADER_CONTACTS;
+    this.extraAdminPhoneNumbers = (options.adminPhoneNumbers || []).map((item) => this.normalizePhone(item)).filter(Boolean);
+    this.leaderContacts = new Map(initialLeaders.map((item) => [this.normalizePhone(item.phone), item.name]));
     this.adminPhoneNumbers = new Set([
-      ...DEFAULT_LEADER_CONTACTS.map((item) => this.normalizePhone(item.phone)),
-      ...(options.adminPhoneNumbers || []).map((item) => this.normalizePhone(item))
+      ...initialLeaders.map((item) => this.normalizePhone(item.phone)),
+      ...this.extraAdminPhoneNumbers
     ].filter(Boolean));
     this.autoClearInvalidSession = Boolean(options.autoClearInvalidSession);
     const config = this.configStore.load();
@@ -309,6 +313,22 @@ export class BotService extends EventEmitter {
       this.emitSnapshot();
     }
     return changed;
+  }
+
+  setLeaderContacts(contacts: LeaderContact[]) {
+    const normalized = contacts
+      .map((item) => ({
+        name: String(item.name || "").trim(),
+        phone: this.normalizePhone(String(item.phone || ""))
+      }))
+      .filter((item) => item.name && item.phone);
+    this.leaderContacts = new Map(normalized.map((item) => [item.phone, item.name]));
+    this.adminPhoneNumbers = new Set([
+      ...this.extraAdminPhoneNumbers,
+      ...normalized.map((item) => item.phone)
+    ].filter(Boolean));
+    this.logger.success("Lista de líderes de reação atualizada.");
+    this.emitSnapshot();
   }
   isMonitoringEnabled(): boolean {
     return this.monitoringEnabled;

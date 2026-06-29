@@ -1,4 +1,4 @@
-import { CSSProperties, ReactNode, useEffect, useMemo, useState } from "react";
+import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -34,6 +34,7 @@ import {
   AdminUserDetail,
   AdminUserSummary,
   AdminUsersSnapshot,
+  LeaderContact,
   PanelUserRole,
   RouteDispatch,
   SupportMessage
@@ -46,7 +47,9 @@ import {
   isAuthError,
   markSupportMessageRead,
   rejectAdminRoute,
+  removeAdminLeader,
   runAdminUserBotAction,
+  saveAdminLeader,
   saveAdminUser,
   subscribeAdminMonitor,
   validateAdminRoute
@@ -457,6 +460,8 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const [cleanupTarget, setCleanupTarget] = useState<CleanupTarget>();
   const [rejectRequest, setRejectRequest] = useState<RejectRequest>();
   const [rejectReason, setRejectReason] = useState("Sem reação válida");
+  const [leaders, setLeaders] = useState<LeaderContact[]>([]);
+  const [leaderDraft, setLeaderDraft] = useState<LeaderContact>({ name: "", phone: "" });
 
   function showToast(message: string) {
     setToast(message);
@@ -468,6 +473,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     setUsers(snapshot.users);
     setSupport(snapshot.support);
     setLogs(snapshot.logs);
+    setLeaders(snapshot.leaders || []);
     setStreamState("live");
     setError("");
   }
@@ -730,6 +736,36 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     setModeFilter("all");
     setLogLevel("all");
     showToast("Filtros resetados.");
+  }
+
+  async function saveLeader(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      const response = await saveAdminLeader(leaderDraft);
+      setLeaders(response.leaders);
+      setLeaderDraft({ name: "", phone: "" });
+      showToast("Líder salvo.");
+      refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui salvar líder.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeLeader(phone: string) {
+    setBusy(true);
+    try {
+      const response = await removeAdminLeader(phone);
+      setLeaders(response.leaders);
+      showToast("Líder removido.");
+      refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui remover líder.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function exportRoutes(format: "csv" | "json") {
@@ -1064,6 +1100,43 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
                   <button className="button danger" type="button" onClick={onLogout}>Sair da conta</button>
                 </section>
               </div>
+              <section className="adminx-leader-manager">
+                <div className="adminx-panel-head">
+                  <div>
+                    <p>Líderes de reação</p>
+                    <h2>{leaders.length} líder(es) configurado(s)</h2>
+                  </div>
+                </div>
+                <form className="adminx-leader-form" onSubmit={saveLeader}>
+                  <input
+                    value={leaderDraft.name}
+                    onChange={(event) => setLeaderDraft((current) => ({ ...current, name: event.target.value }))}
+                    placeholder="Nome do líder"
+                  />
+                  <input
+                    value={leaderDraft.phone}
+                    onChange={(event) => setLeaderDraft((current) => ({ ...current, phone: event.target.value }))}
+                    placeholder="Telefone com DDI. Ex.: 5521999999999"
+                  />
+                  <button className="button primary" disabled={busy || !leaderDraft.name.trim() || !leaderDraft.phone.trim()} type="submit">
+                    Adicionar líder
+                  </button>
+                </form>
+                <div className="adminx-leader-list">
+                  {leaders.map((leader) => (
+                    <article key={leader.phone}>
+                      <div>
+                        <strong>{leader.name}</strong>
+                        <span>{leader.phone}</span>
+                      </div>
+                      <button className="button danger" disabled={busy} type="button" onClick={() => removeLeader(leader.phone)}>
+                        Remover
+                      </button>
+                    </article>
+                  ))}
+                  {!leaders.length ? <p className="adminx-empty-text">Nenhum líder configurado.</p> : null}
+                </div>
+              </section>
             </article>
           </section>
         ) : null}

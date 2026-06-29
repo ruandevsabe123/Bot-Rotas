@@ -122,6 +122,11 @@ export type PanelUser = {
   color?: string;
 };
 
+export type LeaderContact = {
+  name: string;
+  phone: string;
+};
+
 export type UserPresenceStatus = "online" | "recent" | "offline";
 
 export type LoginEvent = {
@@ -292,6 +297,7 @@ export type AdminMonitorSnapshot = {
   users: AdminUsersSnapshot;
   support: AdminSupportMessagesSnapshot;
   logs: AdminLogEntry[];
+  leaders?: LeaderContact[];
 };
 
 export type SaveGroupPayload = {
