@@ -10,7 +10,7 @@ import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { findConfiguredRouteCodeFromOcr, readRouteImageOcr } from "./ocr";
 import { RouteStore } from "./routeStore";
-import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotTestStatus, RouteDispatch, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotTestStatus, RouteDispatch, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -134,6 +134,7 @@ export class BotService extends EventEmitter {
   private preparedRelaySignature = "";
   private pendingOcrMessages: string[] = [];
   private lastOcrDispatchKey = "";
+  private lastOcrInsight?: RouteOcrInsight;
   private processingImageIds = new Set<string>();
   private warmupMessagesSent = 0;
   private warmupCompleted = false;
@@ -270,8 +271,8 @@ export class BotService extends EventEmitter {
     return changed;
   }
 
-  rejectRoute(routeId: string, rejectedBy: string) {
-    const changed = this.routeStore.reject(routeId, rejectedBy);
+  rejectRoute(routeId: string, rejectedBy: string, reason?: string) {
+    const changed = this.routeStore.reject(routeId, rejectedBy, reason);
     if (changed) this.emitSnapshot();
     return changed;
   }
@@ -1489,6 +1490,17 @@ export class BotService extends EventEmitter {
       }
 
       this.lastOcrDispatchKey = dispatchKey;
+      this.lastOcrInsight = {
+        source: ocr.source,
+        text: ocr.text,
+        line: detected.line,
+        route: detected.route,
+        cidade: detected.cidade,
+        bairro: detected.bairro,
+        code: detected.code,
+        confidence: ocr.lines.length ? Math.round(ocr.lines.reduce((total, line) => total + line.confidence, 0) / ocr.lines.length) : undefined,
+        processedAt: new Date().toISOString()
+      };
       this.pendingOcrMessages = [message];
       this.preparedTargetJid = groupJid;
       this.preparedMessages = [message];
@@ -1533,6 +1545,7 @@ export class BotService extends EventEmitter {
       const senderJid = senderIdentifiers[0] || "";
       const senderPhone = senderIdentifiers.find((identifier) => /^55\d{10,13}$/.test(identifier)) || senderIdentifiers[0] || "";
       const emoji = String(reaction.text || "");
+      const action = emoji ? "add" : "remove";
       const timestampMs = Number(reaction.senderTimestampMs || msg.messageTimestamp || Date.now());
       const timestamp = new Date(timestampMs > 9999999999 ? timestampMs : timestampMs * 1000).toISOString();
       const routeReaction: RouteReaction = {
@@ -1546,9 +1559,11 @@ export class BotService extends EventEmitter {
         leaderName: this.getLeaderNameFromIdentifiers(senderIdentifiers)
       };
 
-      if (this.routeStore.addReaction(String(reactedMessageId), routeReaction)) {
+      if (this.routeStore.recordReactionEvent(String(reactedMessageId), routeReaction, action)) {
         this.logger.info(
-          routeReaction.isAdmin
+          action === "remove"
+            ? `Reação removida ${routeReaction.isAdmin ? `pelo líder ${routeReaction.leaderName || senderPhone}` : `por ${senderPhone || "remetente desconhecido"}`}. Mantive o evento para auditoria.`
+            : routeReaction.isAdmin
             ? `Reação do líder ${routeReaction.leaderName || senderPhone} foi encontrada. Aguardando validação manual do admin.`
             : `Reação recebida em rota enviada (${senderPhone || "remetente desconhecido"}). IDs: ${senderIdentifiers.join(" / ") || "nenhum"}`
         );
@@ -1809,7 +1824,8 @@ export class BotService extends EventEmitter {
       sentMessageIds: this.preparedRelayMessages.map((item) => String(item?.key?.id || "")).filter(Boolean),
       confirmedCount: 0,
       totalCount: mensagens.length,
-      status: "sending"
+      status: "sending",
+      ocr: this.monitoringMode === "target" && config.targetDispatchMode === "ocr" ? this.lastOcrInsight : undefined
     });
     this.activeRouteByCycle.set(cycleId, route.id);
   }

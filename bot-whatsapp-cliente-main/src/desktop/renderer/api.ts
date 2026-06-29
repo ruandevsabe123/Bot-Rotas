@@ -130,10 +130,17 @@ export function validateAdminRoute(routeId: string) {
   });
 }
 
-export function rejectAdminRoute(routeId: string) {
+export function rejectAdminRoute(routeId: string, reason?: string) {
   return fetchJson<AdminRoutesSnapshot>(`/api/admin/routes/${encodeURIComponent(routeId)}/reject`, {
     method: "PATCH",
-    body: JSON.stringify({})
+    body: JSON.stringify({ reason })
+  });
+}
+
+export function bulkDecideAdminRoutes(payload: { routeIds: string[]; decision: "validate" | "reject"; reason?: string }) {
+  return fetchJson<AdminRoutesSnapshot & { changed: number }>("/api/admin/routes/bulk", {
+    method: "POST",
+    body: JSON.stringify(payload)
   });
 }
 
@@ -161,6 +168,13 @@ export function saveAdminUser(payload: {
       body: JSON.stringify(payload)
     }
   );
+}
+
+export function runAdminUserBotAction(email: string, actionName: string, payload: Record<string, unknown> = {}) {
+  return fetchJson<AdminUserDetail>(`/api/admin/users/${encodeURIComponent(email)}/action/${encodeURIComponent(actionName)}`, {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function sendSupportMessage(payload: { email: string; message: string }) {

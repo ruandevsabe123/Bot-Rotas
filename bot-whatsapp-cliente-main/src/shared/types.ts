@@ -185,6 +185,39 @@ export type RouteReaction = {
   leaderName?: string;
 };
 
+export type RouteReactionHistoryEvent = {
+  id: string;
+  timestamp: string;
+  action: "add" | "remove";
+  emoji: string;
+  senderJid: string;
+  senderPhone: string;
+  senderIdentifiers?: string[];
+  isAdmin: boolean;
+  leaderName?: string;
+};
+
+export type RouteReactionFinalState = {
+  status: "none" | "active" | "removed";
+  updatedAt?: string;
+  emoji?: string;
+  senderPhone?: string;
+  leaderName?: string;
+  isAdmin?: boolean;
+};
+
+export type RouteOcrInsight = {
+  source: string;
+  text?: string;
+  line?: string;
+  route?: string;
+  cidade?: string;
+  bairro?: string;
+  code?: string;
+  confidence?: number;
+  processedAt: string;
+};
+
 export type RouteDispatch = {
   id: string;
   clientEmail: string;
@@ -206,7 +239,11 @@ export type RouteDispatch = {
   validatedBy?: string;
   rejectedAt?: string;
   rejectedBy?: string;
+  decisionReason?: string;
   reactions: RouteReaction[];
+  reactionsHistory?: RouteReactionHistoryEvent[];
+  lastReactionState?: RouteReactionFinalState;
+  ocr?: RouteOcrInsight;
 };
 
 export type AdminRoutesSnapshot = {
@@ -215,7 +252,10 @@ export type AdminRoutesSnapshot = {
   totals: {
     routes: number;
     validated: number;
+    rejected?: number;
+    pending?: number;
     reactions: number;
+    removedReactions?: number;
     clients: number;
   };
 };

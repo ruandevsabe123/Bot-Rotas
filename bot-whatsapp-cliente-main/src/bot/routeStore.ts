@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { RouteDispatch, RouteReaction } from "../shared/types";
+import { RouteDispatch, RouteReaction, RouteReactionFinalState, RouteReactionHistoryEvent } from "../shared/types";
 
 const MAX_ROUTES = 100;
 
@@ -28,7 +28,9 @@ export class RouteStore {
       updatedAt: now,
       validated: false,
       decisionStatus: "pending",
-      reactions: []
+      reactions: [],
+      reactionsHistory: [],
+      lastReactionState: { status: "none" }
     };
 
     this.routes = [route, ...this.getRoutes()].slice(0, MAX_ROUTES);
@@ -70,7 +72,7 @@ export class RouteStore {
     return changed;
   }
 
-  reject(id: string, rejectedBy: string) {
+  reject(id: string, rejectedBy: string, reason?: string) {
     let changed = false;
     const now = new Date().toISOString();
     this.routes =
@@ -83,6 +85,7 @@ export class RouteStore {
           decisionStatus: "rejected" as const,
           rejectedAt: route.rejectedAt || now,
           rejectedBy,
+          decisionReason: reason?.trim() || route.decisionReason,
           updatedAt: now
         };
       });
@@ -91,15 +94,36 @@ export class RouteStore {
   }
 
   addReaction(messageId: string, reaction: RouteReaction) {
+    return this.recordReactionEvent(messageId, reaction, reaction.emoji ? "add" : "remove");
+  }
+
+  recordReactionEvent(messageId: string, reaction: RouteReaction, action: RouteReactionHistoryEvent["action"]) {
     let changed = false;
     const routes = this.getRoutes().map((route) => {
       if (!route.sentMessageIds.includes(messageId)) return route;
 
       changed = true;
       const alreadySaved = route.reactions.some((item) => item.id === reaction.id);
+      const event: RouteReactionHistoryEvent = {
+        ...reaction,
+        id: `${reaction.id}:${action}`,
+        action
+      };
+      const historyAlreadySaved = (route.reactionsHistory || []).some((item) => item.id === event.id);
+      const lastReactionState: RouteReactionFinalState = {
+        status: action === "remove" ? "removed" : "active",
+        updatedAt: reaction.timestamp,
+        emoji: reaction.emoji,
+        senderPhone: reaction.senderPhone,
+        leaderName: reaction.leaderName,
+        isAdmin: reaction.isAdmin
+      };
+
       return {
         ...route,
-        reactions: alreadySaved ? route.reactions : [reaction, ...route.reactions],
+        reactions: action === "remove" || alreadySaved ? route.reactions : [reaction, ...route.reactions],
+        reactionsHistory: historyAlreadySaved ? route.reactionsHistory : [event, ...(route.reactionsHistory || [])],
+        lastReactionState,
         updatedAt: reaction.timestamp
       };
     });
@@ -179,6 +203,7 @@ export class RouteStore {
       validatedBy: typeof input.validatedBy === "string" ? input.validatedBy : undefined,
       rejectedAt: typeof input.rejectedAt === "string" ? input.rejectedAt : undefined,
       rejectedBy: typeof input.rejectedBy === "string" ? input.rejectedBy : undefined,
+      decisionReason: typeof input.decisionReason === "string" ? input.decisionReason : undefined,
       reactions: Array.isArray(input.reactions)
         ? input.reactions.map((item: any) => ({
             id: typeof item.id === "string" ? item.id : "",
@@ -192,7 +217,47 @@ export class RouteStore {
             isAdmin: Boolean(item.isAdmin),
             leaderName: typeof item.leaderName === "string" ? item.leaderName : undefined
           })).filter((item: RouteReaction) => item.id)
-        : []
+        : [],
+      reactionsHistory: Array.isArray(input.reactionsHistory)
+        ? input.reactionsHistory.map((item: any) => ({
+            id: typeof item.id === "string" ? item.id : "",
+            timestamp: typeof item.timestamp === "string" ? item.timestamp : new Date().toISOString(),
+            action: item.action === "remove" ? "remove" as const : "add" as const,
+            emoji: typeof item.emoji === "string" ? item.emoji : "",
+            senderJid: typeof item.senderJid === "string" ? item.senderJid : "",
+            senderPhone: typeof item.senderPhone === "string" ? item.senderPhone : "",
+            senderIdentifiers: Array.isArray(item.senderIdentifiers)
+              ? item.senderIdentifiers.filter((identifier: unknown) => typeof identifier === "string")
+              : undefined,
+            isAdmin: Boolean(item.isAdmin),
+            leaderName: typeof item.leaderName === "string" ? item.leaderName : undefined
+          })).filter((item: RouteReactionHistoryEvent) => item.id)
+        : [],
+      lastReactionState: input.lastReactionState && typeof input.lastReactionState === "object"
+        ? {
+            status: input.lastReactionState.status === "removed" ? "removed" : input.lastReactionState.status === "active" ? "active" : "none",
+            updatedAt: typeof input.lastReactionState.updatedAt === "string" ? input.lastReactionState.updatedAt : undefined,
+            emoji: typeof input.lastReactionState.emoji === "string" ? input.lastReactionState.emoji : undefined,
+            senderPhone: typeof input.lastReactionState.senderPhone === "string" ? input.lastReactionState.senderPhone : undefined,
+            leaderName: typeof input.lastReactionState.leaderName === "string" ? input.lastReactionState.leaderName : undefined,
+            isAdmin: typeof input.lastReactionState.isAdmin === "boolean" ? input.lastReactionState.isAdmin : undefined
+          }
+        : input.reactions?.length
+        ? { status: "active" as const, updatedAt: input.updatedAt }
+        : { status: "none" as const },
+      ocr: input.ocr && typeof input.ocr === "object"
+        ? {
+            source: typeof input.ocr.source === "string" ? input.ocr.source : "",
+            text: typeof input.ocr.text === "string" ? input.ocr.text : undefined,
+            line: typeof input.ocr.line === "string" ? input.ocr.line : undefined,
+            route: typeof input.ocr.route === "string" ? input.ocr.route : undefined,
+            cidade: typeof input.ocr.cidade === "string" ? input.ocr.cidade : undefined,
+            bairro: typeof input.ocr.bairro === "string" ? input.ocr.bairro : undefined,
+            code: typeof input.ocr.code === "string" ? input.ocr.code : undefined,
+            confidence: Number.isFinite(Number(input.ocr.confidence)) ? Number(input.ocr.confidence) : undefined,
+            processedAt: typeof input.ocr.processedAt === "string" ? input.ocr.processedAt : new Date().toISOString()
+          }
+        : undefined
     };
   }
 }

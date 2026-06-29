@@ -51,6 +51,7 @@ import { GroupMessageCard } from "./components/GroupMessageCard";
 import { LogsPanel } from "./components/LogsPanel";
 import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { AdminCommandCenter } from "./admin/AdminCommandCenter";
 import {
   botApi,
   clearAdminMaintenance,
@@ -2716,7 +2717,7 @@ export default function App() {
 
   if (userRole === "admin") {
     return (
-      <AdminDashboard
+      <AdminCommandCenter
         userEmail={userEmail}
         onLogout={() => logout("Entre novamente para continuar.")}
       />

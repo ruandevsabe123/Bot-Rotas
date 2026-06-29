@@ -442,7 +442,10 @@ function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
     totals: {
       routes: allRoutes.length,
       validated: allRoutes.filter((route) => route.validated).length,
+      rejected: allRoutes.filter((route) => (route.decisionStatus || (route.validated ? "validated" : "pending")) === "rejected").length,
+      pending: allRoutes.filter((route) => (route.decisionStatus || (route.validated ? "validated" : "pending")) === "pending").length,
       reactions: allRoutes.reduce((total, route) => total + route.reactions.length, 0),
+      removedReactions: allRoutes.filter((route) => route.lastReactionState?.status === "removed").length,
       clients: clients.size
     }
   };
@@ -455,11 +458,22 @@ function validateAdminRoute(routeId: string, adminEmail: string) {
   return false;
 }
 
-function rejectAdminRoute(routeId: string, adminEmail: string) {
+function rejectAdminRoute(routeId: string, adminEmail: string, reason?: string) {
   for (const email of getClientEmails()) {
-    if (getBotForEmail(email).rejectRoute(routeId, adminEmail)) return true;
+    if (getBotForEmail(email).rejectRoute(routeId, adminEmail, reason)) return true;
   }
   return false;
+}
+
+function bulkDecideAdminRoutes(routeIds: string[], adminEmail: string, decision: "validate" | "reject", reason?: string) {
+  let changed = 0;
+  for (const routeId of routeIds) {
+    const ok = decision === "validate"
+      ? validateAdminRoute(routeId, adminEmail)
+      : rejectAdminRoute(routeId, adminEmail, reason);
+    if (ok) changed += 1;
+  }
+  return changed;
 }
 
 function getAdminSupportMessagesSnapshot(): AdminSupportMessagesSnapshot {
@@ -904,13 +918,14 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/routes/")) {
       if (!requireAdmin(authorizedEmail, response)) return;
+      const body = await readJsonBody<{ reason?: string }>(request).catch((): { reason?: string } => ({}));
       const isValidate = url.pathname.endsWith("/validate");
       const isReject = url.pathname.endsWith("/reject");
       const routeId = decodeURIComponent(url.pathname.replace("/api/admin/routes/", "").replace(/\/validate$/, "").replace(/\/reject$/, ""));
       const changed = isValidate
         ? validateAdminRoute(routeId, authorizedEmail)
         : isReject
-        ? rejectAdminRoute(routeId, authorizedEmail)
+        ? rejectAdminRoute(routeId, authorizedEmail, body.reason)
         : false;
       if (!changed) {
         sendJson(response, 404, { error: "Rota não encontrada." });
@@ -918,6 +933,21 @@ const server = http.createServer(async (request, response) => {
       }
       broadcastAdminSnapshot();
       sendJson(response, 200, getAdminRoutesSnapshot());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/admin/routes/bulk") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const body = await readJsonBody<{ routeIds?: string[]; decision?: string; reason?: string }>(request);
+      const routeIds = Array.isArray(body.routeIds) ? body.routeIds.filter((item) => typeof item === "string" && item.trim()) : [];
+      const decision = body.decision === "reject" ? "reject" : body.decision === "validate" ? "validate" : undefined;
+      if (!routeIds.length || !decision) {
+        sendJson(response, 400, { error: "Informe routeIds e decision." });
+        return;
+      }
+      const changed = bulkDecideAdminRoutes(routeIds, authorizedEmail, decision, body.reason);
+      broadcastAdminSnapshot();
+      sendJson(response, 200, { ...getAdminRoutesSnapshot(), changed });
       return;
     }
 
@@ -951,6 +981,21 @@ const server = http.createServer(async (request, response) => {
         return;
       }
       sendJson(response, 200, detail);
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname.includes("/action/") && url.pathname.startsWith("/api/admin/users/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const [, encodedEmail = "", action = ""] = url.pathname.match(/^\/api\/admin\/users\/(.+)\/action\/([^/]+)$/) || [];
+      const targetEmail = decodeURIComponent(encodedEmail).trim().toLowerCase();
+      if (!panelUsers.has(targetEmail)) {
+        sendJson(response, 404, { error: "Usuário não encontrado." });
+        return;
+      }
+      const body = await readJsonBody(request);
+      await handleAction(getBotForEmail(targetEmail), decodeURIComponent(action), body);
+      broadcastAdminSnapshot();
+      sendJson(response, 200, getAdminUserDetail(targetEmail));
       return;
     }
 
