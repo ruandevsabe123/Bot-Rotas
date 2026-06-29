@@ -928,16 +928,17 @@ function RouteTable({
         <tbody>
           {routes.map((route) => (
             <tr key={route.id} style={colorStyle(route.clientColor)}>
-              <td><input type="checkbox" checked={selectedRoutes.includes(route.id)} onChange={() => onSelect(route.id)} /></td>
-              <td><span className="adminx-client-dot" />{route.clientEmail}</td>
-              <td>{route.ocr ? <StatusPill tone="blue">OCR</StatusPill> : <StatusPill tone={route.mode === "test" ? "yellow" : "green"}>{route.mode}</StatusPill>}</td>
-              <td>{triggerLabel(route)}</td>
-              <td><button className="adminx-link-cell" type="button" onClick={() => onOpen(route)}>{route.messages.join(" | ") || "Sem mensagem"}</button></td>
-              <td><StatusPill tone={route.lastReactionState?.status === "removed" ? "yellow" : route.reactions.length ? "green" : "muted"}>{reactionFinalLabel(route)}</StatusPill></td>
-              <td>{route.confirmedCount}/{route.totalCount} - {route.status}</td>
-              <td>{formatShort(route.createdAt)}</td>
-              <td>
+              <td data-label="Selecionar"><input type="checkbox" checked={selectedRoutes.includes(route.id)} onChange={() => onSelect(route.id)} /></td>
+              <td data-label="Cliente"><span className="adminx-client-dot" />{route.clientEmail}</td>
+              <td data-label="Modo">{route.ocr ? <StatusPill tone="blue">OCR</StatusPill> : <StatusPill tone={route.mode === "test" ? "yellow" : "green"}>{route.mode}</StatusPill>}</td>
+              <td data-label="Trigger">{triggerLabel(route)}</td>
+              <td data-label="Mensagens"><button className="adminx-link-cell" type="button" onClick={() => onOpen(route)}>{route.messages.join(" | ") || "Sem mensagem"}</button></td>
+              <td data-label="Reação final"><StatusPill tone={route.lastReactionState?.status === "removed" ? "yellow" : route.reactions.length ? "green" : "muted"}>{reactionFinalLabel(route)}</StatusPill></td>
+              <td data-label="Envio">{route.confirmedCount}/{route.totalCount} - {route.status}</td>
+              <td data-label="Data">{formatShort(route.createdAt)}</td>
+              <td data-label="Ações">
                 <div className="adminx-row-actions">
+                  <button className="button" type="button" onClick={() => onOpen(route)}>Ver</button>
                   <button className="button primary" type="button" onClick={() => onValidate(route.id)}>Validar</button>
                   <button className="button danger" type="button" onClick={() => onReject(route.id)}>Rejeitar</button>
                 </div>
@@ -982,14 +983,14 @@ function ClientsTable({
         <tbody>
           {users.map((user) => (
             <tr key={user.email} style={colorStyle(user.color)}>
-              <td><span className="adminx-client-dot" />{user.email}</td>
-              <td>{user.role}</td>
-              <td><StatusPill tone={user.blocked ? "red" : user.presenceStatus === "online" ? "green" : user.presenceStatus === "recent" ? "yellow" : "muted"}>{user.blocked ? "bloqueado" : user.presenceStatus}</StatusPill></td>
-              <td>{user.botStatus || "fechado"}</td>
-              <td>{user.monitoringEnabled ? <StatusPill tone="green">ativo</StatusPill> : <StatusPill tone="muted">parado</StatusPill>}</td>
-              <td>{formatShort(user.lastSeenAt)}</td>
-              <td>{formatDuration(user.totalUsageMs)}</td>
-              <td>
+              <td data-label="Usuário"><span className="adminx-client-dot" />{user.email}</td>
+              <td data-label="Role">{user.role}</td>
+              <td data-label="Painel"><StatusPill tone={user.blocked ? "red" : user.presenceStatus === "online" ? "green" : user.presenceStatus === "recent" ? "yellow" : "muted"}>{user.blocked ? "bloqueado" : user.presenceStatus}</StatusPill></td>
+              <td data-label="Bot">{user.botStatus || "fechado"}</td>
+              <td data-label="Monitoramento">{user.monitoringEnabled ? <StatusPill tone="green">ativo</StatusPill> : <StatusPill tone="muted">parado</StatusPill>}</td>
+              <td data-label="Último visto">{formatShort(user.lastSeenAt)}</td>
+              <td data-label="Uso">{formatDuration(user.totalUsageMs)}</td>
+              <td data-label="Ações">
                 <div className="adminx-row-actions">
                   <button className="button" type="button" onClick={() => onOpen(user.email)}>Detalhes</button>
                   <button className="button" type="button" onClick={() => onEdit(user)}>Editar</button>
@@ -1068,14 +1069,14 @@ function ReportTable({ clients, routes }: { clients: AdminUserSummary[]; routes:
         <tbody>
           {rows.map((row) => (
             <tr key={row.client.email} style={colorStyle(row.client.color)}>
-              <td><span className="adminx-client-dot" />{row.client.email}</td>
-              <td>{row.clientRoutes.length}</td>
-              <td>{row.valid}</td>
-              <td>{row.pending}</td>
-              <td>{row.rejected}</td>
-              <td>{row.leader}</td>
-              <td>{row.rate}%</td>
-              <td>{formatShort(row.clientRoutes[0]?.createdAt)}</td>
+              <td data-label="Cliente"><span className="adminx-client-dot" />{row.client.email}</td>
+              <td data-label="Total">{row.clientRoutes.length}</td>
+              <td data-label="Validadas">{row.valid}</td>
+              <td data-label="Pendentes">{row.pending}</td>
+              <td data-label="Rejeitadas">{row.rejected}</td>
+              <td data-label="Reações líder">{row.leader}</td>
+              <td data-label="Taxa">{row.rate}%</td>
+              <td data-label="Último disparo">{formatShort(row.clientRoutes[0]?.createdAt)}</td>
             </tr>
           ))}
         </tbody>
