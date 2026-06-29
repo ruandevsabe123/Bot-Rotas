@@ -85,6 +85,13 @@ export type BotTestStatus = {
   intervalMs: number;
 };
 
+export type BotStatusEvent = {
+  id: string;
+  timestamp: string;
+  type: "connected" | "disconnected" | "reconnecting" | "armed" | "disarmed" | "dispatch" | "error";
+  message: string;
+};
+
 export type BotSnapshot = {
   status: BotStatus;
   groupState: BotGroupState;
@@ -103,6 +110,7 @@ export type BotSnapshot = {
   testStatus?: BotTestStatus;
   performanceMetrics?: BotPerformanceMetrics;
   routeDispatches?: RouteDispatch[];
+  statusEvents?: BotStatusEvent[];
 };
 
 export type PanelUserRole = "client" | "admin";
@@ -152,6 +160,7 @@ export type AdminUserDetail = AdminUserSummary & {
   logs: BotLog[];
   routes: RouteDispatch[];
   loginHistory: LoginEvent[];
+  statusEvents?: BotStatusEvent[];
 };
 
 export type AdminUsersSnapshot = {
@@ -216,6 +225,17 @@ export type RouteOcrInsight = {
   code?: string;
   confidence?: number;
   processedAt: string;
+  imagePreviewUrl?: string;
+};
+
+export type RouteClientIncident = {
+  required: boolean;
+  kind: "leader_reaction_removed" | "message_deleted";
+  createdAt: string;
+  message: string;
+  answeredAt?: string;
+  valid?: boolean;
+  reason?: string;
 };
 
 export type RouteDispatch = {
@@ -244,6 +264,8 @@ export type RouteDispatch = {
   reactionsHistory?: RouteReactionHistoryEvent[];
   lastReactionState?: RouteReactionFinalState;
   ocr?: RouteOcrInsight;
+  clientIncident?: RouteClientIncident;
+  deletedMessageIds?: string[];
 };
 
 export type AdminRoutesSnapshot = {
@@ -335,5 +357,6 @@ export type DesktopApi = {
   saveWarmupMessageSettings: (payload: SaveWarmupMessageSettingsPayload) => Promise<BotSnapshot>;
   saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) => Promise<BotSnapshot>;
   saveGeneralSettings: (payload: GeneralSettingsPayload) => Promise<BotSnapshot>;
+  submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) => Promise<BotSnapshot>;
   onSnapshot: (callback: (snapshot: BotSnapshot) => void) => () => void;
 };

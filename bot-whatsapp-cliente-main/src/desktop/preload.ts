@@ -37,6 +37,8 @@ const api: DesktopApi = {
   saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) =>
     ipcRenderer.invoke("bot:saveTargetMessageSettings", payload),
   saveGeneralSettings: (payload: GeneralSettingsPayload) => ipcRenderer.invoke("bot:saveGeneralSettings", payload),
+  submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) =>
+    ipcRenderer.invoke("bot:submitRouteIncident", payload),
   onSnapshot: (callback: (snapshot: BotSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: BotSnapshot) => callback(snapshot);
     ipcRenderer.on("bot:snapshot", listener);

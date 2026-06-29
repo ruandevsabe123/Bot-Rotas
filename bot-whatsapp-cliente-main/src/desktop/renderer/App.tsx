@@ -2273,6 +2273,8 @@ export default function App() {
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
   const [actionToast, setActionToast] = useState("");
+  const [incidentValid, setIncidentValid] = useState(true);
+  const [incidentReason, setIncidentReason] = useState("");
   const connectionSectionRef = useRef<HTMLElement | null>(null);
 
   function showActionToast(message: string) {
@@ -2369,6 +2371,17 @@ export default function App() {
   const testGroupLabel = useMemo(() => {
     return snapshot.config.grupoTesteNome || "Nenhum teste salvo";
   }, [snapshot.config]);
+
+  const pendingClientIncident = useMemo(() => {
+    return (snapshot.routeDispatches || []).find((route) => route.clientIncident?.required && !route.clientIncident.answeredAt);
+  }, [snapshot.routeDispatches]);
+
+  useEffect(() => {
+    if (!pendingClientIncident) {
+      setIncidentReason("");
+      setIncidentValid(true);
+    }
+  }, [pendingClientIncident?.id]);
 
   useEffect(() => {
     const lastLog = snapshot.logs[snapshot.logs.length - 1];
@@ -2685,6 +2698,16 @@ export default function App() {
     }));
   }
 
+  async function submitIncidentAnswer() {
+    if (!pendingClientIncident || !incidentReason.trim()) return;
+    await runAction(() => botApi.submitRouteIncident({
+      routeId: pendingClientIncident.id,
+      valid: incidentValid,
+      reason: incidentReason.trim()
+    }));
+    setIncidentReason("");
+  }
+
   async function confirmPendingAction() {
     if (!confirmation) return;
     const action = confirmation.onConfirm;
@@ -2984,6 +3007,42 @@ export default function App() {
               </button>
               <button className="button primary" disabled={busy} type="button" onClick={confirmPendingAction}>
                 {confirmation.confirmLabel}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {pendingClientIncident ? (
+        <div className="modal-backdrop incident-lock-backdrop" role="presentation">
+          <section className="confirmation-dialog incident-lock-dialog" role="dialog" aria-modal="true" aria-labelledby="incident-lock-title">
+            <p className="panel-label">Ação obrigatória</p>
+            <h2 id="incident-lock-title">Explique o que aconteceu</h2>
+            <p className="confirmation-message">
+              {pendingClientIncident.clientIncident?.message || "O admin precisa de uma explicação para liberar o bot."}
+            </p>
+            <div className="confirmation-details">
+              <span>Grupo: {pendingClientIncident.groupName || pendingClientIncident.groupJid}</span>
+              <span>Mensagem: {pendingClientIncident.messages.join(" | ") || "Sem mensagem registrada"}</span>
+              <span>Evento: {pendingClientIncident.clientIncident?.kind === "message_deleted" ? "Mensagem apagada" : "Líder reagiu e removeu"}</span>
+            </div>
+            <div className="incident-choice">
+              <button className={incidentValid ? "button primary" : "button"} type="button" onClick={() => setIncidentValid(true)}>
+                Rota válida
+              </button>
+              <button className={!incidentValid ? "button danger" : "button"} type="button" onClick={() => setIncidentValid(false)}>
+                Rota não válida
+              </button>
+            </div>
+            <textarea
+              className="incident-textarea"
+              autoFocus
+              value={incidentReason}
+              onChange={(event) => setIncidentReason(event.target.value)}
+              placeholder="Descreva o motivo: por que a reação foi removida ou por que a mensagem foi apagada?"
+            />
+            <div className="confirmation-actions">
+              <button className="button primary" disabled={busy || incidentReason.trim().length < 8} type="button" onClick={submitIncidentAnswer}>
+                Enviar explicação e liberar bot
               </button>
             </div>
           </section>

@@ -10,7 +10,7 @@ import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { findConfiguredRouteCodeFromOcr, readRouteImageOcr } from "./ocr";
 import { RouteStore } from "./routeStore";
-import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotTestStatus, RouteDispatch, RouteOcrInsight, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, RouteDispatch, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -98,6 +98,14 @@ const DEFAULT_LEADER_CONTACTS = [
   { name: "Renato Balbino", phone: "5522998677384" }
 ];
 
+function triggerLabelForEvent(trigger: RouteDispatch["trigger"]) {
+  if (trigger === "manual") return "Disparo manual";
+  if (trigger === "warmup") return "Aquecimento";
+  if (trigger === "target-simulation") return "Simulação do alvo";
+  if (trigger === "simulation") return "Simulação de abertura";
+  return "Disparo automático";
+}
+
 export class BotService extends EventEmitter {
   private sock: any;
   private status: BotStatus = "disconnected";
@@ -160,6 +168,8 @@ export class BotService extends EventEmitter {
   private routeStore: RouteStore;
   private logger: BotLogger;
   private authDir: string;
+  private statusEventsPath: string;
+  private statusEvents: BotStatusEvent[] = [];
   private clientEmail = "";
   private adminPhoneNumbers = new Set<string>();
   private leaderContacts = new Map<string, string>();
@@ -181,6 +191,8 @@ export class BotService extends EventEmitter {
     this.configStore = new ConfigStore(options.configPath);
     this.routeStore = new RouteStore(options.routeStorePath || path.resolve(process.cwd(), "route_history.json"));
     this.logger = new BotLogger(() => this.emitSnapshot(), options.logStorePath || path.resolve(process.cwd(), "bot_logs.json"));
+    this.statusEventsPath = path.join(path.dirname(options.routeStorePath || path.resolve(process.cwd(), "route_history.json")), "status_events.json");
+    this.statusEvents = this.loadStatusEvents();
     this.clientEmail = options.clientEmail || "";
     this.leaderContacts = new Map(DEFAULT_LEADER_CONTACTS.map((item) => [this.normalizePhone(item.phone), item.name]));
     this.adminPhoneNumbers = new Set([
@@ -220,7 +232,8 @@ export class BotService extends EventEmitter {
         lastKeepAliveDurationMs: this.lastKeepAliveDurationMs,
         keepAliveCount: this.keepAliveCount
       },
-      routeDispatches: this.getRoutes()
+      routeDispatches: this.getRoutes(),
+      statusEvents: this.statusEvents
     };
   }
 
@@ -276,6 +289,27 @@ export class BotService extends EventEmitter {
     if (changed) this.emitSnapshot();
     return changed;
   }
+
+  hasPendingClientIncident() {
+    return this.getPendingClientIncidentRoutes().length > 0;
+  }
+
+  getPendingClientIncidentRoutes() {
+    return this.getRoutes().filter((route) => route.clientIncident?.required && !route.clientIncident.answeredAt);
+  }
+
+  submitClientIncident(routeId: string, valid: boolean, reason: string) {
+    if (!reason.trim()) {
+      this.logger.warning("Informe o motivo antes de liberar o bot.");
+      return false;
+    }
+    const changed = this.routeStore.answerClientIncident(routeId, { valid, reason });
+    if (changed) {
+      this.logger.success(`Cliente respondeu incidente da rota: ${valid ? "rota válida" : "rota não válida"} - ${reason.trim()}`);
+      this.emitSnapshot();
+    }
+    return changed;
+  }
   isMonitoringEnabled(): boolean {
     return this.monitoringEnabled;
   }
@@ -322,6 +356,7 @@ export class BotService extends EventEmitter {
     await this.captureInitialGroupState();
     this.monitoringEnabled = true;
     this.armedAt = Date.now();
+    this.addStatusEvent("armed", `Bot armado em modo ${modeLabel}.`);
     this.startHealthCheck();
     this.startWarmKeepAlive();
     this.logger.success(targetDispatchMode === "ocr" ? "✅ BOT IMAGEM ARMADO. Aguardando foto da rota..." : useNuclearMode ? "✅ Bot NUCLEAR ARMADO. Aguardando abertura do grupo..." : "✅ Bot MANUAL ARMADO. Aguardando abertura do grupo...");
@@ -371,6 +406,7 @@ export class BotService extends EventEmitter {
     await this.captureInitialGroupState();
     this.monitoringEnabled = true;
     this.armedAt = Date.now();
+    this.addStatusEvent("armed", "Bot de teste armado.");
     this.startHealthCheck();
     this.startWarmKeepAlive();
     this.logger.success("✅ TESTE ARMADO - O grupo de teste será ouvido como grupo real.");
@@ -402,6 +438,7 @@ export class BotService extends EventEmitter {
     this.clearHealthCheckTimer();
     this.clearWarmKeepAliveTimer();
     this.logger.info("⏹️ Monitoramento desativado (Parou de escutar aberturas).");
+    this.addStatusEvent("disarmed", "Monitoramento desativado pelo painel.");
     this.emitSnapshot();
   }
 
@@ -1085,6 +1122,7 @@ export class BotService extends EventEmitter {
       this.pairingCode = "";
       this.pairingCodeRequested = false;
       this.setStatus("connected");
+      this.addStatusEvent("connected", "WhatsApp conectado.");
       this.logger.success("WhatsApp conectado.");
 
       try {
@@ -1114,6 +1152,7 @@ export class BotService extends EventEmitter {
       const errorMessage = this.getErrorMessage(lastDisconnect?.error);
       const disconnectDescription = this.getDisconnectDescription(statusCode, errorMessage);
       this.logger.warning(`Conexão fechada. Código: ${statusCode || "sem código"} | Erro: ${errorMessage}`);
+      this.addStatusEvent("disconnected", `Conexão fechada: ${statusCode || "sem código"} ${errorMessage}`);
       console.log("WA CLOSE DEBUG:", {
         statusCode,
         errorMessage,
@@ -1301,7 +1340,8 @@ export class BotService extends EventEmitter {
     }
 
     this.reconnectAttempts += 1;
-    this.setStatus("reconnecting");
+      this.setStatus("reconnecting");
+      this.addStatusEvent("reconnecting", `Tentativa de reconexão ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}.`);
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch((error) => {
         this.error = this.getErrorMessage(error);
@@ -1371,6 +1411,8 @@ export class BotService extends EventEmitter {
     for (const msg of messages || []) {
       if (!msg?.message || !msg.key?.remoteJid) continue;
       if (msg.key.remoteJid !== activeGroup.jid) continue;
+
+      this.handleDeletedMessageNotice(msg);
 
       if (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && msg.message.imageMessage) {
         this.scheduleRouteImageProcessing(msg, activeGroup.jid);
@@ -1499,7 +1541,8 @@ export class BotService extends EventEmitter {
         bairro: detected.bairro,
         code: detected.code,
         confidence: ocr.lines.length ? Math.round(ocr.lines.reduce((total, line) => total + line.confidence, 0) / ocr.lines.length) : undefined,
-        processedAt: new Date().toISOString()
+        processedAt: new Date().toISOString(),
+        imagePreviewUrl: await this.createOcrPreviewDataUrl(imagePath)
       };
       this.pendingOcrMessages = [message];
       this.preparedTargetJid = groupJid;
@@ -1567,8 +1610,32 @@ export class BotService extends EventEmitter {
             ? `Reação do líder ${routeReaction.leaderName || senderPhone} foi encontrada. Aguardando validação manual do admin.`
             : `Reação recebida em rota enviada (${senderPhone || "remetente desconhecido"}). IDs: ${senderIdentifiers.join(" / ") || "nenhum"}`
         );
+        if (action === "remove" && routeReaction.isAdmin) {
+          this.routeStore.requireClientIncident(String(reactedMessageId), {
+            kind: "leader_reaction_removed",
+            message: `O líder ${routeReaction.leaderName || senderPhone || "identificado"} reagiu e removeu a reação. Explique se a rota foi válida ou não para liberar o bot.`
+          });
+          this.logger.warning("Bot bloqueado para o cliente até explicar a reação removida pelo líder.");
+        }
         this.emitSnapshot();
       }
+    }
+  }
+
+  private handleDeletedMessageNotice(msg: any) {
+    const protocol = msg?.message?.protocolMessage;
+    const deletedMessageId = String(protocol?.key?.id || protocol?.messageKey?.id || "");
+    if (!protocol || !deletedMessageId) return;
+    const type = String(protocol?.type ?? protocol?.protocolMessageType ?? "").toLowerCase();
+    const looksLikeDelete = type === "0" || type.includes("revoke") || type.includes("delete");
+    if (!looksLikeDelete) return;
+    if (this.routeStore.recordDeletedMessage(deletedMessageId)) {
+      this.routeStore.requireClientIncident(deletedMessageId, {
+        kind: "message_deleted",
+        message: "Uma mensagem enviada pelo bot foi apagada no WhatsApp. Explique o que aconteceu para liberar o bot."
+      });
+      this.logger.warning("Mensagem enviada pelo bot foi apagada. Bot bloqueado até o cliente explicar o ocorrido.");
+      this.emitSnapshot();
     }
   }
 
@@ -1958,6 +2025,7 @@ export class BotService extends EventEmitter {
       this.updateRouteDispatch(cycleId, confirmed, mensagens.length);
       this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed, total: mensagens.length });
       this.emitSnapshot();
+      this.addStatusEvent("dispatch", `${triggerLabelForEvent(trigger)} finalizado: ${confirmed}/${mensagens.length}.`);
       this.stopMonitoringAfterTargetDispatch(cycleId);
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo agressivo: ${this.getErrorMessage(error)}`);
@@ -2520,6 +2588,58 @@ export class BotService extends EventEmitter {
   private setStatus(status: BotStatus) {
     this.status = status;
     this.emitSnapshot();
+  }
+
+  private async createOcrPreviewDataUrl(imagePath: string) {
+    try {
+      const { default: sharp } = await import("sharp");
+      const buffer = await sharp(imagePath)
+        .rotate()
+        .resize({ width: 420, withoutEnlargement: true })
+        .webp({ quality: 58 })
+        .toBuffer();
+      return `data:image/webp;base64,${buffer.toString("base64")}`;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private addStatusEvent(type: BotStatusEvent["type"], message: string) {
+    const event: BotStatusEvent = {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      timestamp: new Date().toISOString(),
+      type,
+      message
+    };
+    this.statusEvents = [event, ...this.statusEvents].slice(0, 300);
+    this.saveStatusEvents();
+    this.emitSnapshot();
+  }
+
+  private loadStatusEvents() {
+    try {
+      if (!fs.existsSync(this.statusEventsPath)) return [];
+      const data = JSON.parse(fs.readFileSync(this.statusEventsPath, "utf-8"));
+      return Array.isArray(data)
+        ? data.map((item: any) => ({
+            id: typeof item.id === "string" ? item.id : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            timestamp: typeof item.timestamp === "string" ? item.timestamp : new Date().toISOString(),
+            type: ["connected", "disconnected", "reconnecting", "armed", "disarmed", "dispatch", "error"].includes(item.type) ? item.type : "error",
+            message: typeof item.message === "string" ? item.message : ""
+          })).filter((item: BotStatusEvent) => item.message).slice(0, 300)
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private saveStatusEvents() {
+    try {
+      fs.mkdirSync(path.dirname(this.statusEventsPath), { recursive: true });
+      fs.writeFileSync(this.statusEventsPath, JSON.stringify(this.statusEvents, null, 2));
+    } catch {
+      // Status timeline is diagnostic; do not interrupt the bot.
+    }
   }
 
   private emitSnapshot() {

@@ -197,6 +197,10 @@ function registerIpc() {
     bot.setGeneralSettings(payload);
     return bot.getSnapshot();
   });
+  ipcMain.handle("bot:submitRouteIncident", async (_event, payload: { routeId: string; valid: boolean; reason: string }) => {
+    bot.submitClientIncident(payload.routeId, payload.valid, payload.reason);
+    return bot.getSnapshot();
+  });
 }
 
 app.whenReady().then(() => {

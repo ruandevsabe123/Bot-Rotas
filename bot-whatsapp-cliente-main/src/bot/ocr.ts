@@ -202,15 +202,22 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
 
   for (const route of normalizedDetailedRoutes) {
     for (const line of usefulLines) {
-      if (line.confidence < 45) continue;
+      if (line.confidence < 35) continue;
       const columns = splitLineIntoRouteColumns(line, layout);
       const normalizedCityColumn = normalizeOcrText(columns.city);
       const normalizedDistrictColumn = normalizeOcrText(columns.district);
+      const normalizedLine = normalizeOcrText(line.text);
       if (!normalizedDistrictColumn) continue;
-      if (route.normalizedCity && (!normalizedCityColumn || !matchesConfiguredText(normalizedCityColumn, route.normalizedCity))) continue;
-      if (!matchesConfiguredText(normalizedDistrictColumn, route.normalizedDistrict)) continue;
+      const cityMatches = !route.normalizedCity ||
+        matchesConfiguredText(normalizedCityColumn, route.normalizedCity) ||
+        matchesConfiguredText(normalizedLine, route.normalizedCity);
+      const districtMatches =
+        matchesConfiguredText(normalizedDistrictColumn, route.normalizedDistrict) ||
+        matchesConfiguredText(normalizedLine, route.normalizedDistrict) ||
+        looselyMatchesRoute(normalizedLine, route.normalizedDistrict);
+      if (!cityMatches || !districtMatches) continue;
 
-      const code = extractSafeGaiolaCode(line, columns.code);
+      const code = extractSafeGaiolaCode(line, columns.code) || extractSafeGaiolaCode(line);
       if (!code) continue;
 
       return {
@@ -279,22 +286,28 @@ function splitLineIntoRouteColumns(line: OcrLine, layout: { left: number; width:
 
 function matchesConfiguredText(line: string, expected: string) {
   if (line.includes(expected)) return true;
-  const expectedWords = expected.split(/\s+/).filter((word) => word.length > 1);
+  const stopWords = new Set(["de", "da", "do", "das", "dos", "e"]);
+  const expectedWords = expected.split(/\s+/).filter((word) => word.length > 1 && !stopWords.has(word));
   if (!expectedWords.length) return false;
   const lineWords = line.split(/\s+/).filter(Boolean);
   let cursor = 0;
+  let matched = 0;
 
   for (const expectedWord of expectedWords) {
     const foundIndex = lineWords.findIndex((word, index) => index >= cursor && (
       word === expectedWord ||
       (expectedWord.length >= 4 && word.includes(expectedWord)) ||
-      (word.length >= 4 && expectedWord.includes(word))
+      (word.length >= 4 && expectedWord.includes(word)) ||
+      (expectedWord.length >= 4 && levenshteinDistance(word, expectedWord) <= Math.max(1, Math.ceil(expectedWord.length * 0.28)))
     ));
-    if (foundIndex < 0) return false;
-    cursor = foundIndex + 1;
+    if (foundIndex >= 0) {
+      matched += 1;
+      cursor = foundIndex + 1;
+    }
   }
 
-  return true;
+  if (expectedWords.length <= 2) return matched === expectedWords.length;
+  return matched >= Math.max(2, Math.ceil(expectedWords.length * 0.66));
 }
 
 function parseTsvLines(tsv: string): OcrLine[] {

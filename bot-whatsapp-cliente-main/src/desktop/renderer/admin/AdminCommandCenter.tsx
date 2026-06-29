@@ -56,7 +56,7 @@ type AdminCommandCenterProps = {
   onLogout: () => void;
 };
 
-type AdminPage = "dashboard" | "clients" | "validations" | "history" | "logs" | "support" | "reports" | "maintenance";
+type AdminPage = "today" | "dashboard" | "clients" | "validations" | "history" | "logs" | "support" | "reports" | "maintenance";
 type DatePreset = "today" | "7d" | "30d" | "all";
 type DecisionFilter = "all" | "pending" | "validated" | "rejected" | "leader" | "removed";
 type ModeFilter = "all" | "target" | "test" | "manual" | "ocr" | "warmup" | "simulation";
@@ -70,6 +70,11 @@ type UserEditorState = {
   role: PanelUserRole;
   blocked: boolean;
   color: string;
+};
+
+type RejectRequest = {
+  routeIds: string[];
+  title: string;
 };
 
 const emptyRoutes: AdminRoutesSnapshot = {
@@ -127,6 +132,14 @@ function reactionFinalLabel(route: RouteDispatch) {
   if (route.lastReactionState?.status === "active") return "Reagiu e manteve";
   if (route.reactions.length) return "Reagiu e manteve";
   return "Sem reação";
+}
+
+function incidentLabel(route: RouteDispatch) {
+  if (!route.clientIncident) return "Sem incidente";
+  if (route.clientIncident.answeredAt) {
+    return `${route.clientIncident.valid ? "Cliente marcou válida" : "Cliente marcou não válida"} - ${route.clientIncident.reason || "sem motivo"}`;
+  }
+  return "Aguardando explicação do cliente";
 }
 
 function hasLeaderReaction(route: RouteDispatch) {
@@ -267,6 +280,7 @@ function RouteSidePanel({
         {route.ocr ? (
           <section className="adminx-detail-section">
             <h3>OCR imagem</h3>
+            {route.ocr.imagePreviewUrl ? <img className="adminx-ocr-preview" src={route.ocr.imagePreviewUrl} alt="Prévia da imagem processada pelo OCR" /> : null}
             <dl className="adminx-kv">
               <dt>Rota</dt><dd>{route.ocr.route || route.ocr.bairro || "Não registrada"}</dd>
               <dt>Código</dt><dd>{route.ocr.code || "Não registrado"}</dd>
@@ -275,6 +289,19 @@ function RouteSidePanel({
               <dt>Linha</dt><dd>{route.ocr.line || "Sem linha"}</dd>
             </dl>
             {route.ocr.text ? <pre className="adminx-ocr-text">{route.ocr.text}</pre> : null}
+          </section>
+        ) : null}
+        {route.clientIncident ? (
+          <section className="adminx-detail-section">
+            <h3>Explicação obrigatória do cliente</h3>
+            <dl className="adminx-kv">
+              <dt>Status</dt><dd>{route.clientIncident.answeredAt ? "Respondido" : "Aguardando cliente"}</dd>
+              <dt>Tipo</dt><dd>{route.clientIncident.kind === "message_deleted" ? "Mensagem apagada" : "Reação removida pelo líder"}</dd>
+              <dt>Rota válida?</dt><dd>{route.clientIncident.valid === undefined ? "Sem resposta" : route.clientIncident.valid ? "Sim" : "Não"}</dd>
+              <dt>Motivo</dt><dd>{route.clientIncident.reason || "Sem motivo informado"}</dd>
+              <dt>Criado</dt><dd>{formatDate(route.clientIncident.createdAt)}</dd>
+              <dt>Respondido</dt><dd>{formatDate(route.clientIncident.answeredAt)}</dd>
+            </dl>
           </section>
         ) : null}
         <section className="adminx-detail-section">
@@ -366,6 +393,17 @@ function ClientSidePanel({
             ))}
           </div>
         </section>
+        <section className="adminx-detail-section">
+          <h3>Histórico de status do bot</h3>
+          <div className="adminx-log-stack">
+            {(detail.statusEvents || []).slice(0, 40).map((event) => (
+              <span className={`adminx-status-event adminx-status-${event.type}`} key={event.id}>
+                {formatDate(event.timestamp)} - {event.type}: {event.message}
+              </span>
+            ))}
+            {!detail.statusEvents?.length ? <span>Nenhum evento de status registrado.</span> : null}
+          </div>
+        </section>
       </aside>
     </div>
   );
@@ -392,6 +430,8 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const [clientDetail, setClientDetail] = useState<AdminUserDetail>();
   const [selectedRoutes, setSelectedRoutes] = useState<string[]>([]);
   const [cleanupTarget, setCleanupTarget] = useState<CleanupTarget>();
+  const [rejectRequest, setRejectRequest] = useState<RejectRequest>();
+  const [rejectReason, setRejectReason] = useState("Sem reação válida");
 
   function showToast(message: string) {
     setToast(message);
@@ -489,6 +529,25 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const pendingRoutes = visibleRoutes.filter((route) => routeDecision(route) === "pending");
   const leaderPending = pendingRoutes.filter(hasLeaderReaction);
   const removedReactionRoutes = visibleRoutes.filter((route) => route.lastReactionState?.status === "removed");
+  const todayRange = dateRangeMs("today");
+  const todayRoutes = routes.routes.filter((route) => {
+    const created = new Date(route.createdAt).getTime();
+    return created >= todayRange.start && created <= todayRange.end;
+  });
+  const staleClients = clients.filter((client) => {
+    if (client.presenceStatus === "online" || client.blocked) return false;
+    const lastSeen = client.lastSeenAt ? new Date(client.lastSeenAt).getTime() : 0;
+    return !lastSeen || Date.now() - lastSeen > 1000 * 60 * 60 * 6;
+  });
+  const armedLongRoutes = clients.filter((client) => (client.performanceMetrics?.armedIdleMs || 0) > 1000 * 60 * 30 && client.monitoringEnabled);
+  const notAcceptableLogs = logs.filter((log) => /not-acceptable/i.test(log.message));
+  const smartAlerts = [
+    ...removedReactionRoutes.slice(0, 8).map((route) => ({ id: `removed-${route.id}`, tone: "yellow" as const, title: "Reação removida", detail: `${route.clientEmail} - ${route.groupName || route.groupJid}` })),
+    ...staleClients.slice(0, 8).map((client) => ({ id: `stale-${client.email}`, tone: "blue" as const, title: "Cliente sem conectar", detail: `${client.email} - último visto ${formatShort(client.lastSeenAt)}` })),
+    ...armedLongRoutes.slice(0, 8).map((client) => ({ id: `armed-${client.email}`, tone: "yellow" as const, title: "Bot armado há muito tempo", detail: `${client.email} - ${formatDuration(client.performanceMetrics?.armedIdleMs || 0)}` })),
+    ...notAcceptableLogs.slice(0, 8).map((log) => ({ id: `na-${log.clientEmail}-${log.id}`, tone: "red" as const, title: "Falha not-acceptable", detail: `${log.clientEmail} - ${log.message}` })),
+    ...support.messages.filter((message) => !message.read).slice(0, 8).map((message) => ({ id: `support-${message.id}`, tone: "red" as const, title: "Suporte não lido", detail: `${message.email} - ${message.message}` }))
+  ].slice(0, 18);
   const onlineClients = clients.filter((client) => client.presenceStatus === "online").length;
   const connectedBots = clients.filter((client) => ["connected", "connecting", "waiting_qr", "reconnecting"].includes(client.botStatus || "")).length;
   const activeBots = clients.filter((client) => client.monitoringEnabled).length;
@@ -543,10 +602,41 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     }
   }
 
+  function requestReject(routeIds: string[], title = "Rejeitar rota") {
+    setRejectRequest({ routeIds, title });
+    setRejectReason("Sem reação válida");
+  }
+
+  async function confirmReject() {
+    if (!rejectRequest) return;
+    if (rejectRequest.routeIds.length === 1) {
+      await decideRoute(rejectRequest.routeIds[0], "reject", rejectReason);
+    } else {
+      setBusy(true);
+      try {
+        const nextRoutes = await bulkDecideAdminRoutes({ routeIds: rejectRequest.routeIds, decision: "reject", reason: rejectReason });
+        setRoutes(nextRoutes);
+        setSelectedRoutes([]);
+        showToast(`${nextRoutes.changed} rota(s) rejeitada(s).`);
+        refresh();
+      } catch (nextError) {
+        setError(nextError instanceof Error ? nextError.message : "Ação em lote falhou.");
+      } finally {
+        setBusy(false);
+      }
+    }
+    setRejectRequest(undefined);
+  }
+
   async function decideSelected(decision: "validate" | "reject") {
     if (!selectedRoutes.length) return;
     setBusy(true);
     try {
+      if (decision === "reject") {
+        setBusy(false);
+        requestReject(selectedRoutes, "Rejeitar rotas selecionadas");
+        return;
+      }
       const nextRoutes = await bulkDecideAdminRoutes({ routeIds: selectedRoutes, decision });
       setRoutes(nextRoutes);
       setSelectedRoutes([]);
@@ -622,6 +712,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   }
 
   const pages: Array<{ id: AdminPage; label: string; Icon: typeof Activity; badge?: number }> = [
+    { id: "today", label: "Hoje", Icon: Clock3, badge: todayRoutes.length },
     { id: "dashboard", label: "Dashboard", Icon: Gauge },
     { id: "clients", label: "Clientes", Icon: Users, badge: onlineClients },
     { id: "validations", label: "Validações", Icon: ShieldCheck, badge: pendingRoutes.length },
@@ -687,6 +778,62 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
 
         {error ? <div className="adminx-error"><AlertTriangle size={18} />{error}</div> : null}
 
+        {page === "today" ? (
+          <section className="adminx-page">
+            <div className="adminx-metrics">
+              <MetricCard Icon={History} tone="blue" title="Rotas hoje" value={todayRoutes.length} detail={`${todayRoutes.filter((route) => routeDecision(route) === "validated").length} validadas`} />
+              <MetricCard Icon={ShieldCheck} tone="yellow" title="Pendentes" value={todayRoutes.filter((route) => routeDecision(route) === "pending").length} detail={`${todayRoutes.filter(hasLeaderReaction).length} com líder`} />
+              <MetricCard Icon={Users} tone="green" title="Clientes online" value={onlineClients} detail={`${activeBots} monitorando`} />
+              <MetricCard Icon={Inbox} tone="red" title="Suporte" value={support.unread} detail="não lidas" />
+            </div>
+            <section className="adminx-dashboard-grid">
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Agora</p><h2>Alertas inteligentes</h2></div>
+                </div>
+                <div className="adminx-alert-list">
+                  {smartAlerts.map((alert) => (
+                    <article className={`adminx-alert-row adminx-alert-${alert.tone}`} key={alert.id}>
+                      <strong>{alert.title}</strong>
+                      <span>{alert.detail}</span>
+                    </article>
+                  ))}
+                  {!smartAlerts.length ? <p className="adminx-empty-text">Nenhum alerta importante agora.</p> : null}
+                </div>
+              </article>
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Hoje</p><h2>Rotas pendentes</h2></div>
+                  <button className="button" type="button" onClick={() => setPage("validations")}>Validar</button>
+                </div>
+                <RouteTable
+                  routes={todayRoutes.filter((route) => routeDecision(route) === "pending").slice(0, 8)}
+                  selectedRoutes={selectedRoutes}
+                  compact
+                  onSelect={toggleSelected}
+                  onOpen={setRouteDetail}
+                  onValidate={(id) => decideRoute(id, "validate")}
+                  onReject={(id) => requestReject([id])}
+                />
+              </article>
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Erros recentes</p><h2>{logs.filter((log) => log.level === "error").length} erro(s)</h2></div>
+                  <button className="button" type="button" onClick={() => setPage("logs")}>Logs</button>
+                </div>
+                <LogList logs={logs.filter((log) => log.level === "error").slice(0, 10)} />
+              </article>
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Suporte</p><h2>Mensagens não lidas</h2></div>
+                  <button className="button" type="button" onClick={() => setPage("support")}>Abrir</button>
+                </div>
+                <SupportList messages={support.messages.filter((message) => !message.read).slice(0, 5)} onRead={readSupport} />
+              </article>
+            </section>
+          </section>
+        ) : null}
+
         {page === "dashboard" ? (
           <section className="adminx-page">
             <div className="adminx-metrics">
@@ -704,7 +851,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
                   <div><p>Prioridade</p><h2>Fila de validação</h2></div>
                   <button className="button" type="button" onClick={() => setPage("validations")}>Abrir</button>
                 </div>
-                <RouteTable routes={pendingRoutes.slice(0, 6)} selectedRoutes={selectedRoutes} compact onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => decideRoute(id, "reject")} />
+                <RouteTable routes={pendingRoutes.slice(0, 6)} selectedRoutes={selectedRoutes} compact onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
               </article>
               <article className="adminx-panel">
                 <div className="adminx-panel-head">
@@ -761,7 +908,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
               <button className="button primary" disabled={!selectedRoutes.length || busy} type="button" onClick={() => decideSelected("validate")}>Validar lote</button>
               <button className="button danger" disabled={!selectedRoutes.length || busy} type="button" onClick={() => decideSelected("reject")}>Rejeitar lote</button>
             </div>
-            <RouteTable routes={pendingRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => decideRoute(id, "reject")} />
+            <RouteTable routes={pendingRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
           </section>
         ) : null}
 
@@ -772,7 +919,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
               <button className="button" type="button" onClick={() => exportRoutes("csv")}><Download size={18} />CSV</button>
               <button className="button" type="button" onClick={() => exportRoutes("json")}><FileJson size={18} />JSON</button>
             </div>
-            <RouteTable routes={visibleRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => decideRoute(id, "reject")} />
+            <RouteTable routes={visibleRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
           </section>
         ) : null}
 
@@ -851,7 +998,36 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
         ))}
       </nav>
 
-      {routeDetail ? <RouteSidePanel route={routeDetail} onClose={() => setRouteDetail(undefined)} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => decideRoute(id, "reject")} /> : null}
+      {rejectRequest ? (
+        <div className="modal-backdrop" role="presentation">
+          <section className="confirmation-dialog adminx-reject-dialog" role="dialog" aria-modal="true" aria-labelledby="adminx-reject-title">
+            <p className="panel-label">Motivo obrigatório</p>
+            <h2 id="adminx-reject-title">{rejectRequest.title}</h2>
+            <p className="confirmation-message">Escolha ou descreva o motivo para registrar auditoria da rejeição.</p>
+            <div className="incident-choice">
+              {["Duplicada", "Sem reação válida", "Erro de envio", "Rota não conferiu", "Outro"].map((reason) => (
+                <button className={rejectReason === reason ? "button primary" : "button"} key={reason} type="button" onClick={() => setRejectReason(reason)}>
+                  {reason}
+                </button>
+              ))}
+            </div>
+            <textarea
+              className="incident-textarea"
+              value={rejectReason}
+              onChange={(event) => setRejectReason(event.target.value)}
+              placeholder="Descreva o motivo da rejeição"
+            />
+            <div className="confirmation-actions">
+              <button className="button" disabled={busy} type="button" onClick={() => setRejectRequest(undefined)}>Cancelar</button>
+              <button className="button danger" disabled={busy || rejectReason.trim().length < 3} type="button" onClick={confirmReject}>
+                Rejeitar {rejectRequest.routeIds.length} rota(s)
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {routeDetail ? <RouteSidePanel route={routeDetail} onClose={() => setRouteDetail(undefined)} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} /> : null}
       {clientDetail ? <ClientSidePanel detail={clientDetail} busy={busy} onClose={() => setClientDetail(undefined)} onAction={runClientAction} /> : null}
       {toast ? <div className="action-toast">{toast}</div> : null}
     </main>

@@ -4123,6 +4123,95 @@ h2 {
   background: #07090c;
 }
 
+.adminx-ocr-preview {
+  width: 100%;
+  max-height: 240px;
+  object-fit: contain;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: #07090c;
+}
+
+.adminx-alert-list {
+  display: grid;
+  gap: 8px;
+}
+
+.adminx-alert-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: #0b0f14;
+}
+
+.adminx-alert-row strong {
+  color: #f8fafc;
+}
+
+.adminx-alert-row span {
+  color: #94a3b8;
+}
+
+.adminx-alert-yellow {
+  border-left: 3px solid #f59e0b;
+}
+
+.adminx-alert-red {
+  border-left: 3px solid #ef4444;
+}
+
+.adminx-alert-blue {
+  border-left: 3px solid #38bdf8;
+}
+
+.incident-lock-backdrop {
+  z-index: 80;
+}
+
+.incident-lock-dialog,
+.adminx-reject-dialog {
+  width: min(620px, calc(100vw - 24px));
+}
+
+.incident-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.incident-textarea {
+  width: 100%;
+  min-height: 130px;
+  resize: vertical;
+  padding: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  color: #f8fafc;
+  background: #0b0f14;
+}
+
+.adminx-status-event {
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  background: #0b0f14;
+}
+
+.adminx-status-connected,
+.adminx-status-armed,
+.adminx-status-dispatch {
+  border-left: 3px solid #22c55e;
+}
+
+.adminx-status-disconnected,
+.adminx-status-error {
+  border-left: 3px solid #ef4444;
+}
+
+.adminx-status-reconnecting,
+.adminx-status-disarmed {
+  border-left: 3px solid #f59e0b;
+}
+
 .adminx-action-row,
 .adminx-maintenance-grid {
   display: grid;

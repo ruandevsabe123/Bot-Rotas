@@ -259,6 +259,8 @@ function createWebApi(): DesktopApi {
     saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) =>
       action("save-target-message-settings", payload),
     saveGeneralSettings: (payload: GeneralSettingsPayload) => action("save-general-settings", payload),
+    submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) =>
+      action("submit-route-incident", payload),
     onSnapshot: (callback: (snapshot: BotSnapshot) => void) => {
       const token = getPanelToken();
       if (token && "EventSource" in window) {

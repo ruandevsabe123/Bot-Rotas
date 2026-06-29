@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { RouteDispatch, RouteReaction, RouteReactionFinalState, RouteReactionHistoryEvent } from "../shared/types";
+import { RouteClientIncident, RouteDispatch, RouteReaction, RouteReactionFinalState, RouteReactionHistoryEvent } from "../shared/types";
 
 const MAX_ROUTES = 100;
 
@@ -89,6 +89,68 @@ export class RouteStore {
           updatedAt: now
         };
       });
+    if (changed) this.scheduleSave();
+    return changed;
+  }
+
+  requireClientIncident(messageId: string, incident: Omit<RouteClientIncident, "required" | "createdAt"> & { createdAt?: string }) {
+    let changed = false;
+    const now = new Date().toISOString();
+    this.routes = this.getRoutes().map((route) => {
+      if (!route.sentMessageIds.includes(messageId)) return route;
+      if (route.clientIncident?.required && !route.clientIncident.answeredAt) return route;
+      changed = true;
+      return {
+        ...route,
+        clientIncident: {
+          ...incident,
+          required: true,
+          createdAt: incident.createdAt || now
+        },
+        updatedAt: incident.createdAt || now
+      };
+    });
+    if (changed) this.scheduleSave();
+    return changed;
+  }
+
+  answerClientIncident(routeId: string, answer: { valid: boolean; reason: string }) {
+    let changed = false;
+    const now = new Date().toISOString();
+    this.routes = this.getRoutes().map((route) => {
+      if (route.id !== routeId || !route.clientIncident?.required || route.clientIncident.answeredAt) return route;
+      changed = true;
+      return {
+        ...route,
+        clientIncident: {
+          ...route.clientIncident,
+          valid: answer.valid,
+          reason: answer.reason.trim(),
+          answeredAt: now,
+          required: false
+        },
+        updatedAt: now
+      };
+    });
+    if (changed) this.scheduleSave();
+    return changed;
+  }
+
+  recordDeletedMessage(messageId: string) {
+    let changed = false;
+    const now = new Date().toISOString();
+    this.routes = this.getRoutes().map((route) => {
+      if (!route.sentMessageIds.includes(messageId)) return route;
+      changed = true;
+      const deletedMessageIds = route.deletedMessageIds?.includes(messageId)
+        ? route.deletedMessageIds
+        : [messageId, ...(route.deletedMessageIds || [])];
+      return {
+        ...route,
+        deletedMessageIds,
+        updatedAt: now
+      };
+    });
     if (changed) this.scheduleSave();
     return changed;
   }
@@ -255,9 +317,24 @@ export class RouteStore {
             bairro: typeof input.ocr.bairro === "string" ? input.ocr.bairro : undefined,
             code: typeof input.ocr.code === "string" ? input.ocr.code : undefined,
             confidence: Number.isFinite(Number(input.ocr.confidence)) ? Number(input.ocr.confidence) : undefined,
-            processedAt: typeof input.ocr.processedAt === "string" ? input.ocr.processedAt : new Date().toISOString()
+            processedAt: typeof input.ocr.processedAt === "string" ? input.ocr.processedAt : new Date().toISOString(),
+            imagePreviewUrl: typeof input.ocr.imagePreviewUrl === "string" ? input.ocr.imagePreviewUrl : undefined
           }
-        : undefined
+        : undefined,
+      clientIncident: input.clientIncident && typeof input.clientIncident === "object"
+        ? {
+            required: Boolean(input.clientIncident.required),
+            kind: input.clientIncident.kind === "message_deleted" ? "message_deleted" : "leader_reaction_removed",
+            createdAt: typeof input.clientIncident.createdAt === "string" ? input.clientIncident.createdAt : new Date().toISOString(),
+            message: typeof input.clientIncident.message === "string" ? input.clientIncident.message : "",
+            answeredAt: typeof input.clientIncident.answeredAt === "string" ? input.clientIncident.answeredAt : undefined,
+            valid: typeof input.clientIncident.valid === "boolean" ? input.clientIncident.valid : undefined,
+            reason: typeof input.clientIncident.reason === "string" ? input.clientIncident.reason : undefined
+          }
+        : undefined,
+      deletedMessageIds: Array.isArray(input.deletedMessageIds)
+        ? input.deletedMessageIds.filter((item: unknown) => typeof item === "string")
+        : []
     };
   }
 }

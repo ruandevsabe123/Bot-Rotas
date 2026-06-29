@@ -416,7 +416,8 @@ function getAdminUserDetail(email: string): AdminUserDetail | undefined {
     lastWhatsAppConnectionAt: getLastWhatsAppConnectionAt(snapshot.logs),
     logs: snapshot.logs.slice(0, 250),
     routes: snapshot.routeDispatches || [],
-    loginHistory: user.loginHistory
+    loginHistory: user.loginHistory,
+    statusEvents: snapshot.statusEvents || []
   };
 }
 
@@ -666,6 +667,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
         alwaysWarmMode: body.alwaysWarmMode,
         keepAliveIntervalMs: body.keepAliveIntervalMs
       });
+      break;
+    case "submit-route-incident":
+      bot.submitClientIncident(String(body.routeId || ""), Boolean(body.valid), String(body.reason || ""));
       break;
     default:
       throw new Error(`Acao desconhecida: ${action}`);
@@ -1070,6 +1074,10 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname.startsWith("/api/action/")) {
       const action = decodeURIComponent(url.pathname.replace("/api/action/", ""));
       const body = await readJsonBody(request);
+      if (action !== "submit-route-incident" && activeBot!.hasPendingClientIncident()) {
+        sendJson(response, 423, { error: "Explique o incidente pendente antes de usar o bot." });
+        return;
+      }
       sendJson(response, 200, await handleAction(activeBot!, action, body));
       return;
     }
