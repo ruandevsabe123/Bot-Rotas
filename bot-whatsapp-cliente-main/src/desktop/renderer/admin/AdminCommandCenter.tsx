@@ -3,6 +3,7 @@ import {
   Activity,
   AlertTriangle,
   Ban,
+  Bell,
   Bot,
   CheckCircle2,
   Clock3,
@@ -56,7 +57,7 @@ type AdminCommandCenterProps = {
   onLogout: () => void;
 };
 
-type AdminPage = "today" | "dashboard" | "clients" | "validations" | "history" | "logs" | "support" | "reports" | "maintenance";
+type AdminPage = "today" | "dashboard" | "clients" | "validations" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
 type DatePreset = "today" | "7d" | "30d" | "all";
 type DecisionFilter = "all" | "pending" | "validated" | "rejected" | "leader" | "removed";
 type ModeFilter = "all" | "target" | "test" | "manual" | "ocr" | "warmup" | "simulation";
@@ -127,6 +128,11 @@ function triggerLabel(route: RouteDispatch) {
   return "Automático";
 }
 
+function routeAgeState(route: RouteDispatch) {
+  const ageMs = Date.now() - new Date(route.createdAt).getTime();
+  return ageMs <= 10 * 60 * 1000 ? "recent" : "past";
+}
+
 function reactionFinalLabel(route: RouteDispatch) {
   if (route.lastReactionState?.status === "removed") return "Reagiu e removeu";
   if (route.lastReactionState?.status === "active") return "Reagiu e manteve";
@@ -140,6 +146,12 @@ function incidentLabel(route: RouteDispatch) {
     return `${route.clientIncident.valid ? "Cliente marcou válida" : "Cliente marcou não válida"} - ${route.clientIncident.reason || "sem motivo"}`;
   }
   return "Aguardando explicação do cliente";
+}
+
+function clientIncidentSummary(route: RouteDispatch) {
+  if (!route.clientIncident) return "";
+  if (!route.clientIncident.answeredAt) return "Cliente ainda não explicou";
+  return `${route.clientIncident.valid ? "Cliente disse válida" : "Cliente disse não válida"}: ${route.clientIncident.reason || "sem motivo"}`;
 }
 
 function hasLeaderReaction(route: RouteDispatch) {
@@ -270,6 +282,19 @@ function RouteSidePanel({
           <MetricCard Icon={MessageSquareText} tone={route.lastReactionState?.status === "removed" ? "yellow" : route.reactions.length ? "green" : "blue"} title="Reação final" value={reactionFinalLabel(route)} detail={formatShort(route.lastReactionState?.updatedAt)} />
           <MetricCard Icon={SendIcon} tone={route.status === "sent" ? "green" : route.status === "failed" ? "red" : "yellow"} title="Envio" value={`${route.confirmedCount}/${route.totalCount}`} detail={route.status} />
           <MetricCard Icon={ShieldCheck} tone={routeDecision(route) === "validated" ? "green" : routeDecision(route) === "rejected" ? "red" : "yellow"} title="Decisão" value={routeDecision(route)} detail={route.validatedBy || route.rejectedBy || "pendente"} />
+        </section>
+        <section className="adminx-detail-section">
+          <h3>Dados do envio</h3>
+          <dl className="adminx-kv">
+            <dt>Cliente</dt><dd>{route.clientEmail || "Não identificado"}</dd>
+            <dt>Grupo</dt><dd>{route.groupName || route.groupJid || "Não identificado"}</dd>
+            <dt>Modo</dt><dd>{route.mode}</dd>
+            <dt>Trigger</dt><dd>{triggerLabel(route)}</dd>
+            <dt>Mensagem enviada em</dt><dd>{formatDate(route.createdAt)}</dd>
+            <dt>Recência</dt><dd>{routeAgeState(route) === "recent" ? "Recente (menos de 10 minutos)" : "Passada (mais de 10 minutos)"}</dd>
+            <dt>Atualizada</dt><dd>{formatDate(route.updatedAt)}</dd>
+            <dt>Motivo do admin</dt><dd>{route.decisionReason || "Sem motivo registrado"}</dd>
+          </dl>
         </section>
         <section className="adminx-detail-section">
           <h3>Mensagens enviadas</h3>
@@ -604,7 +629,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
 
   function requestReject(routeIds: string[], title = "Rejeitar rota") {
     setRejectRequest({ routeIds, title });
-    setRejectReason("Sem reação válida");
+    setRejectReason("");
   }
 
   async function confirmReject() {
@@ -688,6 +713,25 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     }
   }
 
+  async function enableNotifications() {
+    if (!("Notification" in window)) {
+      setError("Este navegador não suporta notificações.");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    showToast(permission === "granted" ? "Notificações ativadas." : "Notificações não foram liberadas.");
+  }
+
+  function resetAdminFilters() {
+    setClientFilter("all");
+    setDatePreset("30d");
+    setSearch("");
+    setDecisionFilter("all");
+    setModeFilter("all");
+    setLogLevel("all");
+    showToast("Filtros resetados.");
+  }
+
   function exportRoutes(format: "csv" | "json") {
     const rows = visibleRoutes.map((route) => ({
       id: route.id,
@@ -720,7 +764,8 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     { id: "logs", label: "Logs", Icon: Activity, badge: visibleLogs.filter((log) => log.level === "error").length },
     { id: "support", label: "Suporte", Icon: Inbox, badge: support.unread },
     { id: "reports", label: "Relatórios", Icon: FileJson },
-    { id: "maintenance", label: "Manutenção", Icon: Settings }
+    { id: "maintenance", label: "Manutenção", Icon: Trash2 },
+    { id: "settings", label: "Config", Icon: Settings }
   ];
 
   return (
@@ -986,10 +1031,46 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             </article>
           </section>
         ) : null}
+
+        {page === "settings" ? (
+          <section className="adminx-page">
+            <article className="adminx-panel">
+              <div className="adminx-panel-head">
+                <div><p>Admin</p><h2>Configurações e sessão</h2></div>
+              </div>
+              <div className="adminx-settings-grid">
+                <section className="adminx-settings-card">
+                  <Bell size={20} />
+                  <strong>Notificações</strong>
+                  <span>Ative alertas do navegador para suporte, erro e validação pendente.</span>
+                  <button className="button primary" type="button" onClick={enableNotifications}>Ativar notificações</button>
+                </section>
+                <section className="adminx-settings-card">
+                  <RefreshCw size={20} />
+                  <strong>Filtros do painel</strong>
+                  <span>Cliente, período, busca, modo e status voltam ao padrão.</span>
+                  <button className="button" type="button" onClick={resetAdminFilters}>Resetar filtros</button>
+                </section>
+                <section className="adminx-settings-card">
+                  <Activity size={20} />
+                  <strong>Status do tempo real</strong>
+                  <span>{streamState === "live" ? "SSE conectado e recebendo atualizações." : streamState === "fallback" ? "Usando polling como fallback." : "Conectando ao SSE."}</span>
+                  <button className="button" type="button" onClick={refresh}>Atualizar agora</button>
+                </section>
+                <section className="adminx-settings-card danger">
+                  <LogOut size={20} />
+                  <strong>Sair da conta admin</strong>
+                  <span>Encerra a sessão salva neste navegador.</span>
+                  <button className="button danger" type="button" onClick={onLogout}>Sair da conta</button>
+                </section>
+              </div>
+            </article>
+          </section>
+        ) : null}
       </section>
 
       <nav className="adminx-bottom-nav">
-        {pages.slice(0, 5).map(({ id, label, Icon, badge }) => (
+        {pages.map(({ id, label, Icon, badge }) => (
           <button className={page === id ? "active" : ""} key={id} type="button" onClick={() => setPage(id)}>
             {badge ? <b>{badge}</b> : null}
             <Icon size={21} />
@@ -1003,19 +1084,13 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
           <section className="confirmation-dialog adminx-reject-dialog" role="dialog" aria-modal="true" aria-labelledby="adminx-reject-title">
             <p className="panel-label">Motivo obrigatório</p>
             <h2 id="adminx-reject-title">{rejectRequest.title}</h2>
-            <p className="confirmation-message">Escolha ou descreva o motivo para registrar auditoria da rejeição.</p>
-            <div className="incident-choice">
-              {["Duplicada", "Sem reação válida", "Erro de envio", "Rota não conferiu", "Outro"].map((reason) => (
-                <button className={rejectReason === reason ? "button primary" : "button"} key={reason} type="button" onClick={() => setRejectReason(reason)}>
-                  {reason}
-                </button>
-              ))}
-            </div>
+            <p className="confirmation-message">Escreva o motivo da rejeição. Esse texto fica salvo na auditoria da rota.</p>
             <textarea
               className="incident-textarea"
+              autoFocus
               value={rejectReason}
               onChange={(event) => setRejectReason(event.target.value)}
-              placeholder="Descreva o motivo da rejeição"
+              placeholder="Ex.: líder removeu a reação porque a rota estava duplicada; mensagem enviada no grupo errado; rota não conferiu..."
             />
             <div className="confirmation-actions">
               <button className="button" disabled={busy} type="button" onClick={() => setRejectRequest(undefined)}>Cancelar</button>
@@ -1103,13 +1178,16 @@ function RouteTable({
         </thead>
         <tbody>
           {routes.map((route) => (
-            <tr key={route.id} style={colorStyle(route.clientColor)}>
+            <tr className={`adminx-route-${routeAgeState(route)}`} key={route.id} style={colorStyle(route.clientColor)}>
               <td data-label="Selecionar"><input type="checkbox" checked={selectedRoutes.includes(route.id)} onChange={() => onSelect(route.id)} /></td>
               <td data-label="Cliente"><span className="adminx-client-dot" />{route.clientEmail}</td>
               <td data-label="Modo">{route.ocr ? <StatusPill tone="blue">OCR</StatusPill> : <StatusPill tone={route.mode === "test" ? "yellow" : "green"}>{route.mode}</StatusPill>}</td>
               <td data-label="Trigger">{triggerLabel(route)}</td>
               <td data-label="Mensagens"><button className="adminx-link-cell" type="button" onClick={() => onOpen(route)}>{route.messages.join(" | ") || "Sem mensagem"}</button></td>
-              <td data-label="Reação final"><StatusPill tone={route.lastReactionState?.status === "removed" ? "yellow" : route.reactions.length ? "green" : "muted"}>{reactionFinalLabel(route)}</StatusPill></td>
+              <td data-label="Reação final">
+                <StatusPill tone={route.lastReactionState?.status === "removed" ? "yellow" : route.reactions.length ? "green" : "muted"}>{reactionFinalLabel(route)}</StatusPill>
+                {clientIncidentSummary(route) ? <small className="adminx-cell-note">{clientIncidentSummary(route)}</small> : null}
+              </td>
               <td data-label="Envio">{route.confirmedCount}/{route.totalCount} - {route.status}</td>
               <td data-label="Data">{formatShort(route.createdAt)}</td>
               <td data-label="Ações">

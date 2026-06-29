@@ -3021,7 +3021,11 @@ export default function App() {
               {pendingClientIncident.clientIncident?.message || "O admin precisa de uma explicação para liberar o bot."}
             </p>
             <div className="confirmation-details">
+              <span>Data/hora do envio: {new Date(pendingClientIncident.createdAt).toLocaleString("pt-BR")}</span>
               <span>Grupo: {pendingClientIncident.groupName || pendingClientIncident.groupJid}</span>
+              <span>Modo: {pendingClientIncident.ocr ? "Bot imagem/OCR" : pendingClientIncident.mode === "test" ? "Teste/aquecimento" : "Grupo alvo"}</span>
+              <span>Trigger: {pendingClientIncident.trigger || (pendingClientIncident.mode === "test" ? "warmup" : "automatic")}</span>
+              <span>Status do envio: {pendingClientIncident.confirmedCount}/{pendingClientIncident.totalCount} confirmada(s), status {pendingClientIncident.status}</span>
               <span>Mensagem: {pendingClientIncident.messages.join(" | ") || "Sem mensagem registrada"}</span>
               <span>Evento: {pendingClientIncident.clientIncident?.kind === "message_deleted" ? "Mensagem apagada" : "Líder reagiu e removeu"}</span>
             </div>
