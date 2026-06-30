@@ -117,6 +117,11 @@ function formatDuration(ms = 0) {
   return `${rest}m`;
 }
 
+function formatMs(value?: number) {
+  if (value === undefined || value === null || Number.isNaN(value)) return "sem dado";
+  return `${Math.round(value)}ms`;
+}
+
 function routeDecision(route: RouteDispatch) {
   return route.decisionStatus || (route.validated ? "validated" : "pending");
 }
@@ -299,6 +304,32 @@ function RouteSidePanel({
             <dt>Motivo do admin</dt><dd>{route.decisionReason || "Sem motivo registrado"}</dd>
           </dl>
         </section>
+        {route.dispatchTimeline ? (
+          <section className="adminx-detail-section">
+            <h3>Diagnóstico do disparo</h3>
+            <div className="adminx-timeline-metrics">
+              <span><b>{formatMs(route.dispatchTimeline.detectionDelayMs)}</b><small>detecção</small></span>
+              <span><b>{formatMs(route.dispatchTimeline.firstRelayCallMs)}</b><small>1o relay</small></span>
+              <span><b>{formatMs(route.dispatchTimeline.firstAckMs)}</b><small>1o ACK</small></span>
+              <span><b>{formatMs(route.dispatchTimeline.totalDurationMs)}</b><small>total</small></span>
+            </div>
+            <dl className="adminx-kv">
+              <dt>Modo corrida</dt><dd>{route.dispatchTimeline.mode === "race" ? "ativo" : "normal"}</dd>
+              <dt>Timeout usado</dt><dd>{route.dispatchTimeline.timeoutUsed ? "sim" : "não"}</dd>
+              <dt>Retry usado</dt><dd>{route.dispatchTimeline.retryUsed ? "sim" : "não"}</dd>
+              <dt>Not acceptable</dt><dd>{route.dispatchTimeline.notAcceptableCount}</dd>
+            </dl>
+            <div className="adminx-dispatch-timeline">
+              {route.dispatchTimeline.events.map((event) => (
+                <span className={`adminx-timeline-${event.level || "info"}`} key={event.id}>
+                  <b>+{event.offsetMs}ms</b>
+                  <strong>{event.label}</strong>
+                  {event.detail ? <small>{event.detail}</small> : null}
+                </span>
+              ))}
+            </div>
+          </section>
+        ) : null}
         <section className="adminx-detail-section">
           <h3>Mensagens enviadas</h3>
           <div className="adminx-chip-stack">
@@ -397,7 +428,28 @@ function ClientSidePanel({
             <dt>Grupo teste</dt><dd>{detail.config.grupoTesteNome || detail.config.grupoTesteJid || "Não configurado"}</dd>
             <dt>Modo alvo</dt><dd>{detail.config.targetDispatchMode}{detail.config.nuclearMode ? " + nuclear" : ""}</dd>
             <dt>Sempre quente</dt><dd>{detail.config.alwaysWarmMode ? `ativo (${detail.config.keepAliveIntervalMs}ms)` : "desligado"}</dd>
+            <dt>Modo corrida</dt><dd>{detail.config.alwaysWarmMode ? "aquecimento alvo ate 20000ms quando armado" : "desligado"}</dd>
           </dl>
+        </section>
+        <section className="adminx-detail-section">
+          <h3>Diagnóstico de velocidade</h3>
+          <div className="adminx-timeline-metrics">
+            <span><b>{formatMs(detail.performanceMetrics?.lastDispatchLatencyMs)}</b><small>detecção</small></span>
+            <span><b>{formatMs(detail.performanceMetrics?.lastFirstRelayCallMs)}</b><small>1o relay</small></span>
+            <span><b>{formatMs(detail.performanceMetrics?.lastFirstAckMs)}</b><small>1o ACK</small></span>
+            <span><b>{formatMs(detail.performanceMetrics?.lastDispatchDurationMs)}</b><small>total</small></span>
+          </div>
+          {detail.performanceMetrics?.lastDispatchTimeline ? (
+            <div className="adminx-dispatch-timeline compact">
+              {detail.performanceMetrics.lastDispatchTimeline.events.slice(-8).map((event) => (
+                <span className={`adminx-timeline-${event.level || "info"}`} key={event.id}>
+                  <b>+{event.offsetMs}ms</b>
+                  <strong>{event.label}</strong>
+                  {event.detail ? <small>{event.detail}</small> : null}
+                </span>
+              ))}
+            </div>
+          ) : <p className="adminx-empty-text">Nenhum disparo diagnosticado ainda.</p>}
         </section>
         <section className="adminx-action-row">
           <button className="button" disabled={busy} type="button" onClick={() => onAction(detail.email, "stop")}>Parar bot</button>

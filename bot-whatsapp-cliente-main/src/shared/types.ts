@@ -61,6 +61,9 @@ export type BotPerformanceMetrics = {
   lastDispatchLatencyMs: number;
   averageDispatchLatencyMs: number;
   lastDispatchDurationMs: number;
+  lastFirstRelayCallMs?: number;
+  lastFirstAckMs?: number;
+  lastDispatchTimeline?: RouteDispatchTimeline;
   averageMessageSendMs: number;
   dispatchCount: number;
   sentMessages: number;
@@ -71,6 +74,33 @@ export type BotPerformanceMetrics = {
   lastKeepAliveAt?: string;
   lastKeepAliveDurationMs?: number;
   keepAliveCount?: number;
+};
+
+export type RouteDispatchTimelineEvent = {
+  id: string;
+  label: string;
+  at: string;
+  offsetMs: number;
+  level?: "info" | "success" | "warning" | "error";
+  detail?: string;
+};
+
+export type RouteDispatchTimeline = {
+  eventDetectedAt: string;
+  sendStartedAt: string;
+  firstRelayCalledAt?: string;
+  firstAckAt?: string;
+  finishedAt?: string;
+  detectionDelayMs: number;
+  firstRelayCallMs?: number;
+  firstAckMs?: number;
+  ackWaitMs?: number;
+  totalDurationMs?: number;
+  timeoutUsed: boolean;
+  retryUsed: boolean;
+  notAcceptableCount: number;
+  mode: "normal" | "race";
+  events: RouteDispatchTimelineEvent[];
 };
 
 export type BotTestStatus = {
@@ -271,6 +301,7 @@ export type RouteDispatch = {
   ocr?: RouteOcrInsight;
   clientIncident?: RouteClientIncident;
   deletedMessageIds?: string[];
+  dispatchTimeline?: RouteDispatchTimeline;
 };
 
 export type AdminRoutesSnapshot = {

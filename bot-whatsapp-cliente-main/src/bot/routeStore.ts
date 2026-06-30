@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { RouteClientIncident, RouteDispatch, RouteReaction, RouteReactionFinalState, RouteReactionHistoryEvent } from "../shared/types";
+import { RouteClientIncident, RouteDispatch, RouteDispatchTimeline, RouteReaction, RouteReactionFinalState, RouteReactionHistoryEvent } from "../shared/types";
 
 const MAX_ROUTES = 100;
 
@@ -38,7 +38,7 @@ export class RouteStore {
     return route;
   }
 
-  update(id: string, patch: Partial<Pick<RouteDispatch, "confirmedCount" | "status" | "sentMessageIds">>) {
+  update(id: string, patch: Partial<Pick<RouteDispatch, "confirmedCount" | "status" | "sentMessageIds" | "dispatchTimeline">>) {
     this.routes =
       this.getRoutes().map((route) =>
         route.id === id
@@ -334,7 +334,40 @@ export class RouteStore {
         : undefined,
       deletedMessageIds: Array.isArray(input.deletedMessageIds)
         ? input.deletedMessageIds.filter((item: unknown) => typeof item === "string")
-        : []
+        : [],
+      dispatchTimeline: this.normalizeTimeline(input.dispatchTimeline)
+    };
+  }
+
+  private normalizeTimeline(input: any): RouteDispatchTimeline | undefined {
+    if (!input || typeof input !== "object") return undefined;
+    const events = Array.isArray(input.events)
+      ? input.events.map((event: any) => ({
+          id: typeof event.id === "string" ? event.id : `${Date.now()}-${Math.random()}`,
+          label: typeof event.label === "string" ? event.label : "",
+          at: typeof event.at === "string" ? event.at : new Date().toISOString(),
+          offsetMs: Number.isFinite(Number(event.offsetMs)) ? Number(event.offsetMs) : 0,
+          level: ["info", "success", "warning", "error"].includes(event.level) ? event.level : "info",
+          detail: typeof event.detail === "string" ? event.detail : undefined
+        })).filter((event) => event.label)
+      : [];
+
+    return {
+      eventDetectedAt: typeof input.eventDetectedAt === "string" ? input.eventDetectedAt : new Date().toISOString(),
+      sendStartedAt: typeof input.sendStartedAt === "string" ? input.sendStartedAt : new Date().toISOString(),
+      firstRelayCalledAt: typeof input.firstRelayCalledAt === "string" ? input.firstRelayCalledAt : undefined,
+      firstAckAt: typeof input.firstAckAt === "string" ? input.firstAckAt : undefined,
+      finishedAt: typeof input.finishedAt === "string" ? input.finishedAt : undefined,
+      detectionDelayMs: Number.isFinite(Number(input.detectionDelayMs)) ? Number(input.detectionDelayMs) : 0,
+      firstRelayCallMs: Number.isFinite(Number(input.firstRelayCallMs)) ? Number(input.firstRelayCallMs) : undefined,
+      firstAckMs: Number.isFinite(Number(input.firstAckMs)) ? Number(input.firstAckMs) : undefined,
+      ackWaitMs: Number.isFinite(Number(input.ackWaitMs)) ? Number(input.ackWaitMs) : undefined,
+      totalDurationMs: Number.isFinite(Number(input.totalDurationMs)) ? Number(input.totalDurationMs) : undefined,
+      timeoutUsed: Boolean(input.timeoutUsed),
+      retryUsed: Boolean(input.retryUsed),
+      notAcceptableCount: Number.isFinite(Number(input.notAcceptableCount)) ? Number(input.notAcceptableCount) : 0,
+      mode: input.mode === "race" ? "race" : "normal",
+      events
     };
   }
 }

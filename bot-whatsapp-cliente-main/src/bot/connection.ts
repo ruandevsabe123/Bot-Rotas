@@ -10,7 +10,7 @@ import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { findConfiguredRouteCodeFromOcr, readRouteImageOcr } from "./ocr";
 import { RouteStore } from "./routeStore";
-import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, RouteDispatch, RouteOcrInsight, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -73,6 +73,8 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_DELAY_MS = 3500;
 const HEALTH_CHECK_INTERVAL_MS = 25000;
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
+const RACE_KEEP_ALIVE_INTERVAL_MS = 20000;
+const TARGET_ACK_TIMEOUT_MS = 1200;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
 const OPENING_TRIGGER_WORDS = [
@@ -176,6 +178,7 @@ export class BotService extends EventEmitter {
   private extraAdminPhoneNumbers: string[] = [];
   private leaderContacts = new Map<string, string>();
   private activeRouteByCycle = new Map<number, string>();
+  private routeMessageIdsByCycle = new Map<number, string[]>();
   private targetSimulationCycles = new Set<number>();
   private autoClearInvalidSession = false;
   private clearedInvalidSessionInCurrentRun = false;
@@ -261,6 +264,7 @@ export class BotService extends EventEmitter {
     sendFinishedAt: number;
     confirmed: number;
     total: number;
+    timeline?: RouteDispatchTimeline;
   }) {
     const latency = Math.max(0, input.sendStartedAt - input.eventDetectedAt);
     const duration = Math.max(0, input.sendFinishedAt - input.sendStartedAt);
@@ -273,6 +277,9 @@ export class BotService extends EventEmitter {
       lastDispatchLatencyMs: latency,
       averageDispatchLatencyMs: average(this.performanceMetrics.averageDispatchLatencyMs, latency),
       lastDispatchDurationMs: duration,
+      lastFirstRelayCallMs: input.timeline?.firstRelayCallMs,
+      lastFirstAckMs: input.timeline?.firstAckMs,
+      lastDispatchTimeline: input.timeline,
       averageMessageSendMs: average(this.performanceMetrics.averageMessageSendMs, perMessage),
       dispatchCount: nextCount,
       sentMessages: this.performanceMetrics.sentMessages + input.confirmed,
@@ -280,6 +287,52 @@ export class BotService extends EventEmitter {
       activeQueue: 0,
       lastDispatchAt: new Date(input.sendFinishedAt).toISOString()
     };
+  }
+
+  private createDispatchTimeline(eventDetectedAt: number, sendStartedAt: number, mode: RouteDispatchTimeline["mode"]): RouteDispatchTimeline {
+    return {
+      eventDetectedAt: new Date(eventDetectedAt).toISOString(),
+      sendStartedAt: new Date(sendStartedAt).toISOString(),
+      detectionDelayMs: Math.max(0, sendStartedAt - eventDetectedAt),
+      timeoutUsed: false,
+      retryUsed: false,
+      notAcceptableCount: 0,
+      mode,
+      events: [
+        {
+          id: `event-${eventDetectedAt}`,
+          label: "Evento detectado",
+          at: new Date(eventDetectedAt).toISOString(),
+          offsetMs: 0,
+          level: "info"
+        },
+        {
+          id: `start-${sendStartedAt}`,
+          label: "Disparo iniciado",
+          at: new Date(sendStartedAt).toISOString(),
+          offsetMs: Math.max(0, sendStartedAt - eventDetectedAt),
+          level: "info"
+        }
+      ]
+    };
+  }
+
+  private addTimelineEvent(
+    timeline: RouteDispatchTimeline,
+    label: string,
+    at = Date.now(),
+    level: "info" | "success" | "warning" | "error" = "info",
+    detail?: string
+  ) {
+    const base = new Date(timeline.eventDetectedAt).getTime();
+    timeline.events.push({
+      id: `${label}-${at}-${timeline.events.length}`,
+      label,
+      at: new Date(at).toISOString(),
+      offsetMs: Math.max(0, at - base),
+      level,
+      detail
+    });
   }
 
   validateRoute(routeId: string, validatedBy: string) {
@@ -1854,16 +1907,21 @@ export class BotService extends EventEmitter {
 
     const config = this.configStore.load();
     this.ensurePreparedRelayMessages(this.preparedTargetJid, mensagens);
-    this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
-    this.performanceMetrics.activeQueue = mensagens.length;
     const sendStartedAt = Date.now();
+    const timeline = this.createDispatchTimeline(
+      eventDetectedAt,
+      sendStartedAt,
+      this.monitoringMode === "target" ? "race" : "normal"
+    );
+    this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger, timeline);
+    this.performanceMetrics.activeQueue = mensagens.length;
     this.criticalDispatchInProgress = true;
     const sendCycle =
       this.monitoringMode === "test"
         ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger)
         : config.nuclearMode
-        ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger)
-        : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger);
+        ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline)
+        : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline);
 
     this.activeSendCycle = sendCycle.finally(() => {
       if (cycleId === this.sendCycleId) {
@@ -1898,8 +1956,15 @@ export class BotService extends EventEmitter {
     return `${jid}::${mensagens.join("\u001f")}`;
   }
 
-  private registerRouteDispatch(cycleId: number, jid: string, mensagens: string[], trigger: RouteDispatch["trigger"] = this.monitoringMode === "test" ? "warmup" : "automatic") {
+  private registerRouteDispatch(
+    cycleId: number,
+    jid: string,
+    mensagens: string[],
+    trigger: RouteDispatch["trigger"] = this.monitoringMode === "test" ? "warmup" : "automatic",
+    dispatchTimeline?: RouteDispatchTimeline
+  ) {
     const config = this.configStore.load();
+    const sentMessageIds = this.preparedRelayMessages.map((item) => String(item?.key?.id || "")).filter(Boolean);
     const route = this.routeStore.create({
       id: `${Date.now()}-${cycleId}`,
       clientEmail: this.clientEmail,
@@ -1908,23 +1973,41 @@ export class BotService extends EventEmitter {
       mode: this.monitoringMode,
       trigger,
       messages: mensagens,
-      sentMessageIds: this.preparedRelayMessages.map((item) => String(item?.key?.id || "")).filter(Boolean),
+      sentMessageIds,
       confirmedCount: 0,
       totalCount: mensagens.length,
       status: "sending",
+      dispatchTimeline,
       ocr: this.monitoringMode === "target" && config.targetDispatchMode === "ocr" ? this.lastOcrInsight : undefined
     });
     this.activeRouteByCycle.set(cycleId, route.id);
+    this.routeMessageIdsByCycle.set(cycleId, sentMessageIds);
   }
 
-  private updateRouteDispatch(cycleId: number, confirmedCount: number, totalCount: number) {
+  private updateRouteDispatch(cycleId: number, confirmedCount: number, totalCount: number, dispatchTimeline?: RouteDispatchTimeline) {
     const routeId = this.activeRouteByCycle.get(cycleId);
     if (!routeId) return;
-    this.routeStore.update(routeId, {
+    const patch: Parameters<RouteStore["update"]>[1] = {
       confirmedCount,
       status: confirmedCount === totalCount ? "sent" : confirmedCount > 0 ? "partial" : "failed"
-    });
+    };
+    const sentMessageIds = this.routeMessageIdsByCycle.get(cycleId);
+    if (sentMessageIds?.length) patch.sentMessageIds = sentMessageIds;
+    if (dispatchTimeline) patch.dispatchTimeline = dispatchTimeline;
+    this.routeStore.update(routeId, patch);
     this.emitSnapshot();
+  }
+
+  private appendRouteMessageId(cycleId: number, messageId?: string) {
+    if (!messageId) return;
+    const current = this.routeMessageIdsByCycle.get(cycleId) || [];
+    if (current.includes(messageId)) return;
+    const next = [...current, messageId];
+    this.routeMessageIdsByCycle.set(cycleId, next);
+    const routeId = this.activeRouteByCycle.get(cycleId);
+    if (routeId) {
+      this.routeStore.update(routeId, { sentMessageIds: next });
+    }
   }
 
   private async sendFastSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now(), trigger: RouteDispatch["trigger"] = "warmup") {
@@ -1993,13 +2076,28 @@ export class BotService extends EventEmitter {
     }
   }
 
-  private async sendNuclearTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now(), trigger: RouteDispatch["trigger"] = "automatic") {
+  private async sendNuclearTargetSequence(
+    jid: string,
+    mensagens: string[],
+    cycleId: number,
+    eventDetectedAt = Date.now(),
+    sendStartedAt = Date.now(),
+    trigger: RouteDispatch["trigger"] = "automatic",
+    timeline = this.createDispatchTimeline(eventDetectedAt, sendStartedAt, "race")
+  ) {
     this.logger.info("☢️ Modo nuclear máximo: rajada paralela imediata após evento de abertura.");
-    await this.sendAggressiveTargetSequence(jid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger);
+    await this.sendAggressiveTargetSequence(jid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline);
   }
 
-  private async sendAggressiveTargetSequence(jid: string, mensagens: string[], cycleId: number, eventDetectedAt = Date.now(), sendStartedAt = Date.now(), trigger: RouteDispatch["trigger"] = "automatic") {
-    // aggressive, low-latency send for the real target group
+  private async sendAggressiveTargetSequence(
+    jid: string,
+    mensagens: string[],
+    cycleId: number,
+    eventDetectedAt = Date.now(),
+    sendStartedAt = Date.now(),
+    trigger: RouteDispatch["trigger"] = "automatic",
+    timeline = this.createDispatchTimeline(eventDetectedAt, sendStartedAt, "race")
+  ) {
     try {
       const sock = this.sock;
       if (!sock) {
@@ -2011,48 +2109,192 @@ export class BotService extends EventEmitter {
         ? this.preparedRelayMessages
         : mensagens.map((m) => this.buildRelayTextMessage(sock, jid, m));
 
-      const results = await Promise.allSettled(
-        relayMessages.map((fullMessage) => {
-          if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
-            return Promise.reject(new Error("Ciclo cancelado pelo painel ou por nova abertura."));
-          }
-          return this.relayPreparedMessage(sock, jid, fullMessage);
-        })
-      );
-
-      let confirmed = 0;
-      results.forEach((result, index) => {
+      const jobs = relayMessages.map((fullMessage, index) => {
         const messageNumber = index + 1;
-        if (result.status === "fulfilled") {
-          confirmed += 1;
-          this.logger.success(`Mensagem alvo ${messageNumber} enviada na rajada instantânea.`);
-          return;
+        const calledAt = Date.now();
+        if (!timeline.firstRelayCalledAt) {
+          timeline.firstRelayCalledAt = new Date(calledAt).toISOString();
+          timeline.firstRelayCallMs = Math.max(0, calledAt - sendStartedAt);
         }
+        this.addTimelineEvent(timeline, `Relay ${messageNumber} chamado`, calledAt, "info", String(fullMessage?.key?.id || ""));
 
-        const message = this.getErrorMessage(result.reason);
-        this.logger.warning(`Mensagem alvo ${messageNumber} falhou na rajada instantânea: ${message}`);
-        if (message.toLowerCase().includes("not-acceptable")) {
-          void this.diagnoseNotAcceptable(jid, cycleId);
-        }
+        const firstAttempt = (async () => {
+          if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
+            throw new Error("Ciclo cancelado pelo painel ou por nova abertura.");
+          }
+          await this.relayPreparedMessage(sock, jid, fullMessage);
+          return String(fullMessage?.key?.id || "");
+        })();
+
+        const finalPromise = firstAttempt.catch((error) =>
+          this.retryTargetMessageAfterFailure(jid, mensagens[index], messageNumber, cycleId, error, timeline)
+        );
+
+        const initialPromise = this.withTimeout(firstAttempt, TARGET_ACK_TIMEOUT_MS).then(
+          () => ({ status: "acked" as const, messageNumber }),
+          (error) => {
+            const message = this.getErrorMessage(error);
+            if (message === "ack-timeout") {
+              timeline.timeoutUsed = true;
+              this.addTimelineEvent(timeline, `ACK ${messageNumber} pendente`, Date.now(), "warning", `${TARGET_ACK_TIMEOUT_MS}ms sem confirmação`);
+              return { status: "timeout" as const, messageNumber };
+            }
+            this.addTimelineEvent(timeline, `Falha rápida ${messageNumber}`, Date.now(), "warning", message);
+            return { status: "failed" as const, messageNumber, error };
+          }
+        );
+
+        return { initialPromise, finalPromise };
       });
 
-      if (confirmed === mensagens.length) {
-        this.logger.success(`Disparo instantâneo concluído em ${Date.now() - sendStartedAt}ms: ${confirmed}/${mensagens.length}.`);
-      } else {
-        this.logger.warning(`Disparo instantâneo terminou com atenção em ${Date.now() - sendStartedAt}ms: ${confirmed}/${mensagens.length}.`);
-      }
+      const initialResults = await Promise.all(jobs.map((job) => job.initialPromise));
+      const quickConfirmed = initialResults.filter((result) => result.status === "acked").length;
+      const pendingAck = initialResults.filter((result) => result.status === "timeout").length;
+      const quickFailed = initialResults.filter((result) => result.status === "failed").length;
 
-      this.updateRouteDispatch(cycleId, confirmed, mensagens.length);
-      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed, total: mensagens.length });
+      this.logger.info(
+        `Modo corrida: chamadas feitas em ${Date.now() - sendStartedAt}ms. ACK rápido ${quickConfirmed}/${mensagens.length}, pendente ${pendingAck}, falha rápida ${quickFailed}.`
+      );
+      this.performanceMetrics.activeQueue = pendingAck + quickFailed;
+      this.addTimelineEvent(timeline, "Chamadas finalizadas", Date.now(), pendingAck ? "warning" : "success", `${quickConfirmed}/${mensagens.length} ACK rápido`);
+      this.updateRouteDispatch(cycleId, quickConfirmed, mensagens.length, timeline);
       this.emitSnapshot();
-      this.addStatusEvent("dispatch", `${triggerLabelForEvent(trigger)} finalizado: ${confirmed}/${mensagens.length}.`);
+      this.addStatusEvent("dispatch", `${triggerLabelForEvent(trigger)} chamado: ${quickConfirmed}/${mensagens.length} ACK rápido, ${pendingAck} pendente.`);
       this.stopMonitoringAfterTargetDispatch(cycleId);
+
+      void this.finishTargetDispatchInBackground({
+        jobs: jobs.map((job) => job.finalPromise),
+        cycleId,
+        total: mensagens.length,
+        eventDetectedAt,
+        sendStartedAt,
+        trigger,
+        timeline
+      });
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo agressivo: ${this.getErrorMessage(error)}`);
-      this.updateRouteDispatch(cycleId, 0, mensagens.length);
-      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length });
+      this.addTimelineEvent(timeline, "Erro inesperado", Date.now(), "error", this.getErrorMessage(error));
+      this.updateRouteDispatch(cycleId, 0, mensagens.length, timeline);
+      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length, timeline });
       this.stopMonitoringAfterTargetDispatch(cycleId);
     }
+  }
+
+  private async finishTargetDispatchInBackground(input: {
+    jobs: Promise<string | false>[];
+    cycleId: number;
+    total: number;
+    eventDetectedAt: number;
+    sendStartedAt: number;
+    trigger: RouteDispatch["trigger"];
+    timeline: RouteDispatchTimeline;
+  }) {
+    const results = await Promise.allSettled(input.jobs);
+    let confirmed = 0;
+    results.forEach((result, index) => {
+      const messageNumber = index + 1;
+      if (result.status === "fulfilled" && result.value) {
+        confirmed += 1;
+        const ackAt = Date.now();
+        if (!input.timeline.firstAckAt) {
+          input.timeline.firstAckAt = new Date(ackAt).toISOString();
+          input.timeline.firstAckMs = Math.max(0, ackAt - input.sendStartedAt);
+          input.timeline.ackWaitMs = Math.max(0, ackAt - new Date(input.timeline.firstRelayCalledAt || input.timeline.sendStartedAt).getTime());
+        }
+        this.appendRouteMessageId(input.cycleId, typeof result.value === "string" ? result.value : undefined);
+        this.addTimelineEvent(input.timeline, `Mensagem ${messageNumber} confirmada`, ackAt, "success");
+        this.logger.success(`Mensagem alvo ${messageNumber} confirmada pelo WhatsApp.`);
+        return;
+      }
+
+      const message = result.status === "rejected" ? this.getErrorMessage(result.reason) : "Não confirmou após retry.";
+      this.addTimelineEvent(input.timeline, `Mensagem ${messageNumber} falhou`, Date.now(), "error", message);
+      this.logger.warning(`Mensagem alvo ${messageNumber} não confirmou no modo corrida: ${message}`);
+    });
+
+    const finishedAt = Date.now();
+    input.timeline.finishedAt = new Date(finishedAt).toISOString();
+    input.timeline.totalDurationMs = Math.max(0, finishedAt - input.sendStartedAt);
+
+    if (confirmed === input.total) {
+      this.logger.success(`Disparo modo corrida confirmado em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
+    } else {
+      this.logger.warning(`Disparo modo corrida terminou com atenção em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
+    }
+
+    this.updateRouteDispatch(input.cycleId, confirmed, input.total, input.timeline);
+    this.recordDispatchMetrics({
+      eventDetectedAt: input.eventDetectedAt,
+      sendStartedAt: input.sendStartedAt,
+      sendFinishedAt: finishedAt,
+      confirmed,
+      total: input.total,
+      timeline: input.timeline
+    });
+    this.addStatusEvent("dispatch", `${triggerLabelForEvent(input.trigger)} confirmado: ${confirmed}/${input.total}.`);
+    this.activeRouteByCycle.delete(input.cycleId);
+    this.routeMessageIdsByCycle.delete(input.cycleId);
+  }
+
+  private async retryTargetMessageAfterFailure(
+    jid: string,
+    mensagem: string,
+    messageNumber: number,
+    cycleId: number,
+    error: unknown,
+    timeline: RouteDispatchTimeline
+  ): Promise<string | false> {
+    const firstMessage = this.getErrorMessage(error);
+    if (!this.isRetryableSendError(firstMessage)) throw error;
+
+    timeline.retryUsed = true;
+    if (firstMessage.toLowerCase().includes("not-acceptable")) {
+      timeline.notAcceptableCount += 1;
+      void this.diagnoseNotAcceptable(jid, cycleId);
+      await this.refreshGroupMetadata(jid).catch(() => undefined);
+    }
+
+    const delays = [80, 180, 360, 700, 1100];
+    for (let attempt = 0; attempt < delays.length; attempt += 1) {
+      if (cycleId !== this.sendCycleId) return false;
+      await this.delay(delays[attempt]);
+      try {
+        this.addTimelineEvent(timeline, `Retry ${messageNumber}.${attempt + 1}`, Date.now(), "info", firstMessage);
+        if (!this.sock) throw new Error("Não há conexão ativa para retry.");
+        const sent = await this.relayTextMessage(this.sock, jid, mensagem);
+        const messageId = String(sent?.key?.id || "");
+        this.appendRouteMessageId(cycleId, messageId);
+        return messageId || false;
+      } catch (nextError) {
+        const nextMessage = this.getErrorMessage(nextError);
+        if (nextMessage.toLowerCase().includes("not-acceptable")) {
+          timeline.notAcceptableCount += 1;
+          void this.diagnoseNotAcceptable(jid, cycleId);
+          await this.refreshGroupMetadata(jid).catch(() => undefined);
+        }
+        if (!this.isRetryableSendError(nextMessage) || attempt === delays.length - 1) {
+          throw nextError;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("ack-timeout")), timeoutMs);
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+    });
   }
 
   private stopMonitoringAfterTargetDispatch(cycleId: number) {
@@ -2277,7 +2519,11 @@ export class BotService extends EventEmitter {
     const config = this.configStore.load();
     if (!config.alwaysWarmMode) return;
 
-    const intervalMs = Math.max(60000, config.keepAliveIntervalMs || DEFAULT_KEEP_ALIVE_INTERVAL_MS);
+    const configuredInterval = Math.max(15000, config.keepAliveIntervalMs || DEFAULT_KEEP_ALIVE_INTERVAL_MS);
+    const intervalMs =
+      this.monitoringMode === "target"
+        ? Math.min(configuredInterval, RACE_KEEP_ALIVE_INTERVAL_MS)
+        : Math.max(60000, configuredInterval);
     this.warmKeepAliveTimer = setInterval(() => {
       void this.runWarmKeepAlive("timer");
     }, intervalMs);
