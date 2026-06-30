@@ -98,6 +98,17 @@ const emptyEditor: UserEditorState = {
   color: "#38bdf8"
 };
 
+const REAL_VALIDATION_GROUP = "MOTORISTAS - CAMPOS DOS GOYTACAZES";
+
+function normalizeAdminText(value?: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 function formatDate(value?: string) {
   return value ? new Date(value).toLocaleString("pt-BR") : "Sem registro";
 }
@@ -164,6 +175,27 @@ function clientIncidentSummary(route: RouteDispatch) {
 
 function hasLeaderReaction(route: RouteDispatch) {
   return route.reactions.some((reaction) => reaction.isAdmin) || route.reactionsHistory?.some((event) => event.isAdmin);
+}
+
+function hasAnyReaction(route: RouteDispatch) {
+  return Boolean(
+    route.reactions.length ||
+    route.reactionsHistory?.length ||
+    route.lastReactionState?.status === "active" ||
+    route.lastReactionState?.status === "removed"
+  );
+}
+
+function isRealValidationRoute(route: RouteDispatch) {
+  const targetGroup = normalizeAdminText(REAL_VALIDATION_GROUP);
+  const groupName = normalizeAdminText(route.groupName);
+  const groupJid = normalizeAdminText(route.groupJid);
+  const sentInRealGroup = groupName === targetGroup || groupName.includes(targetGroup) || groupJid.includes(targetGroup);
+  return sentInRealGroup && route.mode === "target" && route.trigger !== "warmup" && route.trigger !== "simulation";
+}
+
+function needsRealReview(route: RouteDispatch) {
+  return isRealValidationRoute(route) && (routeDecision(route) === "pending" || hasAnyReaction(route));
 }
 
 function colorStyle(color?: string) {
@@ -571,7 +603,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
       const decisionOk =
         decisionFilter === "all" ||
         decisionFilter === decision ||
-        (decisionFilter === "leader" && hasLeaderReaction(route)) ||
+        (decisionFilter === "leader" && hasAnyReaction(route)) ||
         (decisionFilter === "removed" && route.lastReactionState?.status === "removed");
       const modeOk =
         modeFilter === "all" ||
@@ -609,14 +641,21 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     [clientFilter, support.messages]
   );
 
-  const pendingRoutes = visibleRoutes.filter((route) => routeDecision(route) === "pending");
-  const leaderPending = pendingRoutes.filter(hasLeaderReaction);
-  const removedReactionRoutes = visibleRoutes.filter((route) => route.lastReactionState?.status === "removed");
+  const realValidationRoutes = visibleRoutes.filter(isRealValidationRoute);
+  const validationReviewRoutes = visibleRoutes.filter(needsRealReview);
+  const validationPendingRoutes = realValidationRoutes.filter((route) => routeDecision(route) === "pending");
+  const validationReactionRoutes = realValidationRoutes.filter(hasAnyReaction);
+  const validationLeaderRoutes = realValidationRoutes.filter(hasLeaderReaction);
+  const validatedRealRoutes = realValidationRoutes.filter((route) => routeDecision(route) === "validated");
+  const nonValidationRoutes = visibleRoutes.filter((route) => !isRealValidationRoute(route));
+  const removedReactionRoutes = realValidationRoutes.filter((route) => route.lastReactionState?.status === "removed");
   const todayRange = dateRangeMs("today");
   const todayRoutes = routes.routes.filter((route) => {
     const created = new Date(route.createdAt).getTime();
     return created >= todayRange.start && created <= todayRange.end;
   });
+  const todayValidationRoutes = todayRoutes.filter(isRealValidationRoute);
+  const todayReviewRoutes = todayRoutes.filter(needsRealReview);
   const staleClients = clients.filter((client) => {
     if (client.presenceStatus === "online" || client.blocked) return false;
     const lastSeen = client.lastSeenAt ? new Date(client.lastSeenAt).getTime() : 0;
@@ -712,15 +751,21 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   }
 
   async function decideSelected(decision: "validate" | "reject") {
-    if (!selectedRoutes.length) return;
+    const allowedIds = page === "validations"
+      ? selectedRoutes.filter((routeId) => realValidationRoutes.some((route) => route.id === routeId))
+      : selectedRoutes;
+    if (!allowedIds.length) {
+      showToast("Selecione rotas reais do grupo de motoristas.");
+      return;
+    }
     setBusy(true);
     try {
       if (decision === "reject") {
         setBusy(false);
-        requestReject(selectedRoutes, "Rejeitar rotas selecionadas");
+        requestReject(allowedIds, "Rejeitar rotas selecionadas");
         return;
       }
-      const nextRoutes = await bulkDecideAdminRoutes({ routeIds: selectedRoutes, decision });
+      const nextRoutes = await bulkDecideAdminRoutes({ routeIds: allowedIds, decision });
       setRoutes(nextRoutes);
       setSelectedRoutes([]);
       showToast(`${nextRoutes.changed} rota(s) atualizada(s).`);
@@ -847,7 +892,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     { id: "today", label: "Hoje", Icon: Clock3, badge: todayRoutes.length },
     { id: "dashboard", label: "Dashboard", Icon: Gauge },
     { id: "clients", label: "Clientes", Icon: Users, badge: onlineClients },
-    { id: "validations", label: "Validações", Icon: ShieldCheck, badge: pendingRoutes.length },
+    { id: "validations", label: "Validações", Icon: ShieldCheck, badge: validationReviewRoutes.length },
     { id: "history", label: "Histórico", Icon: History },
     { id: "logs", label: "Logs", Icon: Activity, badge: visibleLogs.filter((log) => log.level === "error").length },
     { id: "support", label: "Suporte", Icon: Inbox, badge: support.unread },
@@ -914,8 +959,8 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
         {page === "today" ? (
           <section className="adminx-page">
             <div className="adminx-metrics">
-              <MetricCard Icon={History} tone="blue" title="Rotas hoje" value={todayRoutes.length} detail={`${todayRoutes.filter((route) => routeDecision(route) === "validated").length} validadas`} />
-              <MetricCard Icon={ShieldCheck} tone="yellow" title="Pendentes" value={todayRoutes.filter((route) => routeDecision(route) === "pending").length} detail={`${todayRoutes.filter(hasLeaderReaction).length} com líder`} />
+              <MetricCard Icon={History} tone="blue" title="Rotas reais hoje" value={todayValidationRoutes.length} detail={`${todayValidationRoutes.filter((route) => routeDecision(route) === "validated").length} validadas`} />
+              <MetricCard Icon={ShieldCheck} tone="yellow" title="Para examinar" value={todayReviewRoutes.length} detail={`${todayValidationRoutes.filter(hasAnyReaction).length} com reação`} />
               <MetricCard Icon={Users} tone="green" title="Clientes online" value={onlineClients} detail={`${activeBots} monitorando`} />
               <MetricCard Icon={Inbox} tone="red" title="Suporte" value={support.unread} detail="não lidas" />
             </div>
@@ -936,11 +981,11 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
               </article>
               <article className="adminx-panel">
                 <div className="adminx-panel-head">
-                  <div><p>Hoje</p><h2>Rotas pendentes</h2></div>
+                  <div><p>{REAL_VALIDATION_GROUP}</p><h2>Rotas para examinar</h2></div>
                   <button className="button" type="button" onClick={() => setPage("validations")}>Validar</button>
                 </div>
                 <RouteTable
-                  routes={todayRoutes.filter((route) => routeDecision(route) === "pending").slice(0, 8)}
+                  routes={todayReviewRoutes.slice(0, 8)}
                   selectedRoutes={selectedRoutes}
                   compact
                   onSelect={toggleSelected}
@@ -972,7 +1017,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             <div className="adminx-metrics">
               <MetricCard Icon={Wifi} tone="green" title="Clientes online" value={onlineClients} detail={`${connectedBots} bots conectados`} />
               <MetricCard Icon={Bot} tone="blue" title="Monitoramentos" value={activeBots} detail="ativos agora" />
-              <MetricCard Icon={ShieldCheck} tone="yellow" title="Pendentes" value={pendingRoutes.length} detail={`${leaderPending.length} com líder`} />
+              <MetricCard Icon={ShieldCheck} tone="yellow" title="Para examinar" value={validationReviewRoutes.length} detail={`${validationReactionRoutes.length} com reação`} />
               <MetricCard Icon={Inbox} tone="red" title="Suporte" value={support.unread} detail="não lidas" />
               <MetricCard Icon={CheckCircle2} tone="green" title="Taxa validação" value={`${validationRate}%`} detail={`${validatedCount}/${visibleRoutes.length}`} />
               <MetricCard Icon={MessageSquareText} tone="yellow" title="Reações removidas" value={removedReactionRoutes.length} detail="auditáveis" />
@@ -984,7 +1029,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
                   <div><p>Prioridade</p><h2>Fila de validação</h2></div>
                   <button className="button" type="button" onClick={() => setPage("validations")}>Abrir</button>
                 </div>
-                <RouteTable routes={pendingRoutes.slice(0, 6)} selectedRoutes={selectedRoutes} compact onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+                <RouteTable routes={validationReviewRoutes.slice(0, 6)} selectedRoutes={selectedRoutes} compact onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
               </article>
               <article className="adminx-panel">
                 <div className="adminx-panel-head">
@@ -1036,12 +1081,47 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
         {page === "validations" ? (
           <section className="adminx-page">
             <RouteFilters decisionFilter={decisionFilter} modeFilter={modeFilter} onDecision={setDecisionFilter} onMode={setModeFilter} />
+            <div className="adminx-metrics">
+              <MetricCard Icon={ShieldCheck} tone="yellow" title="Para examinar" value={validationReviewRoutes.length} detail={REAL_VALIDATION_GROUP} />
+              <MetricCard Icon={MessageSquareText} tone="blue" title="Com reação" value={validationReactionRoutes.length} detail="qualquer reação conta" />
+              <MetricCard Icon={Clock3} tone="yellow" title="Pendentes reais" value={validationPendingRoutes.length} detail="aguardando decisão" />
+              <MetricCard Icon={CheckCircle2} tone="green" title="Validadas reais" value={validatedRealRoutes.length} detail="grupo de motoristas" />
+              <MetricCard Icon={Users} tone="green" title="Com líder" value={validationLeaderRoutes.length} detail="líder conhecido" />
+              <MetricCard Icon={Ban} tone="red" title="Fora validação" value={nonValidationRoutes.length} detail="teste/aquecimento/outro grupo" />
+            </div>
             <div className="adminx-page-actions">
               <StatusPill tone="yellow">{selectedRoutes.length} selecionada(s)</StatusPill>
               <button className="button primary" disabled={!selectedRoutes.length || busy} type="button" onClick={() => decideSelected("validate")}>Validar lote</button>
               <button className="button danger" disabled={!selectedRoutes.length || busy} type="button" onClick={() => decideSelected("reject")}>Rejeitar lote</button>
             </div>
-            <RouteTable routes={pendingRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+            <section className="adminx-validation-grid">
+              <article className="adminx-panel adminx-panel-wide">
+                <div className="adminx-panel-head">
+                  <div><p>{REAL_VALIDATION_GROUP}</p><h2>Fila real para examinar</h2></div>
+                  <StatusPill tone="yellow">{validationReviewRoutes.length} rota(s)</StatusPill>
+                </div>
+                <RouteTable routes={validationReviewRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+              </article>
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Mesmo sem líder</p><h2>Reações no grupo real</h2></div>
+                </div>
+                <RouteTable routes={validationReactionRoutes.slice(0, 12)} selectedRoutes={selectedRoutes} compact onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+              </article>
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Separadas</p><h2>Já validadas no grupo real</h2></div>
+                </div>
+                <RouteTable routes={validatedRealRoutes.slice(0, 12)} selectedRoutes={selectedRoutes} compact onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+              </article>
+              <article className="adminx-panel adminx-panel-wide">
+                <div className="adminx-panel-head">
+                  <div><p>Não entram na validação real</p><h2>Teste, aquecimento e outros grupos</h2></div>
+                  <StatusPill tone="muted">{nonValidationRoutes.length} rota(s)</StatusPill>
+                </div>
+                <RouteTable routes={nonValidationRoutes.slice(0, 16)} selectedRoutes={selectedRoutes} compact readOnly onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+              </article>
+            </section>
           </section>
         ) : null}
 
@@ -1252,7 +1332,7 @@ function RouteFilters({
         <option value="pending">Pendentes</option>
         <option value="validated">Validadas</option>
         <option value="rejected">Rejeitadas</option>
-        <option value="leader">Com líder</option>
+        <option value="leader">Com reação</option>
         <option value="removed">Reação removida</option>
       </select>
       <select value={modeFilter} onChange={(event) => onMode(event.target.value as ModeFilter)}>
@@ -1272,6 +1352,7 @@ function RouteTable({
   routes,
   selectedRoutes,
   compact = false,
+  readOnly = false,
   onSelect,
   onOpen,
   onValidate,
@@ -1280,6 +1361,7 @@ function RouteTable({
   routes: RouteDispatch[];
   selectedRoutes: string[];
   compact?: boolean;
+  readOnly?: boolean;
   onSelect: (id: string) => void;
   onOpen: (route: RouteDispatch) => void;
   onValidate: (id: string) => void;
@@ -1290,7 +1372,7 @@ function RouteTable({
       <table className="adminx-table">
         <thead>
           <tr>
-            <th />
+            {!readOnly ? <th /> : null}
             <th>Cliente</th>
             <th>Modo</th>
             <th>Trigger</th>
@@ -1304,7 +1386,7 @@ function RouteTable({
         <tbody>
           {routes.map((route) => (
             <tr className={`adminx-route-${routeAgeState(route)}`} key={route.id} style={colorStyle(route.clientColor)}>
-              <td data-label="Selecionar"><input type="checkbox" checked={selectedRoutes.includes(route.id)} onChange={() => onSelect(route.id)} /></td>
+              {!readOnly ? <td data-label="Selecionar"><input type="checkbox" checked={selectedRoutes.includes(route.id)} onChange={() => onSelect(route.id)} /></td> : null}
               <td data-label="Cliente"><span className="adminx-client-dot" />{route.clientEmail}</td>
               <td data-label="Modo">{route.ocr ? <StatusPill tone="blue">OCR</StatusPill> : <StatusPill tone={route.mode === "test" ? "yellow" : "green"}>{route.mode}</StatusPill>}</td>
               <td data-label="Trigger">{triggerLabel(route)}</td>
@@ -1318,14 +1400,14 @@ function RouteTable({
               <td data-label="Ações">
                 <div className="adminx-row-actions">
                   <button className="button" type="button" onClick={() => onOpen(route)}>Ver</button>
-                  <button className="button primary" type="button" onClick={() => onValidate(route.id)}>Validar</button>
-                  <button className="button danger" type="button" onClick={() => onReject(route.id)}>Rejeitar</button>
+                  {!readOnly ? <button className="button primary" type="button" onClick={() => onValidate(route.id)}>Validar</button> : null}
+                  {!readOnly ? <button className="button danger" type="button" onClick={() => onReject(route.id)}>Rejeitar</button> : null}
                 </div>
               </td>
             </tr>
           ))}
           {!routes.length ? (
-            <tr><td colSpan={9}><p className="adminx-empty-text">Nenhuma rota encontrada.</p></td></tr>
+            <tr><td colSpan={readOnly ? 8 : 9}><p className="adminx-empty-text">Nenhuma rota encontrada.</p></td></tr>
           ) : null}
         </tbody>
       </table>
