@@ -186,6 +186,37 @@ function hasAnyReaction(route: RouteDispatch) {
   );
 }
 
+function routeBusinessLabel(route: RouteDispatch) {
+  return route.ocr?.bairro || route.ocr?.route || route.ocr?.code || route.messages[0] || route.groupName || "Rota sem nome";
+}
+
+function uniqueDays(routes: RouteDispatch[]) {
+  return new Set(routes.map((route) => new Date(route.createdAt).toISOString().slice(0, 10))).size;
+}
+
+function averageNumber(values: number[]) {
+  if (!values.length) return 0;
+  return Math.round(values.reduce((total, value) => total + value, 0) / values.length);
+}
+
+function routeP95(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  return Math.round(sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * 0.95) - 1)] || 0);
+}
+
+function topLabels(routes: RouteDispatch[], limit = 3) {
+  const counts = new Map<string, number>();
+  routes.forEach((route) => {
+    const label = routeBusinessLabel(route);
+    counts.set(label, (counts.get(label) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([label, count]) => ({ label, count }));
+}
+
 function isRealValidationRoute(route: RouteDispatch) {
   const targetGroup = normalizeAdminText(REAL_VALIDATION_GROUP);
   const groupName = normalizeAdminText(route.groupName);
@@ -676,6 +707,88 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const validatedCount = visibleRoutes.filter((route) => routeDecision(route) === "validated").length;
   const validationRate = visibleRoutes.length ? Math.round((validatedCount / visibleRoutes.length) * 100) : 0;
   const ocrRoutes = visibleRoutes.filter((route) => Boolean(route.ocr));
+  const sentRoutes = visibleRoutes.filter((route) => route.confirmedCount > 0);
+  const reactedRoutes = visibleRoutes.filter(hasAnyReaction);
+  const rejectedRoutes = visibleRoutes.filter((route) => routeDecision(route) === "rejected");
+  const pendingRoutes = visibleRoutes.filter((route) => routeDecision(route) === "pending");
+  const notAcceptableRoutes = visibleRoutes.filter((route) => (route.dispatchTimeline?.notAcceptableCount || 0) > 0);
+  const averageFirstAck = averageNumber(visibleRoutes.map((route) => route.dispatchTimeline?.firstAckMs || 0).filter(Boolean));
+  const p95FirstAck = routeP95(visibleRoutes.map((route) => route.dispatchTimeline?.firstAckMs || 0).filter(Boolean));
+  const topRouteLabels = topLabels(visibleRoutes, 5);
+
+  const clientIntelligence = useMemo(() => {
+    const now = Date.now();
+    const currentDayOfMonth = new Date().getDate();
+    const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+
+    return clients.map((client) => {
+      const clientRoutes = visibleRoutes.filter((route) => route.clientEmail === client.email);
+      const valid = clientRoutes.filter((route) => routeDecision(route) === "validated").length;
+      const rejected = clientRoutes.filter((route) => routeDecision(route) === "rejected").length;
+      const pending = clientRoutes.filter((route) => routeDecision(route) === "pending").length;
+      const sent = clientRoutes.filter((route) => route.confirmedCount > 0).length;
+      const leader = clientRoutes.filter(hasLeaderReaction).length;
+      const removed = clientRoutes.filter((route) => route.lastReactionState?.status === "removed").length;
+      const notAcceptable = clientRoutes.reduce((total, route) => total + (route.dispatchTimeline?.notAcceptableCount || 0), 0);
+      const activeDays = uniqueDays(clientRoutes);
+      const validation = clientRoutes.length ? Math.round((valid / clientRoutes.length) * 100) : 0;
+      const pickup = clientRoutes.length ? Math.round((sent / clientRoutes.length) * 100) : 0;
+      const paceProjection = Math.round((clientRoutes.length / Math.max(1, currentDayOfMonth)) * daysInMonth);
+      const recentSeen = client.lastSeenAt ? now - new Date(client.lastSeenAt).getTime() < 1000 * 60 * 60 * 2 : false;
+      const score = Math.max(0, Math.min(100,
+        35 +
+        validation * 0.28 +
+        pickup * 0.22 +
+        Math.min(15, activeDays * 2) +
+        (client.monitoringEnabled ? 10 : 0) +
+        (recentSeen ? 5 : 0) -
+        rejected * 3 -
+        pending * 1.5 -
+        removed * 4 -
+        notAcceptable * 1.5
+      ));
+      const risk =
+        !client.monitoringEnabled ? "Bot parado" :
+        notAcceptable >= 3 ? "WhatsApp recusando" :
+        pending >= 5 ? "Validação acumulada" :
+        removed > 0 ? "Reação removida" :
+        score >= 75 ? "Saudável" :
+        "Atenção";
+      return {
+        client,
+        routes: clientRoutes,
+        valid,
+        rejected,
+        pending,
+        sent,
+        leader,
+        removed,
+        notAcceptable,
+        activeDays,
+        validation,
+        pickup,
+        paceProjection,
+        score: Math.round(score),
+        risk,
+        topRoutes: topLabels(clientRoutes, 3),
+        lastRoute: [...clientRoutes].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
+      };
+    }).sort((a, b) => b.score - a.score || b.valid - a.valid || b.routes.length - a.routes.length);
+  }, [clients, period.end, period.start, visibleRoutes]);
+
+  const criticalClients = clientIntelligence
+    .filter((item) => item.risk !== "Saudável" || item.score < 65)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 8);
+  const bestClients = clientIntelligence.slice(0, 6);
+  const projectedMonthRoutes = clientIntelligence.reduce((total, item) => total + item.paceProjection, 0);
+  const funnelSteps = [
+    { label: "Detectadas", value: visibleRoutes.length },
+    { label: "Enviadas", value: sentRoutes.length },
+    { label: "Com reação", value: reactedRoutes.length },
+    { label: "Validadas", value: validatedCount },
+    { label: "Rejeitadas", value: rejectedRoutes.length }
+  ];
 
   const hourlyChart = useMemo(() => {
     const slots = Array.from({ length: 24 }, (_, hour) => ({ hour, count: 0 }));
@@ -963,8 +1076,24 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
               <MetricCard Icon={ShieldCheck} tone="yellow" title="Para examinar" value={todayReviewRoutes.length} detail={`${todayValidationRoutes.filter(hasAnyReaction).length} com reação`} />
               <MetricCard Icon={Users} tone="green" title="Clientes online" value={onlineClients} detail={`${activeBots} monitorando`} />
               <MetricCard Icon={Inbox} tone="red" title="Suporte" value={support.unread} detail="não lidas" />
+              <MetricCard Icon={Zap} tone={notAcceptableRoutes.length ? "red" : "green"} title="WhatsApp" value={notAcceptableRoutes.length} detail="not-acceptable" />
+              <MetricCard Icon={Gauge} tone="blue" title="ACK P95" value={formatMs(p95FirstAck)} detail={`média ${formatMs(averageFirstAck)}`} />
             </div>
             <section className="adminx-dashboard-grid">
+              <article className="adminx-panel adminx-panel-wide">
+                <div className="adminx-panel-head">
+                  <div><p>Sala de guerra</p><h2>Funil operacional de hoje</h2></div>
+                  <StatusPill tone={todayReviewRoutes.length ? "yellow" : "green"}>{todayReviewRoutes.length ? "Ação necessária" : "Controle limpo"}</StatusPill>
+                </div>
+                <FunnelPanel steps={funnelSteps} />
+              </article>
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Clientes críticos</p><h2>Prioridade agora</h2></div>
+                  <button className="button" type="button" onClick={() => setPage("clients")}>Abrir</button>
+                </div>
+                <ClientScoreList items={criticalClients} onOpen={openClient} />
+              </article>
               <article className="adminx-panel">
                 <div className="adminx-panel-head">
                   <div><p>Agora</p><h2>Alertas inteligentes</h2></div>
@@ -1021,15 +1150,35 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
               <MetricCard Icon={Inbox} tone="red" title="Suporte" value={support.unread} detail="não lidas" />
               <MetricCard Icon={CheckCircle2} tone="green" title="Taxa validação" value={`${validationRate}%`} detail={`${validatedCount}/${visibleRoutes.length}`} />
               <MetricCard Icon={MessageSquareText} tone="yellow" title="Reações removidas" value={removedReactionRoutes.length} detail="auditáveis" />
+              <MetricCard Icon={Gauge} tone="blue" title="Projeção mês" value={projectedMonthRoutes} detail="rotas estimadas" />
+              <MetricCard Icon={Zap} tone={notAcceptableRoutes.length ? "red" : "green"} title="Gargalo WA" value={notAcceptableRoutes.length} detail={`ACK P95 ${formatMs(p95FirstAck)}`} />
             </div>
 
             <section className="adminx-dashboard-grid">
+              <article className="adminx-panel adminx-panel-wide">
+                <div className="adminx-panel-head">
+                  <div><p>Inteligência</p><h2>Clientes mais saudáveis</h2></div>
+                  <button className="button" type="button" onClick={() => setPage("reports")}>Relatório</button>
+                </div>
+                <ClientScoreList items={bestClients} onOpen={openClient} />
+              </article>
               <article className="adminx-panel">
                 <div className="adminx-panel-head">
                   <div><p>Prioridade</p><h2>Fila de validação</h2></div>
                   <button className="button" type="button" onClick={() => setPage("validations")}>Abrir</button>
                 </div>
                 <RouteTable routes={validationReviewRoutes.slice(0, 6)} selectedRoutes={selectedRoutes} compact onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+              </article>
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Rotas quentes</p><h2>Mais recorrentes</h2></div>
+                </div>
+                <div className="adminx-hot-routes">
+                  {topRouteLabels.map((route, index) => (
+                    <span key={`${route.label}-${index}`}><b>{route.count}x</b>{route.label}</span>
+                  ))}
+                  {!topRouteLabels.length ? <p className="adminx-empty-text">Sem rotas no filtro.</p> : null}
+                </div>
               </article>
               <article className="adminx-panel">
                 <div className="adminx-panel-head">
@@ -1501,6 +1650,58 @@ function SupportList({ messages, onRead }: { messages: SupportMessage[]; onRead:
   );
 }
 
+function FunnelPanel({ steps }: { steps: Array<{ label: string; value: number }> }) {
+  const max = Math.max(1, steps[0]?.value || 0);
+  return (
+    <div className="adminx-funnel">
+      {steps.map((step) => (
+        <article key={step.label}>
+          <div>
+            <strong>{step.value}</strong>
+            <span>{step.label}</span>
+          </div>
+          <i style={{ width: `${Math.max(6, Math.round((step.value / max) * 100))}%` }} />
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function ClientScoreList({
+  items,
+  onOpen
+}: {
+  items: Array<{
+    client: AdminUserSummary;
+    score: number;
+    risk: string;
+    routes: RouteDispatch[];
+    valid: number;
+    pending: number;
+    pickup: number;
+    paceProjection: number;
+    topRoutes: Array<{ label: string; count: number }>;
+  }>;
+  onOpen: (email: string) => void;
+}) {
+  return (
+    <div className="adminx-score-list">
+      {items.map((item) => (
+        <button key={item.client.email} type="button" onClick={() => onOpen(item.client.email)} style={colorStyle(item.client.color)}>
+          <span className={item.score >= 75 ? "adminx-score good" : item.score >= 55 ? "adminx-score warn" : "adminx-score bad"}>{item.score}</span>
+          <div>
+            <strong>{item.client.email}</strong>
+            <small>{item.risk} - {item.valid}/{item.routes.length} válidas - {item.pickup}% envio</small>
+            <small>{item.topRoutes.length ? item.topRoutes.map((route) => `${route.label} ${route.count}x`).join(" | ") : "sem rotas no filtro"}</small>
+          </div>
+          <b>{item.paceProjection}</b>
+        </button>
+      ))}
+      {!items.length ? <p className="adminx-empty-text">Nenhum cliente nesse filtro.</p> : null}
+    </div>
+  );
+}
+
 function ReportTable({ clients, routes }: { clients: AdminUserSummary[]; routes: RouteDispatch[] }) {
   const rows = clients.map((client) => {
     const clientRoutes = routes.filter((route) => route.clientEmail === client.email);
@@ -1508,9 +1709,19 @@ function ReportTable({ clients, routes }: { clients: AdminUserSummary[]; routes:
     const rejected = clientRoutes.filter((route) => routeDecision(route) === "rejected").length;
     const pending = clientRoutes.filter((route) => routeDecision(route) === "pending").length;
     const leader = clientRoutes.filter(hasLeaderReaction).length;
+    const sent = clientRoutes.filter((route) => route.confirmedCount > 0).length;
+    const activeDays = uniqueDays(clientRoutes);
+    const removed = clientRoutes.filter((route) => route.lastReactionState?.status === "removed").length;
+    const notAcceptable = clientRoutes.reduce((total, route) => total + (route.dispatchTimeline?.notAcceptableCount || 0), 0);
     const rate = clientRoutes.length ? Math.round((valid / clientRoutes.length) * 100) : 0;
-    return { client, clientRoutes, valid, rejected, pending, leader, rate };
-  });
+    const pickup = clientRoutes.length ? Math.round((sent / clientRoutes.length) * 100) : 0;
+    const currentDayOfMonth = new Date().getDate();
+    const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
+    const projection = Math.round((clientRoutes.length / Math.max(1, currentDayOfMonth)) * daysInMonth);
+    const score = Math.max(0, Math.min(100, Math.round(35 + rate * 0.3 + pickup * 0.22 + Math.min(15, activeDays * 2) + (client.monitoringEnabled ? 8 : 0) - rejected * 3 - pending * 1.2 - removed * 4 - notAcceptable * 1.5)));
+    const risk = !client.monitoringEnabled ? "Bot parado" : notAcceptable >= 3 ? "WA recusando" : pending >= 5 ? "Pendência alta" : score >= 75 ? "Saudável" : "Atenção";
+    return { client, clientRoutes, valid, rejected, pending, leader, sent, activeDays, rate, pickup, projection, score, risk, topRoutes: topLabels(clientRoutes, 2) };
+  }).sort((a, b) => b.score - a.score || b.valid - a.valid || b.clientRoutes.length - a.clientRoutes.length);
 
   return (
     <div className="adminx-table-wrap">
@@ -1518,26 +1729,32 @@ function ReportTable({ clients, routes }: { clients: AdminUserSummary[]; routes:
         <thead>
           <tr>
             <th>Cliente</th>
+            <th>Score</th>
             <th>Total</th>
+            <th>Pegas</th>
             <th>Validadas</th>
             <th>Pendentes</th>
             <th>Rejeitadas</th>
             <th>Reações líder</th>
             <th>Taxa</th>
-            <th>Último disparo</th>
+            <th>Projeção</th>
+            <th>Rotas fortes</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.client.email} style={colorStyle(row.client.color)}>
               <td data-label="Cliente"><span className="adminx-client-dot" />{row.client.email}</td>
+              <td data-label="Score"><StatusPill tone={row.score >= 75 ? "green" : row.score >= 55 ? "yellow" : "red"}>{row.score} · {row.risk}</StatusPill></td>
               <td data-label="Total">{row.clientRoutes.length}</td>
+              <td data-label="Pegas">{row.sent} · {row.pickup}%</td>
               <td data-label="Validadas">{row.valid}</td>
               <td data-label="Pendentes">{row.pending}</td>
               <td data-label="Rejeitadas">{row.rejected}</td>
               <td data-label="Reações líder">{row.leader}</td>
               <td data-label="Taxa">{row.rate}%</td>
-              <td data-label="Último disparo">{formatShort(row.clientRoutes[0]?.createdAt)}</td>
+              <td data-label="Projeção">{row.projection}</td>
+              <td data-label="Rotas fortes">{row.topRoutes.map((route) => `${route.label} ${route.count}x`).join(" | ") || "sem recorrência"}</td>
             </tr>
           ))}
         </tbody>

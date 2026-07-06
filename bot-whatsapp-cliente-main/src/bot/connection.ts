@@ -9,7 +9,9 @@ import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { findConfiguredRouteCodeFromOcr, readRouteImageOcr } from "./ocr";
+import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
+import { TelemetryStore } from "./telemetryStore";
 import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
@@ -58,6 +60,8 @@ type BotServiceOptions = {
   authDir?: string;
   configPath?: string;
   routeStorePath?: string;
+  dispatchQueuePath?: string;
+  telemetryPath?: string;
   logStorePath?: string;
   clientEmail?: string;
   adminPhoneNumbers?: string[];
@@ -69,14 +73,26 @@ type BotServiceOptions = {
 
 type MonitoringMode = "target" | "test";
 
-const MAX_RECONNECT_ATTEMPTS = 5;
+const MAX_RECONNECT_ATTEMPTS = 0;
 const RECONNECT_DELAY_MS = 3500;
+const MAX_RECONNECT_DELAY_MS = 30000;
 const HEALTH_CHECK_INTERVAL_MS = 25000;
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
-const RACE_KEEP_ALIVE_INTERVAL_MS = 20000;
+const RACE_KEEP_ALIVE_INTERVAL_MS = 10000;
+const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 60000;
+const CRITICAL_KEEP_ALIVE_INTERVAL_MS = 5000;
+const SOCKET_KEEP_ALIVE_INTERVAL_MS = 10000;
+const SOCKET_CONNECT_TIMEOUT_MS = 15000;
+const SOCKET_QUERY_TIMEOUT_MS = 15000;
 const TARGET_ACK_TIMEOUT_MS = 1200;
+const TARGET_PARALLEL_STAGGER_MS = 90;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
+const PREPARED_RELAY_TTL_MS = 25000;
+const CRITICAL_PREPARED_RELAY_TTL_MS = 5000;
+const NOT_ACCEPTABLE_ALERT_THRESHOLD = 3;
+const NOT_ACCEPTABLE_RETRY_DELAYS_MS = [25, 55, 90, 140, 220, 340, 520, 800, 1200, 1800, 2600, 3800];
+const GENERIC_RETRY_DELAYS_MS = [80, 180, 360, 700, 1100];
 const OPENING_TRIGGER_WORDS = [
   "abriu",
   "aberto",
@@ -86,6 +102,11 @@ const OPENING_TRIGGER_WORDS = [
   "podem mandar",
   "grupo aberto"
 ].map((item) => normalizarTexto(item));
+
+const CRITICAL_WINDOWS = [
+  { start: "04:20", end: "08:00" },
+  { start: "10:20", end: "14:00" }
+];
 export const DEFAULT_LEADER_CONTACTS: LeaderContact[] = [
   { name: "Gabriel Melo - Analista de Transporte", phone: "5511940670165" },
   { name: "André Bomfim", phone: "5521998970947" },
@@ -121,6 +142,7 @@ export class BotService extends EventEmitter {
   private reconnectTimer?: NodeJS.Timeout;
   private healthCheckTimer?: NodeJS.Timeout;
   private warmKeepAliveTimer?: NodeJS.Timeout;
+  private warmKeepAliveIntervalMs = 0;
   private stopping = false;
   private starting?: Promise<void>;
   private activeConnectionId = 0;
@@ -143,6 +165,7 @@ export class BotService extends EventEmitter {
   private preparedMessages: string[] = [];
   private preparedRelayMessages: any[] = []; // esse aqui
   private preparedRelaySignature = "";
+  private preparedRelayBuiltAt = 0;
   private pendingOcrMessages: string[] = [];
   private lastOcrDispatchKey = "";
   private lastOcrInsight?: RouteOcrInsight;
@@ -169,6 +192,8 @@ export class BotService extends EventEmitter {
   };
   private configStore: ConfigStore;
   private routeStore: RouteStore;
+  private dispatchQueueStore: DispatchQueueStore;
+  private telemetryStore: TelemetryStore;
   private logger: BotLogger;
   private authDir: string;
   private statusEventsPath: string;
@@ -179,22 +204,31 @@ export class BotService extends EventEmitter {
   private leaderContacts = new Map<string, string>();
   private activeRouteByCycle = new Map<number, string>();
   private routeMessageIdsByCycle = new Map<number, string[]>();
+  private dispatchQueueIdByCycle = new Map<number, string>();
+  private pendingCredsSave?: NodeJS.Timeout;
+  private saveCredsNow?: () => Promise<void> | void;
   private targetSimulationCycles = new Set<number>();
   private autoClearInvalidSession = false;
   private clearedInvalidSessionInCurrentRun = false;
   private groupMetadataCache = new Map<string, any>();
+  private socketAllowedGroupJids = new Set<string>();
   private currentUserInTargetGroup = false;
   private groups: BotGroup[] = [];
   private armedAt?: number;
   private lastKeepAliveAt?: string;
   private lastKeepAliveDurationMs = 0;
   private keepAliveCount = 0;
+  private lastFullMetadataWarmAt = 0;
+  private adaptiveOpeningSettleMs = 0;
+  private lastNotAcceptableAlertAt = 0;
 
   constructor(options: BotServiceOptions = {}) {
     super();
     this.authDir = options.authDir || path.resolve(process.cwd(), "auth_info");
     this.configStore = new ConfigStore(options.configPath);
     this.routeStore = new RouteStore(options.routeStorePath || path.resolve(process.cwd(), "route_history.json"));
+    this.dispatchQueueStore = new DispatchQueueStore(options.dispatchQueuePath || path.resolve(process.cwd(), "dispatch_queue.json"));
+    this.telemetryStore = new TelemetryStore(options.telemetryPath || path.resolve(process.cwd(), "dispatch_telemetry.json"));
     this.logger = new BotLogger(() => this.emitSnapshot(), options.logStorePath || path.resolve(process.cwd(), "bot_logs.json"));
     this.statusEventsPath = path.join(path.dirname(options.routeStorePath || path.resolve(process.cwd(), "route_history.json")), "status_events.json");
     this.statusEvents = this.loadStatusEvents();
@@ -209,6 +243,7 @@ export class BotService extends EventEmitter {
     this.autoClearInvalidSession = Boolean(options.autoClearInvalidSession);
     const config = this.configStore.load();
     this.refreshRuntimeSettings(config);
+    this.refreshSocketJidFilterCache(config);
     this.codigosEscolhidos = options.initialCodes?.length ? options.initialCodes : [];
     this.montarMensagens();
     this.warmupMessagesSent = 0;
@@ -216,6 +251,7 @@ export class BotService extends EventEmitter {
   }
 
   getSnapshot(): BotSnapshot {
+    const telemetry = this.telemetryStore.summary();
     return {
       status: this.status,
       groupState: this.groupState,
@@ -237,7 +273,16 @@ export class BotService extends EventEmitter {
         armedIdleMs: this.monitoringEnabled && this.armedAt ? Date.now() - this.armedAt : 0,
         lastKeepAliveAt: this.lastKeepAliveAt,
         lastKeepAliveDurationMs: this.lastKeepAliveDurationMs,
-        keepAliveCount: this.keepAliveCount
+        keepAliveCount: this.keepAliveCount,
+        activeQueue: Math.max(this.performanceMetrics.activeQueue, this.dispatchQueueStore.pending().length),
+        telemetryCount: telemetry.count,
+        averageFirstRelayMs: telemetry.averageFirstRelayMs,
+        p95FirstRelayMs: telemetry.p95FirstRelayMs,
+        averageFirstAckMs: telemetry.averageFirstAckMs,
+        p95FirstAckMs: telemetry.p95FirstAckMs,
+        notAcceptableCount: telemetry.notAcceptableCount,
+        lastNotAcceptableAt: telemetry.lastNotAcceptableAt,
+        criticalWarmMode: this.isCriticalWarmWindow()
       },
       routeDispatches: this.getRoutes(),
       statusEvents: this.statusEvents
@@ -265,6 +310,8 @@ export class BotService extends EventEmitter {
     confirmed: number;
     total: number;
     timeline?: RouteDispatchTimeline;
+    trigger?: RouteDispatch["trigger"];
+    mode?: MonitoringMode;
   }) {
     const latency = Math.max(0, input.sendStartedAt - input.eventDetectedAt);
     const duration = Math.max(0, input.sendFinishedAt - input.sendStartedAt);
@@ -287,6 +334,16 @@ export class BotService extends EventEmitter {
       activeQueue: 0,
       lastDispatchAt: new Date(input.sendFinishedAt).toISOString()
     };
+
+    const event = this.telemetryStore.record({
+      clientEmail: this.clientEmail,
+      trigger: input.trigger,
+      mode: input.mode || this.monitoringMode,
+      confirmed: input.confirmed,
+      total: input.total,
+      timeline: input.timeline
+    });
+    this.maybeAlertNotAcceptable(event.notAcceptableCount);
   }
 
   private createDispatchTimeline(eventDetectedAt: number, sendStartedAt: number, mode: RouteDispatchTimeline["mode"]): RouteDispatchTimeline {
@@ -335,6 +392,78 @@ export class BotService extends EventEmitter {
     });
   }
 
+  private enqueueDispatch(cycleId: number, jid: string, mensagens: string[], trigger: RouteDispatch["trigger"]) {
+    const item = this.dispatchQueueStore.enqueue({
+      id: `${this.clientEmail || "local"}-${cycleId}`,
+      cycleId,
+      clientEmail: this.clientEmail,
+      jid,
+      messages: mensagens,
+      trigger,
+      mode: this.monitoringMode
+    });
+    this.dispatchQueueIdByCycle.set(cycleId, item.id);
+    return item.id;
+  }
+
+  private markQueuedDispatchSending(cycleId: number, routeId?: string) {
+    const queueId = this.dispatchQueueIdByCycle.get(cycleId);
+    if (!queueId) return;
+    this.dispatchQueueStore.incrementAttempts(queueId);
+    this.dispatchQueueStore.markSending(queueId, routeId);
+  }
+
+  private markQueuedDispatchFinished(cycleId: number, confirmedCount: number, totalCount: number, error?: string) {
+    const queueId = this.dispatchQueueIdByCycle.get(cycleId);
+    if (!queueId) return;
+    const status = confirmedCount === totalCount ? "sent" : confirmedCount > 0 ? "partial" : "failed";
+    this.dispatchQueueStore.markFinished(queueId, status, confirmedCount, error);
+    this.dispatchQueueIdByCycle.delete(cycleId);
+  }
+
+  private markQueuedDispatchAbandoned(cycleId: number, error: string) {
+    const queueId = this.dispatchQueueIdByCycle.get(cycleId);
+    if (!queueId) return;
+    this.dispatchQueueStore.markAbandoned(queueId, error);
+    this.dispatchQueueIdByCycle.delete(cycleId);
+  }
+
+  private reportPendingDispatchesAfterBoot() {
+    const pending = this.dispatchQueueStore.pending();
+    if (!pending.length) return;
+
+    const recent = pending.filter((item) => Date.now() - new Date(item.updatedAt).getTime() < 1000 * 60 * 5);
+    const stale = pending.filter((item) => !recent.includes(item));
+
+    for (const item of stale) {
+      this.dispatchQueueStore.markAbandoned(item.id, "Pendência antiga abandonada ao reiniciar para evitar disparo duplicado.");
+    }
+
+    if (recent.length) {
+      this.logger.warning(
+        `Fila encontrou ${recent.length} disparo(s) recente(s) pendente(s) após reinício. Mantive travado para evitar duplicidade; confira o histórico antes de reenviar.`
+      );
+    }
+  }
+
+  private scheduleCredsSave() {
+    if (!this.saveCredsNow) return;
+    if (this.pendingCredsSave) return;
+    this.pendingCredsSave = setTimeout(() => {
+      this.pendingCredsSave = undefined;
+      void this.flushCreds();
+    }, 300);
+  }
+
+  private async flushCreds() {
+    if (this.pendingCredsSave) {
+      clearTimeout(this.pendingCredsSave);
+      this.pendingCredsSave = undefined;
+    }
+    if (!this.saveCredsNow) return;
+    await this.saveCredsNow();
+  }
+
   validateRoute(routeId: string, validatedBy: string) {
     const changed = this.routeStore.validate(routeId, validatedBy);
     if (changed) this.emitSnapshot();
@@ -352,7 +481,7 @@ export class BotService extends EventEmitter {
   }
 
   getPendingClientIncidentRoutes() {
-    return this.getRoutes().filter((route) => route.clientIncident?.required && !route.clientIncident.answeredAt);
+    return this.getRoutes().filter((route) => RouteStore.isClientIncidentDue(route));
   }
 
   submitClientIncident(routeId: string, valid: boolean, reason: string) {
@@ -366,6 +495,19 @@ export class BotService extends EventEmitter {
       this.emitSnapshot();
     }
     return changed;
+  }
+
+  snoozeClientIncident(routeId: string) {
+    const result = this.routeStore.snoozeClientIncident(routeId);
+    if (result.ok) {
+      this.logger.warning(`Cliente adiou a explicação do incidente por ${result.delayMinutes} minuto(s). Próxima cobrança: ${new Date(result.nextDueAt || Date.now()).toLocaleString("pt-BR")}.`);
+      this.emitSnapshot();
+      return true;
+    }
+    if (result.exhausted) {
+      this.logger.warning("Cliente já usou todos os adiamentos do incidente. A resposta agora é obrigatória.");
+    }
+    return false;
   }
 
   setLeaderContacts(contacts: LeaderContact[]) {
@@ -407,7 +549,8 @@ export class BotService extends EventEmitter {
 
     this.monitoringMode = "target";
     const modeLabel = targetDispatchMode === "ocr" ? "bot imagem" : useNuclearMode ? "modo nuclear" : "bot manual";
-    this.configStore.save({ nuclearMode: useNuclearMode, targetDispatchMode });
+    const config = this.configStore.save({ nuclearMode: useNuclearMode, targetDispatchMode });
+    this.refreshSocketJidFilterCache(config);
     this.pendingOcrMessages = [];
     this.lastOcrDispatchKey = "";
     this.logger.info(`Modo ${modeLabel} selecionado. Os outros modos ficarão desligados.`);
@@ -455,12 +598,12 @@ export class BotService extends EventEmitter {
       return false;
     }
 
-    if (testGroup.jid !== config.grupoTesteJid) {
-      this.configStore.saveTestGroupById(testGroup.jid, config.grupoTesteNome || "Grupo teste");
-    }
+    const nextConfig = testGroup.jid !== config.grupoTesteJid
+      ? this.configStore.saveTestGroupById(testGroup.jid, config.grupoTesteNome || "Grupo teste")
+      : config;
 
     this.monitoringMode = "test";
-    this.configStore.save({ nuclearMode: false });
+    this.refreshSocketJidFilterCache(this.configStore.save({ ...nextConfig, nuclearMode: false }));
 
     if (!this.hasReadyMessages("test")) {
       this.monitoringEnabled = false;
@@ -490,6 +633,7 @@ export class BotService extends EventEmitter {
   disableMonitoring(): void {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
+    this.refreshSocketJidFilterCache();
     this.armedAt = undefined;
     this.sendCycleId += 1;
     this.activeSendCycle = undefined;
@@ -523,6 +667,7 @@ export class BotService extends EventEmitter {
     }
 
     this.monitoringMode = "target";
+    this.refreshSocketJidFilterCache();
 
     if (!this.prepareSendPlan()) {
       this.logger.error("Simulação cancelada: não consegui preparar o plano de disparo.");
@@ -548,6 +693,7 @@ export class BotService extends EventEmitter {
     }
 
     this.monitoringMode = "target";
+    this.refreshSocketJidFilterCache();
     if (!this.configStore.load().grupoAlvoJid && this.configStore.load().grupoAlvoNome) {
       await this.resolveConfiguredGroup();
     }
@@ -637,6 +783,63 @@ export class BotService extends EventEmitter {
     return true;
   }
 
+  async runLatencyProbeOnTestGroup(): Promise<boolean> {
+    if (!this.sock || this.status !== "connected") {
+      this.logger.warning("Conecte o WhatsApp antes de medir latência.");
+      return false;
+    }
+
+    const config = this.configStore.load();
+    if (!config.grupoTesteJid && !config.grupoTesteNome) {
+      this.logger.warning("Salve um grupo de teste antes de medir latência.");
+      return false;
+    }
+
+    const testGroup = await this.resolveWarmupTarget(config);
+    if (!testGroup?.jid) {
+      this.logger.warning("Não foi possível resolver o grupo de teste para medir latência.");
+      return false;
+    }
+
+    const previousMode = this.monitoringMode;
+    const previousTargetJid = this.preparedTargetJid;
+    const previousMessages = [...this.preparedMessages];
+    const previousRelayMessages = [...this.preparedRelayMessages];
+    const previousRelaySignature = this.preparedRelaySignature;
+    const previousRelayBuiltAt = this.preparedRelayBuiltAt;
+
+    const cycleId = ++this.sendCycleId;
+    const eventDetectedAt = Date.now();
+    const message = `Teste latencia ${new Date(eventDetectedAt).toLocaleTimeString("pt-BR", { hour12: false })}`;
+    this.targetSimulationCycles.add(cycleId);
+    this.monitoringMode = "test";
+    this.refreshSocketJidFilterCache();
+    this.preparedTargetJid = testGroup.jid;
+    this.preparedMessages = [message];
+    this.rebuildPreparedRelayMessages(testGroup.jid, [message]);
+    this.enqueueDispatch(cycleId, testGroup.jid, [message], "simulation");
+    const routeId = this.registerRouteDispatch(cycleId, testGroup.jid, [message], "simulation");
+    this.markQueuedDispatchSending(cycleId, routeId);
+    this.performanceMetrics.activeQueue = 1;
+
+    const sendCycle = this.sendFastSequence(testGroup.jid, [message], cycleId, eventDetectedAt, eventDetectedAt, "simulation").finally(() => {
+      this.targetSimulationCycles.delete(cycleId);
+      if (cycleId === this.sendCycleId) this.activeSendCycle = undefined;
+      this.monitoringMode = previousMode;
+      this.refreshSocketJidFilterCache();
+      this.preparedTargetJid = previousTargetJid;
+      this.preparedMessages = previousMessages;
+      this.preparedRelayMessages = previousRelayMessages;
+      this.preparedRelaySignature = previousRelaySignature;
+      this.preparedRelayBuiltAt = previousRelayBuiltAt;
+    });
+
+    this.activeSendCycle = sendCycle;
+    this.logger.info(`Teste de latência enviado no grupo de teste: ${testGroup.jid}`);
+    this.emitSnapshot();
+    return true;
+  }
+
   async start() {
     if (this.starting) return this.starting;
     if (this.isRunning()) {
@@ -678,6 +881,13 @@ export class BotService extends EventEmitter {
     this.reconnectAttempts = 0;
     this.qrCode = "";
 
+    await this.flushCreds().catch((error) => {
+      this.logger.warning(`Não consegui salvar credenciais antes de parar: ${this.getErrorMessage(error)}`);
+    });
+    this.routeStore.flush();
+    this.dispatchQueueStore.flush();
+    this.telemetryStore.flush();
+
     if (this.sock) {
       try {
         this.sock.ev.removeAllListeners("connection.update");
@@ -698,10 +908,12 @@ export class BotService extends EventEmitter {
     this.reactionProcessingScheduled = false;
     this.pendingOcrMessages = [];
     this.processingImageIds.clear();
+    this.dispatchQueueIdByCycle.clear();
     this.preparedTargetJid = "";
     this.preparedMessages = [];
     this.preparedRelayMessages = []; // esse aqui
     this.preparedRelaySignature = "";
+    this.preparedRelayBuiltAt = 0;
     this.setStatus("disconnected");
     this.logger.info("Bot parado.");
   }
@@ -768,6 +980,7 @@ export class BotService extends EventEmitter {
     }
 
     this.configStore.save(DEFAULT_CONFIG);
+    this.refreshSocketJidFilterCache(DEFAULT_CONFIG);
     this.groupState = "unknown";
     this.qrCode = "";
     this.pairingCode = "";
@@ -788,10 +1001,13 @@ export class BotService extends EventEmitter {
     this.currentUserInTargetGroup = false;
     this.groups = [];
     this.groupMetadataCache.clear();
+    this.dispatchQueueIdByCycle.clear();
+    this.dispatchQueueStore.clear();
     this.preparedTargetJid = "";
     this.preparedMessages = [];
     this.preparedRelayMessages = [];
     this.preparedRelaySignature = "";
+    this.preparedRelayBuiltAt = 0;
     this.resetWarmupState();
     this.codigosEscolhidos = [];
     this.montarMensagens();
@@ -804,12 +1020,14 @@ export class BotService extends EventEmitter {
     const config = groupId
       ? this.configStore.saveGroupById(groupId, groupName || group)
       : this.configStore.saveGroup(group);
+    this.refreshSocketJidFilterCache(config);
     this.groupState = "unknown";
     this.currentUserInTargetGroup = false;
     this.preparedTargetJid = "";
     this.preparedMessages = [];
     this.preparedRelayMessages = [];
     this.preparedRelaySignature = "";
+    this.preparedRelayBuiltAt = 0;
     this.pendingOcrMessages = [];
     this.lastOcrDispatchKey = "";
     this.logger.success(`Grupo alterado para: ${config.grupoAlvoNome || config.grupoAlvoJid}`);
@@ -826,6 +1044,7 @@ export class BotService extends EventEmitter {
     const config = groupId
       ? this.configStore.saveTestGroupById(groupId, groupName || group)
       : this.configStore.saveTestGroup(group);
+    this.refreshSocketJidFilterCache(config);
     this.logger.success(`Grupo de teste salvo: ${config.grupoTesteNome || config.grupoTesteJid}`);
     this.emitSnapshot();
   }
@@ -982,6 +1201,24 @@ export class BotService extends EventEmitter {
       name: config.grupoAlvoNome || config.grupoAlvoJid,
       label: "grupo alvo"
     };
+  }
+
+  private refreshSocketJidFilterCache(config = this.configStore.load()) {
+    const activeGroup = this.getActiveMonitoringGroup(config).jid;
+    this.socketAllowedGroupJids = new Set(
+      [activeGroup, config.grupoAlvoJid, config.grupoTesteJid]
+        .map((item) => String(item || ""))
+        .filter(Boolean)
+    );
+  }
+
+  private shouldIgnoreSocketJid(jid: string) {
+    const normalized = String(jid || "");
+    if (!normalized) return false;
+    if (normalized === "status@broadcast" || normalized.endsWith("@newsletter")) return true;
+    if (!normalized.endsWith("@g.us")) return false;
+
+    return this.socketAllowedGroupJids.size > 0 && !this.socketAllowedGroupJids.has(normalized);
   }
 
   private async sendWarmupMessage(jid: string, mensagem: string, messageNumber: number) {
@@ -1149,20 +1386,27 @@ export class BotService extends EventEmitter {
 
     await loadBaileys();
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    this.saveCredsNow = saveCreds;
     const version = await this.getWhatsAppVersion();
 
     this.sock = makeWASocket({
       auth: state,
       version,
       logger: P({ level: "silent" }),
+      connectTimeoutMs: SOCKET_CONNECT_TIMEOUT_MS,
+      defaultQueryTimeoutMs: SOCKET_QUERY_TIMEOUT_MS,
+      keepAliveIntervalMs: SOCKET_KEEP_ALIVE_INTERVAL_MS,
+      emitOwnEvents: false,
+      fireInitQueries: false,
       printQRInTerminal: false,
       markOnlineOnConnect: true,
       syncFullHistory: false,
       browser: Browsers?.ubuntu?.("Bot Rota Rapida") || ["Ubuntu", "Chrome", "1.0.0"],
+      shouldIgnoreJid: (jid: string) => this.shouldIgnoreSocketJid(jid),
       cachedGroupMetadata: async (jid: string) => this.groupMetadataCache.get(jid)
     });
 
-    this.sock.ev.on("creds.update", saveCreds);
+    this.sock.ev.on("creds.update", () => this.scheduleCredsSave());
     this.sock.ev.on("connection.update", (update: any) =>
       this.handleConnectionUpdate(update, connectionId)
     );
@@ -1199,6 +1443,7 @@ export class BotService extends EventEmitter {
       this.logger.success("WhatsApp conectado.");
 
       try {
+        this.reportPendingDispatchesAfterBoot();
         await this.loadGroups();
         await this.resolveConfiguredGroup();
         void this.prewarmConnection("Pré-aquecendo sessão após conexão...");
@@ -1286,7 +1531,7 @@ export class BotService extends EventEmitter {
     this.clearReconnectTimer();
     this.clearHealthCheckTimer();
     this.clearWarmKeepAliveTimer();
-    this.reconnectAttempts = MAX_RECONNECT_ATTEMPTS;
+    this.reconnectAttempts = Math.max(this.reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
     this.error = message;
     this.pairingCodeRequested = false;
     this.setStatus("error");
@@ -1401,7 +1646,7 @@ export class BotService extends EventEmitter {
   private scheduleReconnect(forceNewQr: boolean) {
     this.clearReconnectTimer();
 
-    if (this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    if (MAX_RECONNECT_ATTEMPTS > 0 && this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       this.clearReconnectTimer();
       this.clearHealthCheckTimer();
       this.clearWarmKeepAliveTimer();
@@ -1413,15 +1658,23 @@ export class BotService extends EventEmitter {
     }
 
     this.reconnectAttempts += 1;
-      this.setStatus("reconnecting");
-      this.addStatusEvent("reconnecting", `Tentativa de reconexão ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}.`);
+    this.setStatus("reconnecting");
+    this.addStatusEvent(
+      "reconnecting",
+      MAX_RECONNECT_ATTEMPTS > 0
+        ? `Tentativa de reconexão ${this.reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}.`
+        : `Tentativa de reconexão ${this.reconnectAttempts}.`
+    );
+    const backoffMs = forceNewQr
+      ? 500
+      : Math.min(MAX_RECONNECT_DELAY_MS, RECONNECT_DELAY_MS + Math.max(0, this.reconnectAttempts - 1) * 2500);
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch((error) => {
         this.error = this.getErrorMessage(error);
-        this.setStatus("error");
-        this.logger.error(this.error);
+        this.logger.warning(`Reconexão falhou: ${this.error}`);
+        this.scheduleReconnect(false);
       });
-    }, forceNewQr ? 500 : RECONNECT_DELAY_MS);
+    }, backoffMs);
   }
 
   private handleGroupsUpdate(updates: any[], connectionId: number) {
@@ -1588,7 +1841,7 @@ export class BotService extends EventEmitter {
         }
       );
 
-      fs.writeFileSync(imagePath, buffer);
+      await fs.promises.writeFile(imagePath, buffer);
       const ocr = await readRouteImageOcr(imagePath);
       const detected = findConfiguredRouteCodeFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
       if (!detected) {
@@ -1913,7 +2166,9 @@ export class BotService extends EventEmitter {
       sendStartedAt,
       this.monitoringMode === "target" ? "race" : "normal"
     );
-    this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger, timeline);
+    this.enqueueDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
+    const routeId = this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger, timeline);
+    this.markQueuedDispatchSending(cycleId, routeId);
     this.performanceMetrics.activeQueue = mensagens.length;
     this.criticalDispatchInProgress = true;
     const sendCycle =
@@ -1938,7 +2193,13 @@ export class BotService extends EventEmitter {
   private ensurePreparedRelayMessages(jid: string, mensagens: string[]) {
     if (!this.sock || !jid) return;
     const signature = this.getRelaySignature(jid, mensagens);
-    if (this.preparedRelaySignature === signature && this.preparedRelayMessages.length === mensagens.length) return;
+    if (
+      this.preparedRelaySignature === signature &&
+      this.preparedRelayMessages.length === mensagens.length &&
+      !this.isPreparedRelayStale()
+    ) {
+      return;
+    }
     this.rebuildPreparedRelayMessages(jid, mensagens);
   }
 
@@ -1946,14 +2207,24 @@ export class BotService extends EventEmitter {
     if (!this.sock || !jid) {
       this.preparedRelayMessages = [];
       this.preparedRelaySignature = "";
+      this.preparedRelayBuiltAt = 0;
       return;
     }
     this.preparedRelayMessages = mensagens.map((mensagem) => this.buildRelayTextMessage(this.sock, jid, mensagem));
     this.preparedRelaySignature = this.getRelaySignature(jid, mensagens);
+    this.preparedRelayBuiltAt = Date.now();
   }
 
   private getRelaySignature(jid: string, mensagens: string[]) {
     return `${jid}::${mensagens.join("\u001f")}`;
+  }
+
+  private isPreparedRelayStale() {
+    return !this.preparedRelayBuiltAt || Date.now() - this.preparedRelayBuiltAt >= this.getPreparedRelayTtlMs();
+  }
+
+  private getPreparedRelayTtlMs() {
+    return this.isCriticalWarmWindow() ? CRITICAL_PREPARED_RELAY_TTL_MS : PREPARED_RELAY_TTL_MS;
   }
 
   private registerRouteDispatch(
@@ -1982,9 +2253,10 @@ export class BotService extends EventEmitter {
     });
     this.activeRouteByCycle.set(cycleId, route.id);
     this.routeMessageIdsByCycle.set(cycleId, sentMessageIds);
+    return route.id;
   }
 
-  private updateRouteDispatch(cycleId: number, confirmedCount: number, totalCount: number, dispatchTimeline?: RouteDispatchTimeline) {
+  private updateRouteDispatch(cycleId: number, confirmedCount: number, totalCount: number, dispatchTimeline?: RouteDispatchTimeline, finalizeQueue = false) {
     const routeId = this.activeRouteByCycle.get(cycleId);
     if (!routeId) return;
     const patch: Parameters<RouteStore["update"]>[1] = {
@@ -1995,6 +2267,7 @@ export class BotService extends EventEmitter {
     if (sentMessageIds?.length) patch.sentMessageIds = sentMessageIds;
     if (dispatchTimeline) patch.dispatchTimeline = dispatchTimeline;
     this.routeStore.update(routeId, patch);
+    if (finalizeQueue) this.markQueuedDispatchFinished(cycleId, confirmedCount, totalCount);
     this.emitSnapshot();
   }
 
@@ -2015,6 +2288,8 @@ export class BotService extends EventEmitter {
       const sock = this.sock;
       if (!sock) {
         this.logger.error("Não há conexão ativa no momento do disparo.");
+        this.updateRouteDispatch(cycleId, 0, mensagens.length, undefined, true);
+        this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length, trigger, mode: this.monitoringMode });
         return;
       }
 
@@ -2025,8 +2300,8 @@ export class BotService extends EventEmitter {
         } else {
           this.logger.warning("Disparo terminou com atenção: 0/1 mensagem confirmada.");
         }
-        this.updateRouteDispatch(cycleId, sent ? 1 : 0, 1);
-        this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: sent ? 1 : 0, total: 1 });
+        this.updateRouteDispatch(cycleId, sent ? 1 : 0, 1, undefined, true);
+        this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: sent ? 1 : 0, total: 1, trigger, mode: this.monitoringMode });
         return;
       }
 
@@ -2067,12 +2342,12 @@ export class BotService extends EventEmitter {
       } else {
         this.logger.warning(`Disparo terminou com atenção: ${confirmed}/${mensagens.length} mensagens confirmadas.`);
       }
-      this.updateRouteDispatch(cycleId, confirmed, mensagens.length);
-      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed, total: mensagens.length });
+      this.updateRouteDispatch(cycleId, confirmed, mensagens.length, undefined, true);
+      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed, total: mensagens.length, trigger, mode: this.monitoringMode });
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo turbo: ${this.getErrorMessage(error)}`);
-      this.updateRouteDispatch(cycleId, 0, mensagens.length);
-      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length });
+      this.updateRouteDispatch(cycleId, 0, mensagens.length, undefined, true);
+      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length, trigger, mode: this.monitoringMode });
     }
   }
 
@@ -2102,7 +2377,15 @@ export class BotService extends EventEmitter {
       const sock = this.sock;
       if (!sock) {
         this.logger.error("Não há conexão ativa no momento do disparo.");
+        this.updateRouteDispatch(cycleId, 0, mensagens.length, timeline, true);
+        this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length, timeline, trigger, mode: this.monitoringMode });
+        this.stopMonitoringAfterTargetDispatch(cycleId);
         return;
+      }
+
+      if (trigger === "automatic" && this.monitoringMode === "target" && this.adaptiveOpeningSettleMs > 0) {
+        this.addTimelineEvent(timeline, "Micro-espera adaptativa", Date.now(), "info", `${this.adaptiveOpeningSettleMs}ms`);
+        await this.delay(this.adaptiveOpeningSettleMs);
       }
 
       const relayMessages = this.preparedRelayMessages && this.preparedRelayMessages.length
@@ -2111,17 +2394,19 @@ export class BotService extends EventEmitter {
 
       const jobs = relayMessages.map((fullMessage, index) => {
         const messageNumber = index + 1;
-        const calledAt = Date.now();
-        if (!timeline.firstRelayCalledAt) {
-          timeline.firstRelayCalledAt = new Date(calledAt).toISOString();
-          timeline.firstRelayCallMs = Math.max(0, calledAt - sendStartedAt);
-        }
-        this.addTimelineEvent(timeline, `Relay ${messageNumber} chamado`, calledAt, "info", String(fullMessage?.key?.id || ""));
 
         const firstAttempt = (async () => {
           if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
             throw new Error("Ciclo cancelado pelo painel ou por nova abertura.");
           }
+          const staggerMs = index === 0 ? 0 : TARGET_PARALLEL_STAGGER_MS * index;
+          if (staggerMs > 0) await this.delay(staggerMs);
+          const calledAt = Date.now();
+          if (!timeline.firstRelayCalledAt) {
+            timeline.firstRelayCalledAt = new Date(calledAt).toISOString();
+            timeline.firstRelayCallMs = Math.max(0, calledAt - sendStartedAt);
+          }
+          this.addTimelineEvent(timeline, `Relay ${messageNumber} chamado`, calledAt, "info", String(fullMessage?.key?.id || ""));
           await this.relayPreparedMessage(sock, jid, fullMessage);
           return String(fullMessage?.key?.id || "");
         })();
@@ -2174,8 +2459,9 @@ export class BotService extends EventEmitter {
     } catch (error) {
       this.logger.error(`Erro inesperado no disparo agressivo: ${this.getErrorMessage(error)}`);
       this.addTimelineEvent(timeline, "Erro inesperado", Date.now(), "error", this.getErrorMessage(error));
-      this.updateRouteDispatch(cycleId, 0, mensagens.length, timeline);
-      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length, timeline });
+      this.updateRouteDispatch(cycleId, 0, mensagens.length, timeline, true);
+      this.updateAdaptiveOpeningSettle(timeline);
+      this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length, timeline, trigger, mode: this.monitoringMode });
       this.stopMonitoringAfterTargetDispatch(cycleId);
     }
   }
@@ -2222,14 +2508,17 @@ export class BotService extends EventEmitter {
       this.logger.warning(`Disparo modo corrida terminou com atenção em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
     }
 
-    this.updateRouteDispatch(input.cycleId, confirmed, input.total, input.timeline);
+    this.updateRouteDispatch(input.cycleId, confirmed, input.total, input.timeline, true);
+    this.updateAdaptiveOpeningSettle(input.timeline);
     this.recordDispatchMetrics({
       eventDetectedAt: input.eventDetectedAt,
       sendStartedAt: input.sendStartedAt,
       sendFinishedAt: finishedAt,
       confirmed,
       total: input.total,
-      timeline: input.timeline
+      timeline: input.timeline,
+      trigger: input.trigger,
+      mode: this.monitoringMode
     });
     this.addStatusEvent("dispatch", `${triggerLabelForEvent(input.trigger)} confirmado: ${confirmed}/${input.total}.`);
     this.activeRouteByCycle.delete(input.cycleId);
@@ -2248,13 +2537,13 @@ export class BotService extends EventEmitter {
     if (!this.isRetryableSendError(firstMessage)) throw error;
 
     timeline.retryUsed = true;
-    if (firstMessage.toLowerCase().includes("not-acceptable")) {
+    const firstNotAcceptable = this.isNotAcceptableError(firstMessage);
+    if (firstNotAcceptable) {
       timeline.notAcceptableCount += 1;
-      void this.diagnoseNotAcceptable(jid, cycleId);
-      await this.refreshGroupMetadata(jid).catch(() => undefined);
+      this.scheduleNotAcceptableDiagnosis(jid, cycleId);
     }
 
-    const delays = [80, 180, 360, 700, 1100];
+    const delays = firstNotAcceptable ? NOT_ACCEPTABLE_RETRY_DELAYS_MS : GENERIC_RETRY_DELAYS_MS;
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
       if (cycleId !== this.sendCycleId) return false;
       await this.delay(delays[attempt]);
@@ -2267,10 +2556,9 @@ export class BotService extends EventEmitter {
         return messageId || false;
       } catch (nextError) {
         const nextMessage = this.getErrorMessage(nextError);
-        if (nextMessage.toLowerCase().includes("not-acceptable")) {
+        if (this.isNotAcceptableError(nextMessage)) {
           timeline.notAcceptableCount += 1;
-          void this.diagnoseNotAcceptable(jid, cycleId);
-          await this.refreshGroupMetadata(jid).catch(() => undefined);
+          this.scheduleNotAcceptableDiagnosis(jid, cycleId);
         }
         if (!this.isRetryableSendError(nextMessage) || attempt === delays.length - 1) {
           throw nextError;
@@ -2381,6 +2669,7 @@ export class BotService extends EventEmitter {
   private async relayPreparedMessage(sock: any, jid: string, fullMessage: any) {
     await sock.relayMessage(jid, fullMessage.message, {
       messageId: fullMessage.key.id,
+      useUserDevicesCache: true,
       useCachedGroupMetadata: true
     });
   }
@@ -2421,12 +2710,13 @@ export class BotService extends EventEmitter {
       );
     }
 
-    this.preparedRelayMessages =
-      this.sock && this.preparedTargetJid
-        ? this.preparedMessages.map((mensagem) => this.buildRelayTextMessage(this.sock, this.preparedTargetJid, mensagem))
-        : [];
-    this.preparedRelaySignature =
-      this.sock && this.preparedTargetJid ? this.getRelaySignature(this.preparedTargetJid, this.preparedMessages) : "";
+    if (this.sock && this.preparedTargetJid) {
+      this.ensurePreparedRelayMessages(this.preparedTargetJid, this.preparedMessages);
+    } else {
+      this.preparedRelayMessages = [];
+      this.preparedRelaySignature = "";
+      this.preparedRelayBuiltAt = 0;
+    }
 
     return Boolean(
       this.preparedTargetJid &&
@@ -2449,7 +2739,7 @@ export class BotService extends EventEmitter {
   ) {
     const config = this.configStore.load();
     const minDelay = Math.max(0, config.minSendDelayMs || 0);
-    const delays = [minDelay, 10, 20, 35, 55, 85, 130, 210, 320]
+    let delays = [minDelay, 10, 20, 35, 55, 85, 130, 210, 320]
       .filter((delay, index, items) => delay > 0 || index === 0)
       .filter((delay, index, items) => items.indexOf(delay) === index);
 
@@ -2481,15 +2771,16 @@ export class BotService extends EventEmitter {
 
         if (!this.isRetryableSendError(message) || attempt === delays.length) {
           this.logger.error(`Erro ao enviar mensagem ${messageNumber}: ${message}`);
-          if (message.toLowerCase().includes("not-acceptable")) {
-            void this.diagnoseNotAcceptable(jid, cycleId);
+          if (this.isNotAcceptableError(message)) {
+            this.scheduleNotAcceptableDiagnosis(jid, cycleId);
           }
           return false;
         }
 
         this.logger.warning(`WhatsApp ainda não aceitou mensagem ${messageNumber} (${message}). Retentando...`);
-        if (message.toLowerCase().includes("not-acceptable") && attempt === 0) {
-          void this.diagnoseNotAcceptable(jid, cycleId);
+        if (this.isNotAcceptableError(message)) {
+          delays = NOT_ACCEPTABLE_RETRY_DELAYS_MS;
+          this.scheduleNotAcceptableDiagnosis(jid, cycleId);
         }
       }
     }
@@ -2507,6 +2798,39 @@ export class BotService extends EventEmitter {
     );
   }
 
+  private isNotAcceptableError(errorMessage: string) {
+    return errorMessage.toLowerCase().includes("not-acceptable");
+  }
+
+  private scheduleNotAcceptableDiagnosis(jid: string, cycleId: number) {
+    if (this.diagnosedNotAcceptableCycles.has(cycleId)) return;
+    setTimeout(() => {
+      void this.diagnoseNotAcceptable(jid, cycleId);
+    }, 2500);
+  }
+
+  private updateAdaptiveOpeningSettle(timeline?: RouteDispatchTimeline) {
+    if (!timeline || this.monitoringMode !== "target") return;
+    if (timeline.notAcceptableCount >= 2) {
+      this.adaptiveOpeningSettleMs = Math.min(180, this.adaptiveOpeningSettleMs + 30);
+      return;
+    }
+    if (timeline.notAcceptableCount === 0 && this.adaptiveOpeningSettleMs > 0) {
+      this.adaptiveOpeningSettleMs = Math.max(0, this.adaptiveOpeningSettleMs - 15);
+    }
+  }
+
+  private maybeAlertNotAcceptable(count: number) {
+    if (count < NOT_ACCEPTABLE_ALERT_THRESHOLD) return;
+    const now = Date.now();
+    if (now - this.lastNotAcceptableAlertAt < 1000 * 60 * 5) return;
+    this.lastNotAcceptableAlertAt = now;
+    this.logger.warning(
+      `Alerta de velocidade: WhatsApp recusou envio ${count} vez(es) como not-acceptable neste disparo. O bot ativou retry/adaptação automática.`
+    );
+    this.addStatusEvent("error", `not-acceptable alto: ${count} tentativa(s) recusadas pelo WhatsApp.`);
+  }
+
   private startHealthCheck() {
     this.clearHealthCheckTimer();
     this.healthCheckTimer = setInterval(() => {
@@ -2519,11 +2843,8 @@ export class BotService extends EventEmitter {
     const config = this.configStore.load();
     if (!config.alwaysWarmMode) return;
 
-    const configuredInterval = Math.max(15000, config.keepAliveIntervalMs || DEFAULT_KEEP_ALIVE_INTERVAL_MS);
-    const intervalMs =
-      this.monitoringMode === "target"
-        ? Math.min(configuredInterval, RACE_KEEP_ALIVE_INTERVAL_MS)
-        : Math.max(60000, configuredInterval);
+    const intervalMs = this.getWarmKeepAliveIntervalMs(config);
+    this.warmKeepAliveIntervalMs = intervalMs;
     this.warmKeepAliveTimer = setInterval(() => {
       void this.runWarmKeepAlive("timer");
     }, intervalMs);
@@ -2535,13 +2856,27 @@ export class BotService extends EventEmitter {
     const config = this.configStore.load();
     if (!config.alwaysWarmMode || !this.monitoringEnabled || this.status !== "connected" || !this.sock) return false;
     if (this.criticalDispatchInProgress || this.activeSendCycle) return false;
+    const nextInterval = this.getWarmKeepAliveIntervalMs(config);
+    if (this.warmKeepAliveIntervalMs && nextInterval !== this.warmKeepAliveIntervalMs) {
+      this.startWarmKeepAlive();
+      return true;
+    }
 
     const startedAt = Date.now();
     try {
       const activeGroup = this.getActiveMonitoringGroup(config);
       if (!activeGroup.jid) return false;
 
-      await this.refreshGroupMetadata(activeGroup.jid);
+      await this.prewarmActiveChat(activeGroup.jid);
+      const shouldRefreshFullMetadata =
+        reason === "armado" ||
+        !this.groupMetadataCache.has(activeGroup.jid) ||
+        Date.now() - this.lastFullMetadataWarmAt >= FULL_METADATA_KEEP_ALIVE_INTERVAL_MS;
+
+      if (shouldRefreshFullMetadata) {
+        await this.refreshGroupMetadata(activeGroup.jid);
+        this.lastFullMetadataWarmAt = Date.now();
+      }
       this.prepareSendPlan();
       this.lastKeepAliveAt = new Date().toISOString();
       this.lastKeepAliveDurationMs = Date.now() - startedAt;
@@ -2556,6 +2891,35 @@ export class BotService extends EventEmitter {
       this.logger.warning(`Modo sempre quente falhou: ${this.getErrorMessage(error)}`);
       return false;
     }
+  }
+
+  private getWarmKeepAliveIntervalMs(config = this.configStore.load()) {
+    const configuredInterval = Math.max(15000, config.keepAliveIntervalMs || DEFAULT_KEEP_ALIVE_INTERVAL_MS);
+    if (this.monitoringMode !== "target") return Math.max(60000, configuredInterval);
+    return Math.min(configuredInterval, this.isCriticalWarmWindow() ? CRITICAL_KEEP_ALIVE_INTERVAL_MS : RACE_KEEP_ALIVE_INTERVAL_MS);
+  }
+
+  private isCriticalWarmWindow(date = new Date()) {
+    const parts = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: "America/Belem",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false
+    }).formatToParts(date);
+    const hour = Number(parts.find((part) => part.type === "hour")?.value || 0);
+    const minute = Number(parts.find((part) => part.type === "minute")?.value || 0);
+    const current = hour * 60 + minute;
+
+    return CRITICAL_WINDOWS.some((window) => {
+      const start = this.timeToMinutes(window.start);
+      const end = this.timeToMinutes(window.end);
+      return current >= start && current <= end;
+    });
+  }
+
+  private timeToMinutes(value: string) {
+    const [hour, minute] = value.split(":").map((item) => Number(item || 0));
+    return hour * 60 + minute;
   }
 
   private async runHealthCheck() {
@@ -2602,7 +2966,24 @@ export class BotService extends EventEmitter {
 
     this.currentUserInTargetGroup = true;
     this.prepareSendPlan();
+    await this.prewarmActiveChat(activeGroup.jid);
     return true;
+  }
+
+  private async prewarmActiveChat(jid: string) {
+    if (!this.sock || !jid) return;
+
+    const jobs = [
+      this.sock.presenceSubscribe?.(jid),
+      this.sock.sendPresenceUpdate?.("available")
+    ].filter(Boolean);
+
+    if (!jobs.length) return;
+
+    await Promise.race([
+      Promise.allSettled(jobs),
+      this.delay(2500)
+    ]).catch(() => undefined);
   }
 
   private getReadinessChecks(): BotReadinessCheck[] {
@@ -2774,6 +3155,7 @@ export class BotService extends EventEmitter {
     this.preparedMessages = [];
     this.preparedRelayMessages = [];
     this.preparedRelaySignature = "";
+    this.preparedRelayBuiltAt = 0;
   }
 
   private isFatalRuntimeError(errorMessage = "") {
@@ -2931,6 +3313,7 @@ export class BotService extends EventEmitter {
       clearInterval(this.warmKeepAliveTimer);
       this.warmKeepAliveTimer = undefined;
     }
+    this.warmKeepAliveIntervalMs = 0;
   }
 
   private getErrorMessage(error: unknown) {

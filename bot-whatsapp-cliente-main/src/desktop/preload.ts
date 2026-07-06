@@ -22,6 +22,7 @@ const api: DesktopApi = {
   simulateOpening: () => ipcRenderer.invoke("bot:simulateOpening"),
   manualDispatch: () => ipcRenderer.invoke("bot:manualDispatch"),
   simulateTargetDispatch: () => ipcRenderer.invoke("bot:simulateTargetDispatch"),
+  latencyProbe: () => ipcRenderer.invoke("bot:latencyProbe"),
   restartBot: () => ipcRenderer.invoke("bot:restart"),
   clearSession: () => ipcRenderer.invoke("bot:clearSession"),
   factoryReset: () => ipcRenderer.invoke("bot:factoryReset"),
@@ -39,6 +40,7 @@ const api: DesktopApi = {
   saveGeneralSettings: (payload: GeneralSettingsPayload) => ipcRenderer.invoke("bot:saveGeneralSettings", payload),
   submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) =>
     ipcRenderer.invoke("bot:submitRouteIncident", payload),
+  snoozeRouteIncident: (payload: { routeId: string }) => ipcRenderer.invoke("bot:snoozeRouteIncident", payload),
   onSnapshot: (callback: (snapshot: BotSnapshot) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, snapshot: BotSnapshot) => callback(snapshot);
     ipcRenderer.on("bot:snapshot", listener);

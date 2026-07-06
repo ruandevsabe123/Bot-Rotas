@@ -206,6 +206,7 @@ function getBotForEmail(email: string) {
   const userConfigPath = path.join(userDir, "config.json");
   const userRouteStorePath = path.join(userDir, "route_history.json");
   const userLogStorePath = path.join(userDir, "bot_logs.json");
+  const userTelemetryPath = path.join(userDir, "dispatch_telemetry.json");
 
   if (normalizedEmail === primaryPanelEmail) {
     const legacyAuthDir = path.join(dataDir, "auth_info");
@@ -224,6 +225,7 @@ function getBotForEmail(email: string) {
     authDir: userAuthDir,
     configPath: userConfigPath,
     routeStorePath: userRouteStorePath,
+    telemetryPath: userTelemetryPath,
     logStorePath: userLogStorePath,
     clientEmail: normalizedEmail,
     adminPhoneNumbers,
@@ -649,6 +651,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
     case "simulate-target-dispatch":
       await bot.simulateTargetDispatchOnTestGroup();
       break;
+    case "latency-probe":
+      await bot.runLatencyProbeOnTestGroup();
+      break;
     case "warmup":
       await bot.warmupConnection();
       break;
@@ -688,6 +693,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
       break;
     case "submit-route-incident":
       bot.submitClientIncident(String(body.routeId || ""), Boolean(body.valid), String(body.reason || ""));
+      break;
+    case "snooze-route-incident":
+      bot.snoozeClientIncident(String(body.routeId || ""));
       break;
     default:
       throw new Error(`Acao desconhecida: ${action}`);
@@ -1116,7 +1124,9 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname.startsWith("/api/action/")) {
       const action = decodeURIComponent(url.pathname.replace("/api/action/", ""));
       const body = await readJsonBody(request);
-      if (action !== "submit-route-incident" && activeBot!.hasPendingClientIncident()) {
+      const activeUser = authorizedEmail ? panelUsers.get(authorizedEmail) : undefined;
+      const incidentActions = new Set(["submit-route-incident", "snooze-route-incident"]);
+      if (activeUser?.role !== "admin" && !incidentActions.has(action) && activeBot!.hasPendingClientIncident()) {
         sendJson(response, 423, { error: "Explique o incidente pendente antes de usar o bot." });
         return;
       }

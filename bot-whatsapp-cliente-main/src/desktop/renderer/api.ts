@@ -263,6 +263,7 @@ function createWebApi(): DesktopApi {
     simulateOpening: () => action("simulate-opening"),
     manualDispatch: () => action("manual-dispatch"),
     simulateTargetDispatch: () => action("simulate-target-dispatch"),
+    latencyProbe: () => action("latency-probe"),
     saveGroup: (payload: SaveGroupPayload) => action("save-group", payload),
     saveTestGroup: (payload: SaveGroupPayload) => action("save-test-group", payload),
     warmupGroups: () => action("warmup"),
@@ -275,6 +276,7 @@ function createWebApi(): DesktopApi {
     saveGeneralSettings: (payload: GeneralSettingsPayload) => action("save-general-settings", payload),
     submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) =>
       action("submit-route-incident", payload),
+    snoozeRouteIncident: (payload: { routeId: string }) => action("snooze-route-incident", payload),
     onSnapshot: (callback: (snapshot: BotSnapshot) => void) => {
       const token = getPanelToken();
       if (token && "EventSource" in window) {

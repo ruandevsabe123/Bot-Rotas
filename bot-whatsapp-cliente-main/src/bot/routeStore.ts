@@ -2,7 +2,8 @@ import fs from "fs";
 import path from "path";
 import { RouteClientIncident, RouteDispatch, RouteDispatchTimeline, RouteReaction, RouteReactionFinalState, RouteReactionHistoryEvent } from "../shared/types";
 
-const MAX_ROUTES = 100;
+const MAX_ROUTES = 5000;
+const INCIDENT_SNOOZE_DELAYS_MINUTES = [10, 5, 2];
 
 export class RouteStore {
   private routes?: RouteDispatch[];
@@ -134,6 +135,47 @@ export class RouteStore {
     });
     if (changed) this.scheduleSave();
     return changed;
+  }
+
+  snoozeClientIncident(routeId: string) {
+    let result: { ok: boolean; delayMinutes?: number; nextDueAt?: string; exhausted?: boolean } = { ok: false };
+    const now = new Date();
+    const nowIso = now.toISOString();
+
+    this.routes = this.getRoutes().map((route) => {
+      if (route.id !== routeId || !route.clientIncident?.required || route.clientIncident.answeredAt) return route;
+
+      const snoozeCount = Math.max(0, Number(route.clientIncident.snoozeCount || 0));
+      const delayMinutes = INCIDENT_SNOOZE_DELAYS_MINUTES[snoozeCount];
+      if (!delayMinutes) {
+        result = { ok: false, exhausted: true };
+        return route;
+      }
+
+      const nextDueAt = new Date(now.getTime() + delayMinutes * 60_000).toISOString();
+      result = { ok: true, delayMinutes, nextDueAt };
+      return {
+        ...route,
+        clientIncident: {
+          ...route.clientIncident,
+          snoozeCount: snoozeCount + 1,
+          snoozedUntil: nextDueAt,
+          lastSnoozedAt: nowIso
+        },
+        updatedAt: nowIso
+      };
+    });
+
+    if (result.ok) this.scheduleSave();
+    return result;
+  }
+
+  static isClientIncidentDue(route: RouteDispatch, now = Date.now()) {
+    const incident = route.clientIncident;
+    if (!incident?.required || incident.answeredAt) return false;
+    if (!incident.snoozedUntil) return true;
+    const dueAt = new Date(incident.snoozedUntil).getTime();
+    return !Number.isFinite(dueAt) || dueAt <= now;
   }
 
   recordDeletedMessage(messageId: string) {
@@ -327,6 +369,9 @@ export class RouteStore {
             kind: input.clientIncident.kind === "message_deleted" ? "message_deleted" : "leader_reaction_removed",
             createdAt: typeof input.clientIncident.createdAt === "string" ? input.clientIncident.createdAt : new Date().toISOString(),
             message: typeof input.clientIncident.message === "string" ? input.clientIncident.message : "",
+            snoozedUntil: typeof input.clientIncident.snoozedUntil === "string" ? input.clientIncident.snoozedUntil : undefined,
+            snoozeCount: Number.isFinite(Number(input.clientIncident.snoozeCount)) ? Math.max(0, Number(input.clientIncident.snoozeCount)) : 0,
+            lastSnoozedAt: typeof input.clientIncident.lastSnoozedAt === "string" ? input.clientIncident.lastSnoozedAt : undefined,
             answeredAt: typeof input.clientIncident.answeredAt === "string" ? input.clientIncident.answeredAt : undefined,
             valid: typeof input.clientIncident.valid === "boolean" ? input.clientIncident.valid : undefined,
             reason: typeof input.clientIncident.reason === "string" ? input.clientIncident.reason : undefined

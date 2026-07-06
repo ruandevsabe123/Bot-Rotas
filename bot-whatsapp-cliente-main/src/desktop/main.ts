@@ -35,6 +35,7 @@ function createBot() {
     authDir: path.join(dataDir, "auth_info"),
     configPath: path.join(dataDir, "config.json"),
     logStorePath: path.join(dataDir, "bot_logs.json"),
+    telemetryPath: path.join(dataDir, "dispatch_telemetry.json")
   });
 
   bot.on("snapshot", (snapshot: BotSnapshot) => {
@@ -151,6 +152,10 @@ function registerIpc() {
     await bot.simulateTargetDispatchOnTestGroup();
     return bot.getSnapshot();
   });
+  ipcMain.handle("bot:latencyProbe", async () => {
+    await bot.runLatencyProbeOnTestGroup();
+    return bot.getSnapshot();
+  });
   ipcMain.handle("bot:saveGroup", async (_event, payload: SaveGroupPayload) => {
     await bot.saveGroup(payload.group, payload.groupId, payload.groupName);
     return bot.getSnapshot();
@@ -199,6 +204,10 @@ function registerIpc() {
   });
   ipcMain.handle("bot:submitRouteIncident", async (_event, payload: { routeId: string; valid: boolean; reason: string }) => {
     bot.submitClientIncident(payload.routeId, payload.valid, payload.reason);
+    return bot.getSnapshot();
+  });
+  ipcMain.handle("bot:snoozeRouteIncident", async (_event, payload: { routeId: string }) => {
+    bot.snoozeClientIncident(payload.routeId);
     return bot.getSnapshot();
   });
 }

@@ -369,6 +369,56 @@ function formatShortDate(value?: string) {
     : "Sem registro";
 }
 
+const INCIDENT_SNOOZE_DELAYS_MINUTES = [10, 5, 2];
+
+function isClientIncidentDue(route: RouteDispatch, now = Date.now()) {
+  const incident = route.clientIncident;
+  if (!incident?.required || incident.answeredAt) return false;
+  if (!incident.snoozedUntil) return true;
+  const dueAt = new Date(incident.snoozedUntil).getTime();
+  return !Number.isFinite(dueAt) || dueAt <= now;
+}
+
+function getIncidentSnoozeDelayMinutes(route: RouteDispatch) {
+  const count = Math.max(0, Number(route.clientIncident?.snoozeCount || 0));
+  return INCIDENT_SNOOZE_DELAYS_MINUTES[count];
+}
+
+function getIncidentAuditLines(route: RouteDispatch) {
+  const incident = route.clientIncident;
+  const removedLeaderEvents = (route.reactionsHistory || []).filter((reaction) => reaction.action === "remove" && reaction.isAdmin);
+  const lastRemovedLeader = removedLeaderEvents[removedLeaderEvents.length - 1];
+  const lastReaction = route.lastReactionState;
+  const deletedIds = route.deletedMessageIds || [];
+  const lines = [
+    `Evento criado: ${formatDate(incident?.createdAt)}`,
+    `Envio original: ${formatDate(route.createdAt)}`,
+    `Grupo: ${route.groupName || route.groupJid || "Não identificado"}`,
+    `Status do envio: ${route.confirmedCount}/${route.totalCount} confirmada(s), status ${route.status}`,
+    `Modo: ${route.ocr ? "Bot imagem/OCR" : route.mode === "test" ? "Teste/aquecimento" : "Grupo alvo"}`,
+    `Trigger: ${route.trigger || (route.mode === "test" ? "warmup" : "automatic")}`
+  ];
+
+  if (incident?.kind === "message_deleted") {
+    lines.push(`Mensagem apagada: ${deletedIds.length ? deletedIds.join(", ") : "ID não identificado"}`);
+  }
+
+  if (lastRemovedLeader) {
+    lines.push(`Quem removeu: ${lastRemovedLeader.leaderName || lastRemovedLeader.senderPhone || "Líder identificado"}`);
+    lines.push(`Horário da remoção: ${formatDate(lastRemovedLeader.timestamp)}`);
+    lines.push(`Emoji removido: ${lastRemovedLeader.emoji || "Reação sem emoji"}`);
+  } else if (lastReaction?.status === "removed") {
+    lines.push(`Última reação removida: ${lastReaction.leaderName || lastReaction.senderPhone || "Remetente identificado"}`);
+    lines.push(`Horário da remoção: ${formatDate(lastReaction.updatedAt)}`);
+  }
+
+  if (route.messages.length) lines.push(`Mensagem enviada: ${route.messages.join(" | ")}`);
+  if (route.sentMessageIds.length) lines.push(`IDs enviados: ${route.sentMessageIds.join(", ")}`);
+  if (incident?.snoozeCount) lines.push(`Adiamentos usados: ${incident.snoozeCount}/3`);
+  if (incident?.snoozedUntil) lines.push(`Último prazo: ${formatDate(incident.snoozedUntil)}`);
+  return lines;
+}
+
 function formatDuration(ms: number) {
   const totalMinutes = Math.floor(ms / 60000);
   const hours = Math.floor(totalMinutes / 60);
@@ -478,9 +528,9 @@ function PerformanceStrip({ snapshot }: { snapshot: BotSnapshot }) {
   return (
     <section className="performance-strip">
       <AdminMetric Icon={Zap} tone="yellow" title="Latência" value={`${metrics.lastDispatchLatencyMs}ms`} detail={`média ${metrics.averageDispatchLatencyMs}ms`} />
-      <AdminMetric Icon={Gauge} tone="green" title="Disparo" value={`${metrics.lastDispatchDurationMs}ms`} detail={`${metrics.sentMessages} enviadas`} />
-      <AdminMetric Icon={Activity} tone="blue" title="Fila" value={metrics.activeQueue} detail={`${metrics.failedMessages} falha(s)`} />
-      <AdminMetric Icon={Wifi} tone={snapshot.config.alwaysWarmMode ? "green" : "yellow"} title="Sempre quente" value={snapshot.config.alwaysWarmMode ? "ativo" : "off"} detail={metrics.lastKeepAliveAt ? `keep ${metrics.lastKeepAliveDurationMs || 0}ms` : `${formatDuration(metrics.armedIdleMs || 0)} parado`} />
+      <AdminMetric Icon={Gauge} tone="green" title="ACK P95" value={`${metrics.p95FirstAckMs || 0}ms`} detail={`relay ${metrics.p95FirstRelayMs || 0}ms`} />
+      <AdminMetric Icon={Activity} tone={(metrics.notAcceptableCount || 0) ? "yellow" : "blue"} title="not-acceptable" value={metrics.notAcceptableCount || 0} detail={metrics.lastNotAcceptableAt ? formatShortDate(metrics.lastNotAcceptableAt) : "sem alerta"} />
+      <AdminMetric Icon={Wifi} tone={metrics.criticalWarmMode ? "green" : snapshot.config.alwaysWarmMode ? "blue" : "yellow"} title="Sempre quente" value={metrics.criticalWarmMode ? "crítico" : snapshot.config.alwaysWarmMode ? "ativo" : "off"} detail={metrics.lastKeepAliveAt ? `keep ${metrics.lastKeepAliveDurationMs || 0}ms` : `${formatDuration(metrics.armedIdleMs || 0)} parado`} />
     </section>
   );
 }
@@ -1530,8 +1580,22 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
       const valid = routes.filter((route) => getRouteDecisionStatus(route) === "validated").length;
       const rejected = routes.filter((route) => getRouteDecisionStatus(route) === "rejected").length;
       const pending = routes.filter((route) => getRouteDecisionStatus(route) === "pending").length;
-      return { user, routes, valid, rejected, pending };
-    }).sort((a, b) => b.valid - a.valid || b.routes.length - a.routes.length);
+      const sent = routes.filter((route) => route.confirmedCount > 0).length;
+      const activeDays = new Set(routes.map((route) => new Date(route.createdAt).toISOString().slice(0, 10))).size;
+      const successRate = routes.length ? Math.round((valid / routes.length) * 100) : 0;
+      const pickupRate = routes.length ? Math.round((sent / routes.length) * 100) : 0;
+      const lastRoute = [...routes].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+      const messageCounts = new Map<string, number>();
+      routes.forEach((route) => {
+        const label = route.ocr?.bairro || route.ocr?.route || route.messages[0] || "Sem mensagem";
+        messageCounts.set(label, (messageCounts.get(label) || 0) + 1);
+      });
+      const topRoutes = Array.from(messageCounts.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([label, count]) => `${label} (${count})`);
+      return { user, routes, valid, rejected, pending, sent, activeDays, successRate, pickupRate, lastRoute, topRoutes };
+    }).sort((a, b) => b.valid - a.valid || b.sent - a.sent || b.routes.length - a.routes.length);
   }, [clientOptions, dashboard.routes, reportEndDate, reportStartDate]);
 
   const adminTabs: Array<{ id: AdminMainTab; label: string; Icon: typeof Home; badge?: number }> = [
@@ -1947,7 +2011,14 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                     <span className="report-stat ok"><small>Válidas</small><b>{item.valid}</b></span>
                     <span className="report-stat warn"><small>Pendentes</small><b>{item.pending}</b></span>
                     <span className="report-stat danger"><small>Não válidas</small><b>{item.rejected}</b></span>
-                    <span className="report-stat"><small>Total</small><b>{item.routes.length}</b></span>
+                    <span className="report-stat"><small>Pegas</small><b>{item.sent}</b></span>
+                    <span className="report-stat ok"><small>Aproveit.</small><b>{item.successRate}%</b></span>
+                    <span className="report-stat"><small>Dias</small><b>{item.activeDays}</b></span>
+                  </div>
+                  <div className="report-route-summary">
+                    <span>Última: {item.lastRoute ? formatShortDate(item.lastRoute.createdAt) : "sem rota"}</span>
+                    <span>{item.topRoutes.length ? `Mais recorrentes: ${item.topRoutes.join(" | ")}` : "Sem recorrência no período"}</span>
+                    <span>Taxa de envio: {item.pickupRate}%</span>
                   </div>
                   <button className="button" type="button" onClick={() => { setClientFilter(item.user.email); setRouteStatusFilter("validated"); setActiveAdminTab("history"); }}>Ver</button>
                 </article>
@@ -1965,7 +2036,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
               <AdminMetric Icon={CheckCircle2} tone="green" title="Válidas" value={monthlyReport.reduce((total, item) => total + item.valid, 0)} detail="no mês" />
               <AdminMetric Icon={Clock3} tone="yellow" title="Pendentes" value={monthlyReport.reduce((total, item) => total + item.pending, 0)} detail="aguardando" />
               <AdminMetric Icon={Ban} tone="red" title="Não válidas" value={monthlyReport.reduce((total, item) => total + item.rejected, 0)} detail="julgadas" />
-              <AdminMetric Icon={UserPlus} tone="blue" title="Clientes" value={monthlyReport.length} detail="no relatório" />
+              <AdminMetric Icon={Send} tone="blue" title="Pegas" value={monthlyReport.reduce((total, item) => total + item.sent, 0)} detail="enviadas no período" />
             </section>
           </article>
         </section>
@@ -2275,6 +2346,7 @@ export default function App() {
   const [actionToast, setActionToast] = useState("");
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
+  const [incidentClock, setIncidentClock] = useState(Date.now());
   const connectionSectionRef = useRef<HTMLElement | null>(null);
 
   function showActionToast(message: string) {
@@ -2373,8 +2445,20 @@ export default function App() {
   }, [snapshot.config]);
 
   const pendingClientIncident = useMemo(() => {
-    return (snapshot.routeDispatches || []).find((route) => route.clientIncident?.required && !route.clientIncident.answeredAt);
-  }, [snapshot.routeDispatches]);
+    if (userRole === "admin") return undefined;
+    return (snapshot.routeDispatches || []).find((route) => isClientIncidentDue(route, incidentClock));
+  }, [snapshot.routeDispatches, userRole, incidentClock]);
+
+  const pendingIncidentAuditLines = useMemo(() => {
+    return pendingClientIncident ? getIncidentAuditLines(pendingClientIncident) : [];
+  }, [pendingClientIncident]);
+
+  const pendingIncidentSnoozeDelay = pendingClientIncident ? getIncidentSnoozeDelayMinutes(pendingClientIncident) : undefined;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setIncidentClock(Date.now()), 10_000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     if (!pendingClientIncident) {
@@ -2708,6 +2792,12 @@ export default function App() {
     setIncidentReason("");
   }
 
+  async function snoozePendingClientIncident() {
+    if (!pendingClientIncident || !pendingIncidentSnoozeDelay) return;
+    await runAction(() => botApi.snoozeRouteIncident({ routeId: pendingClientIncident.id }));
+    setIncidentClock(Date.now());
+  }
+
   async function confirmPendingAction() {
     if (!confirmation) return;
     const action = confirmation.onConfirm;
@@ -2904,6 +2994,9 @@ export default function App() {
               <button className="button" type="button" onClick={confirmSimulateTargetDispatch}>
                 Simular alvo
               </button>
+              <button className="button" disabled={busy || snapshot.status !== "connected"} type="button" onClick={() => runAction(botApi.latencyProbe)}>
+                Medir latência
+              </button>
             </div>
             <div className="admin-route-scroll compact">
               {(snapshot.routeDispatches || [])
@@ -3020,14 +3113,20 @@ export default function App() {
             <p className="confirmation-message">
               {pendingClientIncident.clientIncident?.message || "O admin precisa de uma explicação para liberar o bot."}
             </p>
-            <div className="confirmation-details">
-              <span>Data/hora do envio: {new Date(pendingClientIncident.createdAt).toLocaleString("pt-BR")}</span>
-              <span>Grupo: {pendingClientIncident.groupName || pendingClientIncident.groupJid}</span>
-              <span>Modo: {pendingClientIncident.ocr ? "Bot imagem/OCR" : pendingClientIncident.mode === "test" ? "Teste/aquecimento" : "Grupo alvo"}</span>
-              <span>Trigger: {pendingClientIncident.trigger || (pendingClientIncident.mode === "test" ? "warmup" : "automatic")}</span>
-              <span>Status do envio: {pendingClientIncident.confirmedCount}/{pendingClientIncident.totalCount} confirmada(s), status {pendingClientIncident.status}</span>
-              <span>Mensagem: {pendingClientIncident.messages.join(" | ") || "Sem mensagem registrada"}</span>
-              <span>Evento: {pendingClientIncident.clientIncident?.kind === "message_deleted" ? "Mensagem apagada" : "Líder reagiu e removeu"}</span>
+            <div className="incident-summary-grid">
+              <span>
+                <b>Evento</b>
+                {pendingClientIncident.clientIncident?.kind === "message_deleted" ? "Mensagem apagada" : "Líder removeu reação"}
+              </span>
+              <span>
+                <b>Prazo</b>
+                {pendingClientIncident.clientIncident?.snoozeCount ? `${pendingClientIncident.clientIncident.snoozeCount}/3 adiamentos usados` : "Primeira cobrança"}
+              </span>
+            </div>
+            <div className="confirmation-details incident-audit-list">
+              {pendingIncidentAuditLines.map((line) => (
+                <span key={`${pendingClientIncident.id}-${line}`}>{line}</span>
+              ))}
             </div>
             <div className="incident-choice">
               <button className={incidentValid ? "button primary" : "button"} type="button" onClick={() => setIncidentValid(true)}>
@@ -3045,6 +3144,14 @@ export default function App() {
               placeholder="Descreva o motivo: por que a reação foi removida ou por que a mensagem foi apagada?"
             />
             <div className="confirmation-actions">
+              {pendingIncidentSnoozeDelay ? (
+                <button className="button incident-snooze-button" disabled={busy} type="button" onClick={snoozePendingClientIncident}>
+                  <Clock3 size={16} />
+                  Responder daqui a {pendingIncidentSnoozeDelay} minutos
+                </button>
+              ) : (
+                <span className="incident-final-warning">Adiamentos encerrados. A resposta é obrigatória.</span>
+              )}
               <button className="button primary" disabled={busy || incidentReason.trim().length < 8} type="button" onClick={submitIncidentAnswer}>
                 Enviar explicação e liberar bot
               </button>

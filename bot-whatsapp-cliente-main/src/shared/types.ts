@@ -74,6 +74,14 @@ export type BotPerformanceMetrics = {
   lastKeepAliveAt?: string;
   lastKeepAliveDurationMs?: number;
   keepAliveCount?: number;
+  telemetryCount?: number;
+  averageFirstRelayMs?: number;
+  p95FirstRelayMs?: number;
+  averageFirstAckMs?: number;
+  p95FirstAckMs?: number;
+  notAcceptableCount?: number;
+  lastNotAcceptableAt?: string;
+  criticalWarmMode?: boolean;
 };
 
 export type RouteDispatchTimelineEvent = {
@@ -268,6 +276,9 @@ export type RouteClientIncident = {
   kind: "leader_reaction_removed" | "message_deleted";
   createdAt: string;
   message: string;
+  snoozedUntil?: string;
+  snoozeCount?: number;
+  lastSnoozedAt?: string;
   answeredAt?: string;
   valid?: boolean;
   reason?: string;
@@ -386,6 +397,7 @@ export type DesktopApi = {
   simulateOpening: () => Promise<BotSnapshot>;
   manualDispatch: () => Promise<BotSnapshot>;
   simulateTargetDispatch: () => Promise<BotSnapshot>;
+  latencyProbe: () => Promise<BotSnapshot>;
   saveGroup: (payload: SaveGroupPayload) => Promise<BotSnapshot>;
   saveTestGroup: (payload: SaveGroupPayload) => Promise<BotSnapshot>;
   warmupGroups: () => Promise<BotSnapshot>;
@@ -395,5 +407,6 @@ export type DesktopApi = {
   saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) => Promise<BotSnapshot>;
   saveGeneralSettings: (payload: GeneralSettingsPayload) => Promise<BotSnapshot>;
   submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) => Promise<BotSnapshot>;
+  snoozeRouteIncident: (payload: { routeId: string }) => Promise<BotSnapshot>;
   onSnapshot: (callback: (snapshot: BotSnapshot) => void) => () => void;
 };

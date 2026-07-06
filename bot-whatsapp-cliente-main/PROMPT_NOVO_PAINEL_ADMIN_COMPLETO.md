@@ -643,7 +643,6 @@ Atencao:
 - O backend ja tem muitos dados; priorize expor e organizar melhor no admin antes de inventar API nova.
 - Se precisar de campo que o backend ainda nao retorna, adicione de forma compativel nos tipos e snapshots.
 - Nao reduza limites/historicos existentes.
-- Nao remova validacao por reacao.
 - Nao remova suporte interno.
 - Nao remova reset diario/keep-alive.
 - Nao misture dados de clientes.
