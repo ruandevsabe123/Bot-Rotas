@@ -1492,12 +1492,7 @@ export class BotService extends EventEmitter {
           `QR Code expirou antes da leitura (${this.qrRefAttemptResets}x). Limpando tentativa parcial e gerando um QR novo.`
         );
         this.addStatusEvent("reconnecting", "QR Code expirou. Gerando um novo QR Code automaticamente.");
-        this.removeAuthDir();
-        this.reconnectAttempts = 0;
-        this.unknownDisconnects = 0;
-        this.qrCode = "";
-        this.pairingCode = "";
-        this.pairingCodeRequested = false;
+        this.resetPartialQrAuth();
         this.scheduleReconnect(true);
         return;
       }
@@ -3262,6 +3257,26 @@ export class BotService extends EventEmitter {
     } catch (error) {
       this.logger.error(`Erro ao apagar auth: ${this.getErrorMessage(error)}`);
     }
+  }
+
+  private clearPendingCredsSave() {
+    if (this.pendingCredsSave) {
+      clearTimeout(this.pendingCredsSave);
+      this.pendingCredsSave = undefined;
+    }
+    this.saveCredsNow = undefined;
+  }
+
+  private resetPartialQrAuth() {
+    this.clearPendingCredsSave();
+    this.removeAuthDir();
+    this.reconnectAttempts = 0;
+    this.unknownDisconnects = 0;
+    this.qrReceivedInCurrentConnection = false;
+    this.qrCode = "";
+    this.pairingCode = "";
+    this.pairingCodeRequested = false;
+    this.setStatus("reconnecting");
   }
 
   private setStatus(status: BotStatus) {
