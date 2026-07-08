@@ -147,6 +147,7 @@ export class BotService extends EventEmitter {
   private starting?: Promise<void>;
   private activeConnectionId = 0;
   private qrReceivedInCurrentConnection = false;
+  private qrRefAttemptResets = 0;
   private unknownDisconnects = 0;
   private sendCycleId = 0;
   private activeSendCycle?: Promise<void>;
@@ -849,6 +850,7 @@ export class BotService extends EventEmitter {
 
     this.stopping = false;
     this.reconnectAttempts = 0;
+    this.qrRefAttemptResets = 0;
     this.clearedInvalidSessionInCurrentRun = false;
     this.starting = this.connect();
 
@@ -1481,6 +1483,22 @@ export class BotService extends EventEmitter {
         this.error = `Erro interno ao iniciar WhatsApp: ${errorMessage}`;
         this.setStatus("error");
         this.logger.error(this.error);
+        return;
+      }
+
+      if (this.isQrRefAttemptLimit(statusCode, errorMessage)) {
+        this.qrRefAttemptResets += 1;
+        this.logger.warning(
+          `QR Code expirou antes da leitura (${this.qrRefAttemptResets}x). Limpando tentativa parcial e gerando um QR novo.`
+        );
+        this.addStatusEvent("reconnecting", "QR Code expirou. Gerando um novo QR Code automaticamente.");
+        this.removeAuthDir();
+        this.reconnectAttempts = 0;
+        this.unknownDisconnects = 0;
+        this.qrCode = "";
+        this.pairingCode = "";
+        this.pairingCodeRequested = false;
+        this.scheduleReconnect(true);
         return;
       }
 
@@ -3118,6 +3136,19 @@ export class BotService extends EventEmitter {
       normalizedMessage.includes("connection replaced") ||
       normalizedMessage.includes("multidevice mismatch") ||
       normalizedMessage.includes("invalid");
+  }
+
+  private isQrRefAttemptLimit(statusCode?: number, errorMessage = "") {
+    const normalizedMessage = errorMessage.toLowerCase();
+
+    return (
+      statusCode === DisconnectReason?.timedOut &&
+      normalizedMessage.includes("qr") &&
+      normalizedMessage.includes("attempt")
+    ) || (
+      statusCode === 408 &&
+      normalizedMessage.includes("qr refs attempts ended")
+    );
   }
 
   private hasAuthSession() {
