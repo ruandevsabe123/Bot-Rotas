@@ -2432,7 +2432,7 @@ function RomaneioPanel({
               <div className="romaneio-candidate-list">
                 {locateResult.candidates.map((candidate) => (
                   <button key={candidate.id} className="romaneio-candidate" disabled={busy} type="button" onClick={() => onConfirmCandidate(candidate)}>
-                    <span>{candidate.fileName}</span>
+                    <span>{candidate.periodoLabel} · {candidate.fileName}</span>
                     <small>{new Date(candidate.timestamp).toLocaleString("pt-BR")}</small>
                   </button>
                 ))}
@@ -3009,7 +3009,7 @@ export default function App() {
       setRomaneioSettingsDraft(nextRomaneio.settings);
       setRomaneioLocateResult({
         found: true,
-        message: `Romaneio confirmado: ${candidate.fileName}`,
+        message: `Romaneio confirmado (${candidate.periodoLabel}): ${candidate.fileName}`,
         candidates: []
       });
       showActionToast("Romaneio processado.");

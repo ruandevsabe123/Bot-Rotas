@@ -1413,10 +1413,12 @@ export class BotService extends EventEmitter {
       };
     }
 
-    this.logger.info(`[ROMANEIO] ${candidates.length} candidato(s) encontrado(s) no grupo alvo.`);
+    const morningCount = candidates.filter((candidate) => candidate.periodo === "manha").length;
+    const afternoonCount = candidates.filter((candidate) => candidate.periodo === "tarde").length;
+    this.logger.info(`[ROMANEIO] ${candidates.length} candidato(s) encontrado(s) no grupo alvo. Manhã: ${morningCount}. Tarde: ${afternoonCount}.`);
     return {
       found: true,
-      message: "Romaneio encontrado. Confirme o arquivo para processar.",
+      message: `Romaneio encontrado. Confirme o arquivo correto: ${morningCount} manhã, ${afternoonCount} tarde.`,
       candidates
     };
   }
@@ -1438,7 +1440,7 @@ export class BotService extends EventEmitter {
       }
     );
     const snapshot = this.romaneioStore.saveUpload(item.candidate.fileName, buffer);
-    this.logger.success(`[ROMANEIO] Arquivo confirmado e processado: ${item.candidate.fileName}. Rotas: ${snapshot.status.totalRoutes}. Pacotes: ${snapshot.status.totalPackages}.`);
+    this.logger.success(`[ROMANEIO] Arquivo confirmado e processado (${item.candidate.periodoLabel}): ${item.candidate.fileName}. Rotas: ${snapshot.status.totalRoutes}. Pacotes: ${snapshot.status.totalPackages}.`);
     return snapshot;
   }
 
@@ -2017,11 +2019,15 @@ export class BotService extends EventEmitter {
       if (!this.isMessageFromToday(msg)) continue;
 
       const id = String(msg?.key?.id || `${fileName}-${msg?.messageTimestamp || Date.now()}`);
+      const timestampMs = this.getMessageTimestampMs(msg);
+      const periodo = this.getRomaneioPeriod(timestampMs);
       this.romaneioDocumentCandidates.set(id, {
         candidate: {
           id,
           fileName,
-          timestamp: new Date(this.getMessageTimestampMs(msg)).toISOString(),
+          timestamp: new Date(timestampMs).toISOString(),
+          periodo,
+          periodoLabel: periodo === "manha" ? "Manhã" : "Tarde",
           sender: String(msg?.key?.participant || msg?.pushName || ""),
           groupJid: activeGroup.jid
         },
@@ -2058,6 +2064,10 @@ export class BotService extends EventEmitter {
     const raw = msg?.messageTimestamp;
     const value = typeof raw === "number" ? raw : Number(raw?.low || raw || 0);
     return value > 10_000_000_000 ? value : value * 1000 || Date.now();
+  }
+
+  private getRomaneioPeriod(timestampMs: number): RomaneioCandidate["periodo"] {
+    return new Date(timestampMs).getHours() < 12 ? "manha" : "tarde";
   }
 
   private purgeOldRomaneioCandidates() {

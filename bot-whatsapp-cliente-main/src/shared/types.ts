@@ -336,6 +336,8 @@ export type RomaneioCandidate = {
   id: string;
   fileName: string;
   timestamp: string;
+  periodo: "manha" | "tarde";
+  periodoLabel: string;
   sender?: string;
   groupJid?: string;
 };
