@@ -740,7 +740,8 @@ async function handleAction(bot: BotService, action: string, body: any) {
       bot.setGeneralSettings({
         nuclearMode: Boolean(body.nuclearMode),
         alwaysWarmMode: body.alwaysWarmMode,
-        keepAliveIntervalMs: body.keepAliveIntervalMs
+        keepAliveIntervalMs: body.keepAliveIntervalMs,
+        ocrManualRouteSelection: body.ocrManualRouteSelection
       });
       break;
     case "confirm-ocr-routes":

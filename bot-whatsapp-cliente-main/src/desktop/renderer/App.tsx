@@ -125,7 +125,8 @@ const emptySnapshot: BotSnapshot = {
     fastMode: true,
     minSendDelayMs: 0,
     alwaysWarmMode: true,
-    keepAliveIntervalMs: 300000
+    keepAliveIntervalMs: 300000,
+    ocrManualRouteSelection: true
   },
   groups: [],
   readinessChecks: [],
@@ -3099,12 +3100,29 @@ export default function App() {
     });
   }
 
-  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number }) {
+  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean }) {
     void runAction(() => botApi.saveGeneralSettings({
       nuclearMode: settings.nuclearMode ?? snapshot.config.nuclearMode,
       alwaysWarmMode: settings.alwaysWarmMode ?? snapshot.config.alwaysWarmMode,
-      keepAliveIntervalMs: settings.keepAliveIntervalMs ?? snapshot.config.keepAliveIntervalMs
+      keepAliveIntervalMs: settings.keepAliveIntervalMs ?? snapshot.config.keepAliveIntervalMs,
+      ocrManualRouteSelection: settings.ocrManualRouteSelection ?? snapshot.config.ocrManualRouteSelection
     }));
+  }
+
+  function confirmOcrSelectionMode(nextManualMode: boolean) {
+    setConfirmation({
+      title: nextManualMode ? "Ligar escolha manual" : "Desligar escolha manual",
+      message: nextManualMode
+        ? "Com essa opção ligada, você terá que escolher a rota que vai pegar antes do bot preparar o envio."
+        : "Com essa opção desligada, o bot vai analisar a imagem e enviar a mensagem por conta própria com a melhor rota do ranking.",
+      details: nextManualMode
+        ? ["O painel abrirá a tela de ranking para seleção manual.", "Nada será enviado até confirmar uma ou mais rotas."]
+        : ["Útil quando o líder envia a imagem e não fecha o grupo.", "Se o grupo já estiver aberto, o bot tenta enviar a melhor rota o mais rápido possível."],
+      confirmLabel: nextManualMode ? "Ligar escolha" : "Desligar escolha",
+      onConfirm: async () => {
+        saveGeneralSettings({ ocrManualRouteSelection: nextManualMode });
+      }
+    });
   }
 
   async function handleLocateRomaneio() {
@@ -3311,6 +3329,27 @@ export default function App() {
             messages={buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas)}
             onOpen={() => setGroupEditor("image")}
           />
+          <section className="quick-panel ocr-mode-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Escolha da rota</p>
+                <h2>{snapshot.config.ocrManualRouteSelection ? "Manual" : "Automática"}</h2>
+              </div>
+              <button
+                className={snapshot.config.ocrManualRouteSelection ? "button" : "button primary"}
+                disabled={busy}
+                type="button"
+                onClick={() => confirmOcrSelectionMode(!snapshot.config.ocrManualRouteSelection)}
+              >
+                {snapshot.config.ocrManualRouteSelection ? "Desligar escolha" : "Ligar escolha"}
+              </button>
+            </div>
+            <p className="approval-message">
+              {snapshot.config.ocrManualRouteSelection
+                ? "O painel mostra o ranking e aguarda sua confirmação."
+                : "O bot usa a melhor rota do ranking e envia sozinho quando possível."}
+            </p>
+          </section>
           <ControlButtons
             busy={busy}
             status={snapshot.status}

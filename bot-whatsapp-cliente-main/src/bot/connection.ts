@@ -1314,7 +1314,7 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number }) {
+  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean }) {
     const currentConfig = this.configStore.load();
     const changingMode = Boolean(settings.nuclearMode) !== currentConfig.nuclearMode;
     if (this.monitoringEnabled && changingMode) {
@@ -1328,11 +1328,19 @@ export class BotService extends EventEmitter {
     if (settings.minSendDelayMs !== undefined) nextSettings.minSendDelayMs = settings.minSendDelayMs;
     if (settings.alwaysWarmMode !== undefined) nextSettings.alwaysWarmMode = Boolean(settings.alwaysWarmMode);
     if (settings.keepAliveIntervalMs !== undefined) nextSettings.keepAliveIntervalMs = settings.keepAliveIntervalMs;
+    if (settings.ocrManualRouteSelection !== undefined) nextSettings.ocrManualRouteSelection = Boolean(settings.ocrManualRouteSelection);
     const config = this.configStore.save(nextSettings);
     this.refreshRuntimeSettings(config);
     this.prepareSendPlan();
     if (this.monitoringEnabled) this.startWarmKeepAlive();
-    this.logger.success(config.nuclearMode ? "Modo nuclear ativado." : "Modo nuclear desativado.");
+    if (changingMode) {
+      this.logger.success(config.nuclearMode ? "Modo nuclear ativado." : "Modo nuclear desativado.");
+    }
+    if (settings.ocrManualRouteSelection !== undefined) {
+      this.logger.info(config.ocrManualRouteSelection
+        ? "Bot imagem configurado para aprovação manual de rotas."
+        : "Bot imagem configurado para escolher e enviar a melhor rota automaticamente.");
+    }
     this.emitSnapshot();
   }
 
@@ -2009,6 +2017,16 @@ export class BotService extends EventEmitter {
         message: "Imagem analisada. Ranking ordenado por distância, paradas e pacotes."
       };
       this.logger.success(`[ROMANEIO] Imagem analisada. Ranking de ${options.length} rota(s) disponível para aprovação no painel.`);
+      if (!config.ocrManualRouteSelection) {
+        this.applyOcrRouteSelection([options[0]], "automatic");
+        if (this.groupState === "open") {
+          const cycleId = ++this.sendCycleId;
+          this.enviarMensagensRapidas(cycleId, "automatic", Date.now());
+          this.logger.info("[ROMANEIO] Grupo aberto: melhor rota enviada automaticamente após análise da imagem.");
+        } else {
+          this.logger.info("[ROMANEIO] Melhor rota escolhida automaticamente e preparada para quando o grupo abrir.");
+        }
+      }
       this.emitSnapshot();
     } catch (error) {
       this.ocrRouteSelection = {
@@ -2038,6 +2056,11 @@ export class BotService extends EventEmitter {
     const selected = selection.options.filter((option) => selectedIds.has(option.id));
     if (!selected.length) throw new Error("Selecione pelo menos uma rota.");
 
+    this.applyOcrRouteSelection(selected, "manual");
+    this.emitSnapshot();
+  }
+
+  private applyOcrRouteSelection(selected: OcrRouteOption[], mode: "manual" | "automatic") {
     const config = this.configStore.load();
     const messages = selected
       .map((option) => `${config.nomeEnvio} ${option.gaiola}`.trim())
@@ -2051,14 +2074,17 @@ export class BotService extends EventEmitter {
     if (activeGroup.jid) this.rebuildPreparedRelayMessages(activeGroup.jid, messages);
 
     this.ocrRouteSelection = {
-      ...selection,
+      ...this.ocrRouteSelection,
       status: "confirmed",
       selectedOptionIds: selected.map((option) => option.id),
       preparedMessages: messages,
-      message: "Rotas confirmadas. O bot enviará quando o grupo abrir."
+      message: mode === "manual"
+        ? "Rotas confirmadas. O bot enviará quando o grupo abrir."
+        : "Modo automático: melhor rota escolhida pelo bot."
     };
-    this.logger.success(`[ROMANEIO] Cliente confirmou ${selected.length} rota(s): ${messages.join(" | ")}.`);
-    this.emitSnapshot();
+    this.logger.success(mode === "manual"
+      ? `[ROMANEIO] Cliente confirmou ${selected.length} rota(s): ${messages.join(" | ")}.`
+      : `[ROMANEIO] Bot escolheu automaticamente a melhor rota: ${messages.join(" | ")}.`);
   }
 
   private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string }): OcrRouteOption[] {

@@ -50,6 +50,7 @@ export type BotConfig = {
   minSendDelayMs: number;
   alwaysWarmMode: boolean;
   keepAliveIntervalMs: number;
+  ocrManualRouteSelection: boolean;
 };
 
 export type MonitoredRoute = {
@@ -498,6 +499,7 @@ export type GeneralSettingsPayload = {
   minSendDelayMs?: number;
   alwaysWarmMode?: boolean;
   keepAliveIntervalMs?: number;
+  ocrManualRouteSelection?: boolean;
 };
 
 export type DesktopApi = {

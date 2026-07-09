@@ -19,7 +19,8 @@ export const DEFAULT_CONFIG: BotConfig = {
   fastMode: true,
   minSendDelayMs: 0,
   alwaysWarmMode: true,
-  keepAliveIntervalMs: 300000
+  keepAliveIntervalMs: 300000,
+  ocrManualRouteSelection: true
 };
 
 export class ConfigStore {
@@ -120,6 +121,7 @@ export class ConfigStore {
       minSendDelayMs: this.clampNumber(input.minSendDelayMs, 0, 5000, DEFAULT_CONFIG.minSendDelayMs),
       alwaysWarmMode: typeof input.alwaysWarmMode === "boolean" ? input.alwaysWarmMode : DEFAULT_CONFIG.alwaysWarmMode,
       keepAliveIntervalMs: this.clampNumber(input.keepAliveIntervalMs, 60000, 900000, DEFAULT_CONFIG.keepAliveIntervalMs),
+      ocrManualRouteSelection: typeof input.ocrManualRouteSelection === "boolean" ? input.ocrManualRouteSelection : DEFAULT_CONFIG.ocrManualRouteSelection,
       // support legacy `codigosMensagens` if present
       codigosMensagensAlvo: Array.isArray(input.codigosMensagensAlvo)
         ? input.codigosMensagensAlvo.filter((item) => typeof item === "string" && item.trim())
