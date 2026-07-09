@@ -6,6 +6,88 @@
   text-rendering: optimizeLegibility;
 }
 
+.compact-settings {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.compact-settings label {
+  display: grid;
+  gap: 7px;
+  color: #a9b2bb;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.compact-settings input,
+.compact-settings select,
+.compact-settings textarea {
+  width: 100%;
+  border: 1px solid rgba(245, 247, 248, 0.12);
+  border-radius: 8px;
+  color: #f4f7f8;
+  background: rgba(255, 255, 255, 0.055);
+  padding: 10px 12px;
+  outline: none;
+}
+
+.compact-settings textarea {
+  resize: vertical;
+  min-height: 86px;
+}
+
+.inline-error {
+  margin: 12px 0 0;
+  border: 1px solid rgba(255, 81, 72, 0.24);
+  border-radius: 8px;
+  color: #ffb0aa;
+  background: rgba(255, 81, 72, 0.08);
+  padding: 10px 12px;
+  font-weight: 800;
+}
+
+.admin-route-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid rgba(245, 247, 248, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 12px;
+}
+
+.admin-route-row > div:first-child {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.admin-route-row strong {
+  color: #ffffff;
+}
+
+.admin-route-row span {
+  color: #a9b2bb;
+  font-size: 0.86rem;
+}
+
+.route-row-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.route-row-metrics span {
+  border: 1px solid rgba(245, 197, 66, 0.18);
+  border-radius: 999px;
+  color: #f5c542;
+  background: rgba(245, 197, 66, 0.08);
+  padding: 5px 8px;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
 * {
   box-sizing: border-box;
 }

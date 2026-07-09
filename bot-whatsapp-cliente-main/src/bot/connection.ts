@@ -12,6 +12,7 @@ import { findConfiguredRouteCodeFromOcr, readRouteImageOcr } from "./ocr";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
+import { RomaneioStore } from "../services/romaneio/romaneioStore";
 import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
@@ -63,6 +64,7 @@ type BotServiceOptions = {
   dispatchQueuePath?: string;
   telemetryPath?: string;
   logStorePath?: string;
+  romaneioDir?: string;
   clientEmail?: string;
   adminPhoneNumbers?: string[];
   leaderContacts?: LeaderContact[];
@@ -195,6 +197,7 @@ export class BotService extends EventEmitter {
   private routeStore: RouteStore;
   private dispatchQueueStore: DispatchQueueStore;
   private telemetryStore: TelemetryStore;
+  private romaneioStore?: RomaneioStore;
   private logger: BotLogger;
   private authDir: string;
   private statusEventsPath: string;
@@ -230,6 +233,7 @@ export class BotService extends EventEmitter {
     this.routeStore = new RouteStore(options.routeStorePath || path.resolve(process.cwd(), "route_history.json"));
     this.dispatchQueueStore = new DispatchQueueStore(options.dispatchQueuePath || path.resolve(process.cwd(), "dispatch_queue.json"));
     this.telemetryStore = new TelemetryStore(options.telemetryPath || path.resolve(process.cwd(), "dispatch_telemetry.json"));
+    this.romaneioStore = options.romaneioDir ? new RomaneioStore(options.romaneioDir) : undefined;
     this.logger = new BotLogger(() => this.emitSnapshot(), options.logStorePath || path.resolve(process.cwd(), "bot_logs.json"));
     this.statusEventsPath = path.join(path.dirname(options.routeStorePath || path.resolve(process.cwd(), "route_history.json")), "status_events.json");
     this.statusEvents = this.loadStatusEvents();
@@ -1863,7 +1867,8 @@ export class BotService extends EventEmitter {
         return;
       }
 
-      const message = `${config.nomeEnvio} ${detected.code}`.trim();
+      const romaneioMessage = this.buildRomaneioOcrMessage(detected);
+      const message = romaneioMessage || `${config.nomeEnvio} ${detected.code}`.trim();
       const dispatchKey = `${groupJid}:${normalizarTexto(detected.route)}:${detected.code}`;
       if (this.lastOcrDispatchKey === dispatchKey) {
         this.logger.info(`OCR ignorou rota duplicada: ${detected.route} ${detected.code}.`);
@@ -1907,6 +1912,25 @@ export class BotService extends EventEmitter {
       } catch {
         // Arquivo temporário já pode ter sido removido.
       }
+    }
+  }
+
+  private buildRomaneioOcrMessage(detected: { route?: string; bairro?: string; code?: string }) {
+    if (!this.romaneioStore) return undefined;
+
+    try {
+      const message = this.romaneioStore.buildMessageForDetected({
+        rota: detected.route,
+        bairro: detected.bairro,
+        gaiola: detected.code
+      });
+      if (message) {
+        this.logger.info(`[ROMANEIO] Cruzamento aplicado ao OCR: rota=${detected.route || "-"} gaiola=${detected.code || "-"} bairro=${detected.bairro || "-"}.`);
+      }
+      return message;
+    } catch (error) {
+      this.logger.warning(`[ROMANEIO] Falha ao cruzar OCR com romaneio: ${this.getErrorMessage(error)}`);
+      return undefined;
     }
   }
 

@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock3,
   Edit3,
+  FileSpreadsheet,
   Gauge,
   Home,
   Info,
@@ -43,6 +44,8 @@ import {
   BotSnapshot,
   MonitoredRoute,
   PanelUserRole,
+  RomaneioSettings,
+  RomaneioSnapshot,
   RouteDispatch,
   SupportMessage
 } from "../../shared/types";
@@ -55,6 +58,7 @@ import { AdminCommandCenter } from "./admin/AdminCommandCenter";
 import {
   botApi,
   clearAdminMaintenance,
+  getRomaneio,
   getAdminMonitor,
   getAdminUserDetail,
   getPanelMe,
@@ -66,12 +70,14 @@ import {
   panelLogin,
   rejectAdminRoute,
   saveAdminUser,
+  saveRomaneioSettings,
   sendSupportMessage,
   setPanelPassword,
   setPanelToken,
   setPanelUserEmail,
   setPanelUserRole,
   subscribeAdminMonitor,
+  uploadRomaneio,
   validateAdminRoute
 } from "./api";
 import "./styles.css";
@@ -84,7 +90,7 @@ type PendingConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-type AppTab = "home" | "groups" | "image" | "test" | "settings";
+type AppTab = "home" | "groups" | "image" | "romaneio" | "test" | "settings";
 type GroupEditor = "target" | "image" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
 type AdminMainTab = "dashboard" | "validations" | "history" | "logs" | "reports" | "clients" | "settings";
@@ -143,8 +149,32 @@ const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
   { id: "home", label: "Inicio", Icon: Home },
   { id: "groups", label: "Grupos", Icon: Route },
   { id: "image", label: "Imagem", Icon: Sparkles },
+  { id: "romaneio", label: "Romaneio", Icon: FileSpreadsheet },
   { id: "test", label: "Teste", Icon: TestTube2 },
   { id: "settings", label: "Ajustes", Icon: Settings }
+];
+
+const emptyRomaneio: RomaneioSnapshot = {
+  status: {
+    loaded: false,
+    totalRows: 0,
+    totalRoutes: 0,
+    totalPackages: 0,
+    columns: []
+  },
+  settings: {
+    bairrosPreferidos: [],
+    prioridade: "equilibrio_geral"
+  },
+  routes: []
+};
+
+const romaneioPriorities: Array<{ id: RomaneioSettings["prioridade"]; label: string }> = [
+  { id: "equilibrio_geral", label: "Equilíbrio geral" },
+  { id: "menor_distancia", label: "Menor distância" },
+  { id: "menos_paradas", label: "Menos paradas" },
+  { id: "menos_pacotes", label: "Menos pacotes" },
+  { id: "maior_concentracao_bairro", label: "Maior concentração" }
 ];
 
 function toDateInputValue(date: Date) {
@@ -2330,6 +2360,144 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   );
 }
 
+function RomaneioPanel({
+  romaneio,
+  settingsDraft,
+  busy,
+  onSettingsChange,
+  onUpload,
+  onSaveSettings,
+  error
+}: {
+  romaneio: RomaneioSnapshot;
+  settingsDraft: RomaneioSettings;
+  busy: boolean;
+  onSettingsChange: (settings: RomaneioSettings) => void;
+  onUpload: (file: File) => void;
+  onSaveSettings: () => void;
+  error: string;
+}) {
+  const topRoutes = romaneio.routes.slice(0, 12);
+  const lastUpload = romaneio.status.uploadedAt ? new Date(romaneio.status.uploadedAt).toLocaleString("pt-BR") : "Nenhum";
+
+  function updateNumber(key: "distanciaMaxKm" | "paradasMax" | "pacotesMax", value: string) {
+    const parsed = Number(value);
+    onSettingsChange({
+      ...settingsDraft,
+      [key]: Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+    });
+  }
+
+  return (
+    <section className="mobile-home">
+      <section className="quick-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="panel-label">Análise de Romaneio</p>
+            <h2>{romaneio.status.loaded ? `${romaneio.status.totalRoutes} rota(s)` : "Nenhum arquivo carregado"}</h2>
+          </div>
+          <label className="button primary">
+            Upload Excel
+            <input
+              accept=".xlsx"
+              disabled={busy}
+              hidden
+              type="file"
+              onChange={(event) => {
+                const file = event.currentTarget.files?.[0];
+                if (file) onUpload(file);
+                event.currentTarget.value = "";
+              }}
+            />
+          </label>
+        </div>
+        <div className="review-grid">
+          <article className={romaneio.status.loaded ? "review-item ok" : "review-item"}>
+            <span>Último upload</span>
+            <strong>{lastUpload}</strong>
+          </article>
+          <article className="review-item ok">
+            <span>Pacotes</span>
+            <strong>{romaneio.status.totalPackages}</strong>
+          </article>
+          <article className="review-item ok">
+            <span>Linhas lidas</span>
+            <strong>{romaneio.status.totalRows}</strong>
+          </article>
+        </div>
+        {romaneio.status.error || error ? <p className="inline-error">{romaneio.status.error || error}</p> : null}
+      </section>
+
+      <section className="quick-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="panel-label">Filtros</p>
+            <h2>Escolha de rotas</h2>
+          </div>
+          <button className="button primary" disabled={busy} type="button" onClick={onSaveSettings}>
+            Salvar filtros
+          </button>
+        </div>
+        <div className="settings-grid compact-settings">
+          <label>
+            Bairros preferidos
+            <textarea
+              rows={3}
+              value={settingsDraft.bairrosPreferidos.join("\n")}
+              onChange={(event) => onSettingsChange({ ...settingsDraft, bairrosPreferidos: event.target.value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean) })}
+            />
+          </label>
+          <label>
+            Distância máxima km
+            <input value={settingsDraft.distanciaMaxKm || ""} type="number" min="0" step="0.1" onChange={(event) => updateNumber("distanciaMaxKm", event.target.value)} />
+          </label>
+          <label>
+            Máximo de paradas
+            <input value={settingsDraft.paradasMax || ""} type="number" min="0" step="1" onChange={(event) => updateNumber("paradasMax", event.target.value)} />
+          </label>
+          <label>
+            Máximo de pacotes
+            <input value={settingsDraft.pacotesMax || ""} type="number" min="0" step="1" onChange={(event) => updateNumber("pacotesMax", event.target.value)} />
+          </label>
+          <label>
+            Prioridade
+            <select value={settingsDraft.prioridade} onChange={(event) => onSettingsChange({ ...settingsDraft, prioridade: event.target.value as RomaneioSettings["prioridade"] })}>
+              {romaneioPriorities.map((priority) => (
+                <option key={priority.id} value={priority.id}>{priority.label}</option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </section>
+
+      <section className="quick-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="panel-label">Prévia</p>
+            <h2>Rotas processadas</h2>
+          </div>
+          <span className="mini-badge">{topRoutes.length}/{romaneio.routes.length}</span>
+        </div>
+        <div className="admin-route-scroll compact">
+          {topRoutes.length ? topRoutes.map((route) => (
+            <article key={`${route.rota}-${route.gaiola}-${route.plannedAt || ""}`} className="admin-route-row">
+              <div>
+                <strong>{route.rota} / {route.gaiola}</strong>
+                <span>{route.cidade || "Cidade não informada"} · {route.bairros.slice(0, 3).map((bairro) => bairro.nome).join(", ")}</span>
+              </div>
+              <div className="route-row-metrics">
+                <span>{route.distanciaKm.toFixed(3)} km</span>
+                <span>{route.pacotes} pct</span>
+                <span>{route.paradas} paradas</span>
+              </div>
+            </article>
+          )) : <p className="qr-empty">Envie um arquivo .xlsx para ver a prévia.</p>}
+        </div>
+      </section>
+    </section>
+  );
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<BotSnapshot>(emptySnapshot);
   const [busy, setBusy] = useState(false);
@@ -2344,6 +2512,9 @@ export default function App() {
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
   const [actionToast, setActionToast] = useState("");
+  const [romaneio, setRomaneio] = useState<RomaneioSnapshot>(emptyRomaneio);
+  const [romaneioSettingsDraft, setRomaneioSettingsDraft] = useState<RomaneioSettings>(emptyRomaneio.settings);
+  const [romaneioError, setRomaneioError] = useState("");
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
   const [incidentClock, setIncidentClock] = useState(Date.now());
@@ -2429,6 +2600,24 @@ export default function App() {
     return () => {
       mounted = false;
       unsubscribe();
+    };
+  }, [authenticated, userRole]);
+
+  useEffect(() => {
+    if (!authenticated || userRole === "admin") return;
+    let mounted = true;
+    getRomaneio()
+      .then((nextRomaneio) => {
+        if (!mounted) return;
+        setRomaneio(nextRomaneio);
+        setRomaneioSettingsDraft(nextRomaneio.settings);
+      })
+      .catch((error) => {
+        if (!mounted) return;
+        setRomaneioError(error instanceof Error ? error.message : "Falha ao carregar romaneio.");
+      });
+    return () => {
+      mounted = false;
     };
   }, [authenticated, userRole]);
 
@@ -2782,6 +2971,36 @@ export default function App() {
     }));
   }
 
+  async function handleRomaneioUpload(file: File) {
+    setBusy(true);
+    setRomaneioError("");
+    try {
+      const nextRomaneio = await uploadRomaneio(file);
+      setRomaneio(nextRomaneio);
+      setRomaneioSettingsDraft(nextRomaneio.settings);
+      showActionToast("Romaneio processado.");
+    } catch (error) {
+      setRomaneioError(error instanceof Error ? error.message : "Não consegui processar o romaneio.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleSaveRomaneioSettings() {
+    setBusy(true);
+    setRomaneioError("");
+    try {
+      const settings = await saveRomaneioSettings(romaneioSettingsDraft);
+      setRomaneio((current) => ({ ...current, settings }));
+      setRomaneioSettingsDraft(settings);
+      showActionToast("Filtros salvos.");
+    } catch (error) {
+      setRomaneioError(error instanceof Error ? error.message : "Não consegui salvar os filtros.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submitIncidentAnswer() {
     if (!pendingClientIncident || !incidentReason.trim()) return;
     await runAction(() => botApi.submitRouteIncident({
@@ -2942,6 +3161,18 @@ export default function App() {
           />
           <LogsPanel logs={snapshot.logs.filter((log) => /OCR|imagem|foto|rota/i.test(log.message)).slice(-40)} />
         </section>
+      ) : null}
+
+      {activeTab === "romaneio" ? (
+        <RomaneioPanel
+          romaneio={romaneio}
+          settingsDraft={romaneioSettingsDraft}
+          busy={busy}
+          onSettingsChange={setRomaneioSettingsDraft}
+          onUpload={handleRomaneioUpload}
+          onSaveSettings={handleSaveRomaneioSettings}
+          error={romaneioError}
+        />
       ) : null}
 
       {activeTab === "test" ? (

@@ -9,6 +9,7 @@ import { BotService, DEFAULT_LEADER_CONTACTS } from "./bot/connection";
 import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderStore";
 import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
+import { RomaneioStore } from "./services/romaneio/romaneioStore";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
@@ -165,6 +166,14 @@ function getUserStorageKey(email: string) {
   return email.toLowerCase().replace(/[^a-z0-9._-]+/g, "_");
 }
 
+function getUserDir(email: string) {
+  return path.join(dataDir, "users", getUserStorageKey(email));
+}
+
+function getRomaneioStoreForEmail(email: string) {
+  return new RomaneioStore(path.join(getUserDir(email), "romaneio"));
+}
+
 async function renameUserStorage(oldEmail: string, nextEmail: string) {
   if (oldEmail === nextEmail) return;
 
@@ -201,12 +210,13 @@ function getBotForEmail(email: string) {
   const existing = bots.get(normalizedEmail);
   if (existing) return existing;
 
-  const userDir = path.join(dataDir, "users", getUserStorageKey(normalizedEmail));
+  const userDir = getUserDir(normalizedEmail);
   const userAuthDir = path.join(userDir, "auth_info");
   const userConfigPath = path.join(userDir, "config.json");
   const userRouteStorePath = path.join(userDir, "route_history.json");
   const userLogStorePath = path.join(userDir, "bot_logs.json");
   const userTelemetryPath = path.join(userDir, "dispatch_telemetry.json");
+  const userRomaneioDir = path.join(userDir, "romaneio");
 
   if (normalizedEmail === primaryPanelEmail) {
     const legacyAuthDir = path.join(dataDir, "auth_info");
@@ -227,6 +237,7 @@ function getBotForEmail(email: string) {
     routeStorePath: userRouteStorePath,
     telemetryPath: userTelemetryPath,
     logStorePath: userLogStorePath,
+    romaneioDir: userRomaneioDir,
     clientEmail: normalizedEmail,
     adminPhoneNumbers,
     leaderContacts: leaderStore.all(),
@@ -271,6 +282,47 @@ function readJsonBody<T = any>(request: http.IncomingMessage): Promise<T> {
     });
     request.on("error", reject);
   });
+}
+
+function readRawBody(request: http.IncomingMessage, maxBytes = 1024 * 1024 * 12): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    request.on("data", (chunk: Buffer) => {
+      total += chunk.length;
+      if (total > maxBytes) {
+        reject(new Error("Arquivo muito grande."));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => resolve(Buffer.concat(chunks)));
+    request.on("error", reject);
+  });
+}
+
+async function readMultipartFile(request: http.IncomingMessage) {
+  const contentType = String(request.headers["content-type"] || "");
+  const boundary = contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i)?.[1] || contentType.match(/boundary=(?:"([^"]+)"|([^;]+))/i)?.[2];
+  if (!boundary) throw new Error("Envie o arquivo como multipart/form-data.");
+
+  const body = await readRawBody(request);
+  const bodyText = body.toString("latin1");
+  const marker = `--${boundary}`;
+  const parts = bodyText.split(marker).filter((part) => part.includes("Content-Disposition"));
+  const filePart = parts.find((part) => /filename=/i.test(part));
+  if (!filePart) throw new Error("Arquivo do romaneio não encontrado.");
+
+  const [rawHeaders, ...rest] = filePart.split("\r\n\r\n");
+  const content = rest.join("\r\n\r\n").replace(/\r\n--$/, "").replace(/\r\n$/, "");
+  const fileName = rawHeaders.match(/filename="([^"]+)"/i)?.[1] || "romaneio.xlsx";
+  if (!/\.xlsx$/i.test(fileName)) throw new Error("Envie um arquivo .xlsx.");
+
+  return {
+    fileName,
+    buffer: Buffer.from(content, "latin1")
+  };
 }
 
 function base64Url(input: string) {
@@ -1098,6 +1150,46 @@ const server = http.createServer(async (request, response) => {
     }
 
     const activeBot = authorizedEmail ? getBotForEmail(authorizedEmail) : undefined;
+    const activeRomaneio = authorizedEmail ? getRomaneioStoreForEmail(authorizedEmail) : undefined;
+
+    if (request.method === "POST" && url.pathname === "/api/romaneio/upload") {
+      try {
+        const file = await readMultipartFile(request);
+        const snapshot = activeRomaneio!.saveUpload(file.fileName, file.buffer);
+        console.log(`[ROMANEIO] ${authorizedEmail} enviou ${file.fileName}: ${snapshot.status.totalRows} linhas, ${snapshot.status.totalRoutes} rotas, ${snapshot.status.totalPackages} pacotes.`);
+        sendJson(response, 200, snapshot);
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Não foi possível processar o romaneio." });
+      }
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/romaneio/status") {
+      sendJson(response, 200, activeRomaneio!.status());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/romaneio/routes") {
+      sendJson(response, 200, activeRomaneio!.all());
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/romaneio/routes/search") {
+      const bairro = String(url.searchParams.get("bairro") || "");
+      sendJson(response, 200, { routes: activeRomaneio!.searchByNeighborhood(bairro).slice(0, 20) });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/romaneio/settings") {
+      sendJson(response, 200, activeRomaneio!.getSettings());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/romaneio/settings") {
+      const body = await readJsonBody(request);
+      sendJson(response, 200, activeRomaneio!.saveSettings(body));
+      return;
+    }
 
     if (request.method === "GET" && url.pathname === "/api/snapshot") {
       sendJson(response, 200, activeBot!.getSnapshot());

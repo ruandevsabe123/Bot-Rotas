@@ -271,6 +271,80 @@ export type RouteOcrInsight = {
   imagePreviewUrl?: string;
 };
 
+export type RomaneioPriority =
+  | "menor_distancia"
+  | "menos_paradas"
+  | "menos_pacotes"
+  | "maior_concentracao_bairro"
+  | "equilibrio_geral";
+
+export type RomaneioNeighborhoodSummary = {
+  nome: string;
+  pacotes: number;
+  percentualNaRota: number;
+};
+
+export type RomaneioRoutePackage = {
+  id?: string;
+  endereco?: string;
+  bairro?: string;
+  cidade?: string;
+  stop?: number;
+};
+
+export type RomaneioRouteSummary = {
+  rota: string;
+  gaiola: string;
+  plannedAt?: string;
+  cidade?: string;
+  distanciaKm: number;
+  pacotes: number;
+  paradas: number;
+  tempoEstimado?: string;
+  bairros: RomaneioNeighborhoodSummary[];
+  pacotesIds?: string[];
+  pacotesDetalhes?: RomaneioRoutePackage[];
+};
+
+export type RomaneioSettings = {
+  bairrosPreferidos: string[];
+  distanciaMaxKm?: number;
+  paradasMax?: number;
+  pacotesMax?: number;
+  prioridade: RomaneioPriority;
+};
+
+export type RomaneioStatus = {
+  loaded: boolean;
+  uploadedAt?: string;
+  fileName?: string;
+  sheetName?: string;
+  totalRows: number;
+  totalRoutes: number;
+  totalPackages: number;
+  columns: string[];
+  error?: string;
+};
+
+export type RomaneioSnapshot = {
+  status: RomaneioStatus;
+  settings: RomaneioSettings;
+  routes: RomaneioRouteSummary[];
+};
+
+export type RomaneioDetectedInfo = {
+  bairro?: string;
+  rota?: string;
+  gaiola?: string;
+};
+
+export type RomaneioRankedRoute = RomaneioRouteSummary & {
+  score: number;
+  bairroMatch?: RomaneioNeighborhoodSummary;
+  passedFilters: boolean;
+  reasons: string[];
+};
+
 export type RouteClientIncident = {
   required: boolean;
   kind: "leader_reaction_removed" | "message_deleted";

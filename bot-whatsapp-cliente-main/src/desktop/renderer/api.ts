@@ -10,6 +10,8 @@ import {
   LeaderContact,
   PanelUser,
   PanelUserRole,
+  RomaneioSettings,
+  RomaneioSnapshot,
   SaveCodesPayload,
   SaveGroupPayload,
   SaveMessageSettingsPayload,
@@ -216,6 +218,23 @@ export function clearAdminMaintenance(payload: { target: "logs" | "routes" | "su
   });
 }
 
+export async function uploadRomaneio(file: File) {
+  const formData = new FormData();
+  formData.set("file", file);
+  return fetchForm<RomaneioSnapshot>("/api/romaneio/upload", formData);
+}
+
+export function getRomaneio() {
+  return fetchJson<RomaneioSnapshot>("/api/romaneio/routes");
+}
+
+export function saveRomaneioSettings(settings: RomaneioSettings) {
+  return fetchJson<RomaneioSettings>("/api/romaneio/settings", {
+    method: "POST",
+    body: JSON.stringify(settings)
+  });
+}
+
 async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set("Content-Type", "application/json");
@@ -233,6 +252,27 @@ async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.error || "Falha ao conversar com o servidor.");
+  }
+
+  return data as T;
+}
+
+async function fetchForm<T>(url: string, body: FormData): Promise<T> {
+  const headers = new Headers();
+  const token = getPanelToken();
+  const password = getPanelPassword();
+  if (token) headers.set("x-panel-token", token);
+  if (password) headers.set("x-panel-password", password);
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers,
+    body
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || "Falha ao enviar arquivo.");
   }
 
   return data as T;
