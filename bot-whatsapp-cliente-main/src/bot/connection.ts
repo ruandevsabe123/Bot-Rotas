@@ -2067,7 +2067,8 @@ export class BotService extends EventEmitter {
   }
 
   private getRomaneioPeriod(timestampMs: number): RomaneioCandidate["periodo"] {
-    return new Date(timestampMs).getHours() < 12 ? "manha" : "tarde";
+    const hour = new Date(timestampMs).getHours();
+    return hour >= 4 && hour < 9 ? "manha" : "tarde";
   }
 
   private purgeOldRomaneioCandidates() {
