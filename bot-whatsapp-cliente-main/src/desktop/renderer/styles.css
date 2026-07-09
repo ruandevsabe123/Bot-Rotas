@@ -171,6 +171,17 @@
   color: #a9b2bb;
 }
 
+.send-order-badge {
+  width: fit-content;
+  border: 1px solid rgba(53, 208, 127, 0.35);
+  border-radius: 999px;
+  color: #35d07f;
+  background: rgba(53, 208, 127, 0.1);
+  padding: 5px 8px;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
 * {
   box-sizing: border-box;
 }

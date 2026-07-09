@@ -154,9 +154,6 @@ function sanitizeSettings(input: Partial<RomaneioSettings>): RomaneioSettings {
     "equilibrio_geral"
   ]);
   return {
-    bairrosPreferidos: Array.isArray(input.bairrosPreferidos)
-      ? input.bairrosPreferidos.map((item) => String(item || "").trim()).filter(Boolean).slice(0, 30)
-      : [],
     distanciaMaxKm: positiveNumber(input.distanciaMaxKm),
     paradasMax: positiveNumber(input.paradasMax),
     pacotesMax: positiveNumber(input.pacotesMax),

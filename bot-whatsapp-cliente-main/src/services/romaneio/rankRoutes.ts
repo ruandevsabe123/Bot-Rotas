@@ -2,7 +2,6 @@ import { RomaneioDetectedInfo, RomaneioRankedRoute, RomaneioRouteSummary, Romane
 import { matchesNormalizedText, normalizeRomaneioText } from "./normalizeRomaneio";
 
 export const DEFAULT_ROMANEIO_SETTINGS: RomaneioSettings = {
-  bairrosPreferidos: [],
   prioridade: "equilibrio_geral"
 };
 
@@ -22,7 +21,7 @@ export function rankRoutes(routes: RomaneioRouteSummary[], detectedInfo: Romanei
 
   return candidates
     .map((route) => {
-      const bairroMatch = getBestNeighborhoodMatch(route, detectedInfo.bairro || filters.bairrosPreferidos[0] || "");
+      const bairroMatch = getBestNeighborhoodMatch(route, detectedInfo.bairro || "");
       const reasons = getFilterReasons(route, filters);
       const bairroScore = (bairroMatch?.percentualNaRota || 0) / 100;
       const distanciaScore = 1 - ((route.distanciaKm || 0) / maxDistance);
@@ -52,7 +51,7 @@ function getCandidates(routes: RomaneioRouteSummary[], detectedInfo: RomaneioDet
     if (found.length) return found;
   }
 
-  const neighborhoods = [detectedInfo.bairro, ...filters.bairrosPreferidos].filter(Boolean) as string[];
+  const neighborhoods = [detectedInfo.bairro].filter(Boolean) as string[];
   if (neighborhoods.length) {
     const found = routes.filter((route) => neighborhoods.some((bairro) => getBestNeighborhoodMatch(route, bairro)));
     if (found.length) return found;

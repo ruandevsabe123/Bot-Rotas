@@ -89,6 +89,7 @@ const SOCKET_QUERY_TIMEOUT_MS = 15000;
 const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
 const TARGET_PARALLEL_STAGGER_MS = 90;
+const MANUAL_ROUTE_SELECTION_STAGGER_MS = 180;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
 const PREPARED_RELAY_TTL_MS = 25000;
@@ -2052,8 +2053,11 @@ export class BotService extends EventEmitter {
       throw new Error("Nenhuma análise de imagem aguardando confirmação.");
     }
 
-    const selectedIds = new Set(optionIds.filter(Boolean).slice(0, MAX_OUTGOING_MESSAGES));
-    const selected = selection.options.filter((option) => selectedIds.has(option.id));
+    const selected = optionIds
+      .filter(Boolean)
+      .slice(0, MAX_OUTGOING_MESSAGES)
+      .map((id) => selection.options.find((option) => option.id === id))
+      .filter(Boolean) as OcrRouteOption[];
     if (!selected.length) throw new Error("Selecione pelo menos uma rota.");
 
     this.applyOcrRouteSelection(selected, "manual");
@@ -2735,7 +2739,8 @@ export class BotService extends EventEmitter {
           if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
             throw new Error("Ciclo cancelado pelo painel ou por nova abertura.");
           }
-          const staggerMs = index === 0 ? 0 : TARGET_PARALLEL_STAGGER_MS * index;
+          const baseStaggerMs = trigger === "manual" ? MANUAL_ROUTE_SELECTION_STAGGER_MS : TARGET_PARALLEL_STAGGER_MS;
+          const staggerMs = index === 0 ? 0 : baseStaggerMs * index;
           if (staggerMs > 0) await this.delay(staggerMs);
           const calledAt = Date.now();
           if (!timeline.firstRelayCalledAt) {

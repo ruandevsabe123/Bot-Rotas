@@ -338,7 +338,6 @@ export type RomaneioRouteSummary = {
 };
 
 export type RomaneioSettings = {
-  bairrosPreferidos: string[];
   distanciaMaxKm?: number;
   paradasMax?: number;
   pacotesMax?: number;

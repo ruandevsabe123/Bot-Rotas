@@ -9,6 +9,8 @@ export function parseRomaneioXlsx(filePath: string) {
 
   const worksheet = workbook.Sheets[sheetName];
   const rows = xlsx.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: "" });
+  const range = worksheet["!ref"] ? xlsx.utils.decode_range(worksheet["!ref"]) : undefined;
+  const physicalRowCount = range ? range.e.r - range.s.r + 1 : rows.length;
   const columns = rows[0] ? Object.keys(rows[0]) : [];
   const report = getRomaneioColumnReport(columns);
   if (report.missing.length) {
@@ -20,7 +22,8 @@ export function parseRomaneioXlsx(filePath: string) {
   return {
     sheetName,
     columns,
-    rowCount: rows.length,
+    rowCount: physicalRowCount,
+    dataRowCount: rows.length,
     normalizedRowCount: normalizedRows.length,
     routes
   };

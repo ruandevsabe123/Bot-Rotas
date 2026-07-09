@@ -166,7 +166,6 @@ const emptyRomaneio: RomaneioSnapshot = {
     columns: []
   },
   settings: {
-    bairrosPreferidos: [],
     prioridade: "equilibrio_geral"
   },
   routes: []
@@ -2457,14 +2456,6 @@ function RomaneioPanel({
         </div>
         <div className="settings-grid compact-settings">
           <label>
-            Bairros preferidos
-            <textarea
-              rows={3}
-              value={settingsDraft.bairrosPreferidos.join("\n")}
-              onChange={(event) => onSettingsChange({ ...settingsDraft, bairrosPreferidos: event.target.value.split(/\r?\n|,/).map((item) => item.trim()).filter(Boolean) })}
-            />
-          </label>
-          <label>
             Distância máxima km
             <input value={settingsDraft.distanciaMaxKm || ""} type="number" min="0" step="0.1" onChange={(event) => updateNumber("distanciaMaxKm", event.target.value)} />
           </label>
@@ -2571,7 +2562,10 @@ function OcrRouteApprovalPanel({
         {selection.message ? <p className="approval-message">{selection.message}</p> : null}
         <div className="ocr-option-grid">
           {selection.options.map((option) => {
-            const selected = selectedIds.includes(option.id) || Boolean(selection.selectedOptionIds?.includes(option.id));
+            const selectedOrder = selectedIds.indexOf(option.id);
+            const confirmedOrder = selection.selectedOptionIds?.indexOf(option.id) ?? -1;
+            const selected = selectedOrder >= 0 || confirmedOrder >= 0;
+            const sendOrder = selectedOrder >= 0 ? selectedOrder + 1 : confirmedOrder >= 0 ? confirmedOrder + 1 : 0;
             return (
               <button
                 key={option.id}
@@ -2582,6 +2576,7 @@ function OcrRouteApprovalPanel({
               >
                 <strong>#{option.rank} {option.rota} / {option.gaiola}</strong>
                 <span>{option.bairro}{option.bairroPercentual !== undefined ? ` · ${option.bairroPercentual.toFixed(1)}%` : ""}</span>
+                {sendOrder ? <b className="send-order-badge">{sendOrder}ª mensagem</b> : null}
                 <div className="route-row-metrics">
                   <span>{option.distanciaKm.toFixed(3)} km</span>
                   <span>{option.pacotes} pct</span>
