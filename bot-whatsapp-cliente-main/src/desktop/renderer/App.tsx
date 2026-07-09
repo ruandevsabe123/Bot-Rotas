@@ -91,7 +91,13 @@ type PendingConfirmation = {
   message: string;
   details: string[];
   confirmLabel: string;
+  tone?: "manual" | "auto";
   onConfirm: () => void | Promise<void>;
+};
+
+type ActionToast = {
+  message: string;
+  tone?: "manual" | "auto";
 };
 
 type AppTab = "home" | "groups" | "image" | "test" | "settings";
@@ -2618,7 +2624,7 @@ export default function App() {
   const [loginError, setLoginError] = useState("");
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
-  const [actionToast, setActionToast] = useState("");
+  const [actionToast, setActionToast] = useState<ActionToast | undefined>();
   const [romaneio, setRomaneio] = useState<RomaneioSnapshot>(emptyRomaneio);
   const [romaneioSettingsDraft, setRomaneioSettingsDraft] = useState<RomaneioSettings>(emptyRomaneio.settings);
   const [romaneioLocateResult, setRomaneioLocateResult] = useState<RomaneioLocateResult>(emptyRomaneioLocate);
@@ -2630,9 +2636,9 @@ export default function App() {
   const [incidentClock, setIncidentClock] = useState(Date.now());
   const connectionSectionRef = useRef<HTMLElement | null>(null);
 
-  function showActionToast(message: string) {
-    setActionToast(message);
-    window.setTimeout(() => setActionToast(""), 1000);
+  function showActionToast(message: string, tone?: ActionToast["tone"]) {
+    setActionToast({ message, tone });
+    window.setTimeout(() => setActionToast(undefined), 1000);
   }
 
   function scrollToConnectionOptions(delayMs = 120) {
@@ -3114,8 +3120,13 @@ export default function App() {
         ? ["O painel abrirá a tela de ranking para seleção manual.", "Nada será enviado até confirmar uma ou mais rotas."]
         : ["Útil quando o líder envia a imagem e não fecha o grupo.", "Se o grupo já estiver aberto, o bot tenta enviar a melhor rota o mais rápido possível."],
       confirmLabel: nextManualMode ? "Ligar escolha" : "Desligar escolha",
+      tone: nextManualMode ? "manual" : "auto",
       onConfirm: async () => {
         saveGeneralSettings({ ocrManualRouteSelection: nextManualMode });
+        showActionToast(
+          nextManualMode ? "Modo seleção manual ligado." : "Modo automático ligado.",
+          nextManualMode ? "manual" : "auto"
+        );
       }
     });
   }
@@ -3324,7 +3335,7 @@ export default function App() {
             messages={buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas)}
             onOpen={() => setGroupEditor("image")}
           />
-          <section className="quick-panel ocr-mode-panel">
+          <section className={snapshot.config.ocrManualRouteSelection ? "quick-panel ocr-mode-panel tone-manual" : "quick-panel ocr-mode-panel tone-auto"}>
             <div className="panel-heading">
               <div>
                 <p className="panel-label">Escolha da rota</p>
@@ -3493,7 +3504,7 @@ export default function App() {
         })}
       </nav>
 
-      {actionToast ? <div className="action-toast">{actionToast}</div> : null}
+      {actionToast ? <div className={["action-toast", actionToast.tone ? `tone-${actionToast.tone}` : ""].filter(Boolean).join(" ")}>{actionToast.message}</div> : null}
       {groupEditor ? (
         <div className="modal-backdrop" role="presentation">
           <section className="sheet-dialog" role="dialog" aria-modal="true" aria-labelledby="group-editor-title">
@@ -3523,7 +3534,7 @@ export default function App() {
 
       {confirmation ? (
         <div className="modal-backdrop" role="presentation">
-          <section className="confirmation-dialog" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+          <section className={["confirmation-dialog", confirmation.tone ? `tone-${confirmation.tone}` : ""].filter(Boolean).join(" ")} role="dialog" aria-modal="true" aria-labelledby="confirm-title">
             <p className="panel-label">Confirmação</p>
             <h2 id="confirm-title">{confirmation.title}</h2>
             <p className="confirmation-message">{confirmation.message}</p>

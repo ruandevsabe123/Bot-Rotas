@@ -30,6 +30,15 @@ export type RouteOcrResult = {
   source: string;
 };
 
+export type DetectedRouteCode = {
+  route: string;
+  cidade?: string;
+  bairro?: string;
+  code: string;
+  line: string;
+  confidence: number;
+};
+
 let tesseractJsWorkerPromise: ReturnType<typeof createWorker> | undefined;
 
 export function normalizeOcrText(text: string) {
@@ -182,7 +191,7 @@ export function findConfiguredRouteCodeFromOcr(ocr: RouteOcrResult, monitoredRou
   return findConfiguredRouteCodeInLines(lines, monitoredRoutes, legacyRoutes);
 }
 
-function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: MonitoredRoute[] = [], legacyRoutes: string[] = []) {
+function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: MonitoredRoute[] = [], legacyRoutes: string[] = []): DetectedRouteCode | undefined {
   const usefulLines = mergeLikelySplitRows(lines);
   const layout = getTableLayout(usefulLines);
 
@@ -225,7 +234,8 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
         cidade: route.cidade,
         bairro: route.bairro,
         code,
-        line: line.text
+        line: line.text,
+        confidence: Math.round(line.confidence)
       };
     }
   }
@@ -250,7 +260,8 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
         route: route.raw,
         bairro: route.raw,
         code,
-        line: line.text
+        line: line.text,
+        confidence: Math.round(line.confidence)
       };
     }
   }

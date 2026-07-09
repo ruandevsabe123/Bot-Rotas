@@ -90,6 +90,7 @@ const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
 const TARGET_PARALLEL_STAGGER_MS = 90;
 const MANUAL_ROUTE_SELECTION_STAGGER_MS = 180;
+const SAFE_OCR_GAIOLA_CONFIDENCE = 60;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
 const PREPARED_RELAY_TTL_MS = 25000;
@@ -1985,7 +1986,7 @@ export class BotService extends EventEmitter {
         cidade: detected.cidade,
         bairro: detected.bairro,
         code: detected.code,
-        confidence: ocr.lines.length ? Math.round(ocr.lines.reduce((total, line) => total + line.confidence, 0) / ocr.lines.length) : undefined,
+        confidence: detected.confidence,
         processedAt: new Date().toISOString(),
         imagePreviewUrl
       };
@@ -2019,6 +2020,15 @@ export class BotService extends EventEmitter {
       };
       this.logger.success(`[ROMANEIO] Imagem analisada. Ranking de ${options.length} rota(s) disponível para aprovação no painel.`);
       if (!config.ocrManualRouteSelection) {
+        if (detected.confidence < SAFE_OCR_GAIOLA_CONFIDENCE) {
+          this.ocrRouteSelection = {
+            ...this.ocrRouteSelection,
+            message: `Leitura da gaiola com confiança baixa (${detected.confidence}%). Confirme a rota no painel para evitar envio errado.`
+          };
+          this.logger.warning(`[ROMANEIO] OCR com confiança baixa (${detected.confidence}%). Envio automático bloqueado para evitar gaiola errada.`);
+          this.emitSnapshot();
+          return;
+        }
         this.applyOcrRouteSelection([options[0]], "automatic");
         if (this.groupState === "open") {
           const cycleId = ++this.sendCycleId;
@@ -2091,20 +2101,25 @@ export class BotService extends EventEmitter {
       : `[ROMANEIO] Bot escolheu automaticamente a melhor rota: ${messages.join(" | ")}.`);
   }
 
-  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string }): OcrRouteOption[] {
+  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; confidence?: number }): OcrRouteOption[] {
     if (!this.romaneioStore) return [];
 
     try {
-      const primary = this.romaneioStore.rankForDetected({
+      const routeAndNeighborhood = this.romaneioStore.rankForDetected({
         rota: detected.route,
-        bairro: detected.bairro,
-        gaiola: detected.code
+        bairro: detected.bairro
       });
+      const safeGaiola = (detected.confidence ?? 0) >= SAFE_OCR_GAIOLA_CONFIDENCE;
+      const byGaiola = safeGaiola && detected.code
+        ? this.romaneioStore.rankForDetected({ gaiola: detected.code })
+        : [];
       const byNeighborhood = detected.bairro
         ? this.romaneioStore.rankForDetected({ bairro: detected.bairro })
         : [];
       const merged = new Map<string, RomaneioRankedRoute>();
-      for (const route of [...primary, ...byNeighborhood]) {
+      const ordered = [...byGaiola, ...routeAndNeighborhood, ...byNeighborhood]
+        .filter((route) => this.ocrRouteLooksCompatible(route, detected, safeGaiola));
+      for (const route of ordered) {
         merged.set(`${route.rota}::${route.gaiola}::${route.plannedAt || ""}`, route);
       }
       return this.rankOcrRoutesByOperationalMetrics(Array.from(merged.values()))
@@ -2114,6 +2129,25 @@ export class BotService extends EventEmitter {
       this.logger.warning(`[ROMANEIO] Falha ao cruzar OCR com romaneio: ${this.getErrorMessage(error)}`);
       return [];
     }
+  }
+
+  private ocrRouteLooksCompatible(route: RomaneioRankedRoute, detected: { route?: string; bairro?: string; code?: string }, safeGaiola: boolean) {
+    const wantedBairro = normalizarTexto(detected.bairro || "");
+    const wantedRoute = normalizarTexto(detected.route || "");
+    const routeText = normalizarTexto(route.rota || "");
+    const routeMatches = !wantedRoute ||
+      Boolean(wantedBairro && wantedRoute.includes(wantedBairro)) ||
+      routeText.includes(wantedRoute) ||
+      wantedRoute.includes(routeText);
+    const bairroMatches = !wantedBairro || route.bairros.some((bairro) => {
+      const name = normalizarTexto(bairro.nome || "");
+      return name.includes(wantedBairro) || wantedBairro.includes(name);
+    });
+    const gaiolaMatches = safeGaiola && detected.code
+      ? normalizarTexto(route.gaiola) === normalizarTexto(detected.code)
+      : false;
+
+    return (routeMatches && bairroMatches) || (gaiolaMatches && bairroMatches);
   }
 
   private rankOcrRoutesByOperationalMetrics(routes: RomaneioRankedRoute[]) {
