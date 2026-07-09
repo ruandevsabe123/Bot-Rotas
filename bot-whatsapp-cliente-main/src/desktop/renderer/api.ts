@@ -329,6 +329,7 @@ function createWebApi(): DesktopApi {
     saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) =>
       action("save-target-message-settings", payload),
     saveGeneralSettings: (payload: GeneralSettingsPayload) => action("save-general-settings", payload),
+    confirmOcrRoutes: (payload: { optionIds: string[] }) => action("confirm-ocr-routes", payload),
     submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) =>
       action("submit-route-incident", payload),
     snoozeRouteIncident: (payload: { routeId: string }) => action("snooze-route-incident", payload),

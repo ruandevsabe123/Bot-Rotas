@@ -42,6 +42,8 @@ import {
   AdminUsersSnapshot,
   BotSnapshot,
   MonitoredRoute,
+  OcrRouteOption,
+  OcrRouteSelectionState,
   PanelUserRole,
   RomaneioCandidate,
   RomaneioLocateResult,
@@ -2512,6 +2514,89 @@ function RomaneioPanel({
   );
 }
 
+function OcrRouteApprovalPanel({
+  selection,
+  selectedIds,
+  busy,
+  onToggle,
+  onConfirm
+}: {
+  selection?: OcrRouteSelectionState;
+  selectedIds: string[];
+  busy: boolean;
+  onToggle: (option: OcrRouteOption) => void;
+  onConfirm: () => void;
+}) {
+  if (!selection || selection.status === "idle") return null;
+
+  if (selection.status === "analyzing") {
+    return (
+      <section className="quick-panel ocr-approval-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="panel-label">Bot imagem</p>
+            <h2>Analisando imagem...</h2>
+          </div>
+          <span className="mini-badge">OCR</span>
+        </div>
+      </section>
+    );
+  }
+
+  if (selection.status === "error") {
+    return (
+      <section className="quick-panel ocr-approval-panel">
+        <p className="panel-label">Bot imagem</p>
+        <h2>Imagem analisada</h2>
+        <p className="inline-error">{selection.message || "Não foi possível encontrar rotas para essa imagem."}</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="quick-panel ocr-approval-panel">
+      <div className="panel-heading">
+        <div>
+          <p className="panel-label">Rotas encontradas</p>
+          <h2>{selection.status === "confirmed" ? "Rotas confirmadas" : "Escolha as rotas"}</h2>
+        </div>
+        <span className={selection.status === "confirmed" ? "mini-badge ok" : "mini-badge"}>{selection.options.length} opção(ões)</span>
+      </div>
+      {selection.message ? <p className="approval-message">{selection.message}</p> : null}
+      <div className="ocr-option-grid">
+        {selection.options.map((option) => {
+          const selected = selectedIds.includes(option.id) || Boolean(selection.selectedOptionIds?.includes(option.id));
+          return (
+            <button
+              key={option.id}
+              className={selected ? "ocr-option selected" : "ocr-option"}
+              disabled={busy || selection.status === "confirmed"}
+              type="button"
+              onClick={() => onToggle(option)}
+            >
+              <strong>{option.rota} / {option.gaiola}</strong>
+              <span>{option.bairro}{option.bairroPercentual !== undefined ? ` · ${option.bairroPercentual.toFixed(1)}%` : ""}</span>
+              <div className="route-row-metrics">
+                <span>{option.distanciaKm.toFixed(3)} km</span>
+                <span>{option.pacotes} pct</span>
+                <span>{option.paradas} paradas</span>
+              </div>
+              {!option.passedFilters && option.reasons.length ? <small>{option.reasons.join(" ")}</small> : null}
+            </button>
+          );
+        })}
+      </div>
+      {selection.status !== "confirmed" ? (
+        <div className="review-actions">
+          <button className="button primary" disabled={busy || !selectedIds.length} type="button" onClick={onConfirm}>
+            Confirmar rota(s)
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<BotSnapshot>(emptySnapshot);
   const [busy, setBusy] = useState(false);
@@ -2530,6 +2615,7 @@ export default function App() {
   const [romaneioSettingsDraft, setRomaneioSettingsDraft] = useState<RomaneioSettings>(emptyRomaneio.settings);
   const [romaneioLocateResult, setRomaneioLocateResult] = useState<RomaneioLocateResult>(emptyRomaneioLocate);
   const [romaneioError, setRomaneioError] = useState("");
+  const [selectedOcrOptionIds, setSelectedOcrOptionIds] = useState<string[]>([]);
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
   const [incidentClock, setIncidentClock] = useState(Date.now());
@@ -2639,6 +2725,21 @@ export default function App() {
   useEffect(() => {
     if (snapshot.status !== "connected") return;
   }, [snapshot.status]);
+
+  useEffect(() => {
+    const selection = snapshot.ocrRouteSelection;
+    if (selection?.status === "ready") {
+      setSelectedOcrOptionIds(selection.options[0]?.id ? [selection.options[0].id] : []);
+      return;
+    }
+    if (selection?.status === "confirmed") {
+      setSelectedOcrOptionIds(selection.selectedOptionIds || []);
+      return;
+    }
+    if (selection?.status === "idle" || selection?.status === "analyzing" || selection?.status === "error") {
+      setSelectedOcrOptionIds([]);
+    }
+  }, [snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
 
   const groupLabel = useMemo(() => {
     return snapshot.config.grupoAlvoNome || "Nenhum grupo alvo";
@@ -3035,6 +3136,17 @@ export default function App() {
     }
   }
 
+  function toggleOcrRouteOption(option: OcrRouteOption) {
+    setSelectedOcrOptionIds((current) => {
+      if (current.includes(option.id)) return current.filter((id) => id !== option.id);
+      return [...current, option.id].slice(0, 2);
+    });
+  }
+
+  async function confirmOcrRoutes() {
+    await runAction(() => botApi.confirmOcrRoutes({ optionIds: selectedOcrOptionIds }));
+  }
+
   async function submitIncidentAnswer() {
     if (!pendingClientIncident || !incidentReason.trim()) return;
     await runAction(() => botApi.submitRouteIncident({
@@ -3192,6 +3304,13 @@ export default function App() {
             monitoringEnabled={snapshot.monitoringEnabled && snapshot.config.targetDispatchMode === "ocr"}
             monitoringMode={snapshot.monitoringMode}
             groupState={snapshot.groupState}
+          />
+          <OcrRouteApprovalPanel
+            selection={snapshot.ocrRouteSelection}
+            selectedIds={selectedOcrOptionIds}
+            busy={busy}
+            onToggle={toggleOcrRouteOption}
+            onConfirm={confirmOcrRoutes}
           />
           <RomaneioPanel
             romaneio={romaneio}

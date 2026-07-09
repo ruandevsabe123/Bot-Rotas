@@ -13,7 +13,7 @@ import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
 import { RomaneioStore } from "../services/romaneio/romaneioStore";
-import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, RomaneioCandidate, RomaneioLocateResult, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, OcrRouteOption, OcrRouteSelectionState, RomaneioCandidate, RomaneioLocateResult, RomaneioRankedRoute, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -173,6 +173,7 @@ export class BotService extends EventEmitter {
   private pendingOcrMessages: string[] = [];
   private lastOcrDispatchKey = "";
   private lastOcrInsight?: RouteOcrInsight;
+  private ocrRouteSelection: OcrRouteSelectionState = { status: "idle", options: [] };
   private processingImageIds = new Set<string>();
   private warmupMessagesSent = 0;
   private warmupCompleted = false;
@@ -292,7 +293,8 @@ export class BotService extends EventEmitter {
         criticalWarmMode: this.isCriticalWarmWindow()
       },
       routeDispatches: this.getRoutes(),
-      statusEvents: this.statusEvents
+      statusEvents: this.statusEvents,
+      ocrRouteSelection: this.ocrRouteSelection
     };
   }
 
@@ -559,6 +561,7 @@ export class BotService extends EventEmitter {
     const config = this.configStore.save({ nuclearMode: useNuclearMode, targetDispatchMode });
     this.refreshSocketJidFilterCache(config);
     this.pendingOcrMessages = [];
+    this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.logger.info(`Modo ${modeLabel} selecionado. Os outros modos ficarão desligados.`);
 
@@ -915,6 +918,7 @@ export class BotService extends EventEmitter {
     this.pendingReactionBatch = undefined;
     this.reactionProcessingScheduled = false;
     this.pendingOcrMessages = [];
+    this.resetOcrRouteSelection();
     this.processingImageIds.clear();
     this.dispatchQueueIdByCycle.clear();
     this.preparedTargetJid = "";
@@ -1002,6 +1006,7 @@ export class BotService extends EventEmitter {
     this.pendingReactionBatch = undefined;
     this.reactionProcessingScheduled = false;
     this.pendingOcrMessages = [];
+    this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.processingImageIds.clear();
     this.estadoInicialDoGrupoCapturado = false;
@@ -1037,6 +1042,7 @@ export class BotService extends EventEmitter {
     this.preparedRelaySignature = "";
     this.preparedRelayBuiltAt = 0;
     this.pendingOcrMessages = [];
+    this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.logger.success(`Grupo alterado para: ${config.grupoAlvoNome || config.grupoAlvoJid}`);
 
@@ -1828,6 +1834,7 @@ export class BotService extends EventEmitter {
       this.handleDeletedMessageNotice(msg);
 
       if (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && msg.message.imageMessage) {
+        this.logger.info("Imagem recebida no grupo alvo. Iniciando análise OCR e cruzamento com romaneio.");
         this.scheduleRouteImageProcessing(msg, activeGroup.jid);
       }
 
@@ -1918,6 +1925,14 @@ export class BotService extends EventEmitter {
     const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
 
     try {
+      this.ocrRouteSelection = {
+        status: "analyzing",
+        options: [],
+        message: "Analisando imagem..."
+      };
+      this.pendingOcrMessages = [];
+      this.emitSnapshot();
+
       const buffer = await downloadMediaMessage(
         msg,
         "buffer",
@@ -1934,17 +1949,24 @@ export class BotService extends EventEmitter {
       if (!detected) {
         const wanted = this.describeConfiguredOcrRoutes(config);
         this.logger.info(`OCR (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou bairro na coluna correta com gaiola segura na mesma linha. Procurando: ${wanted}.`);
+        this.ocrRouteSelection = {
+          status: "error",
+          options: [],
+          source: ocr.source,
+          processedAt: new Date().toISOString(),
+          imagePreviewUrl: await this.createOcrPreviewDataUrl(imagePath),
+          message: "Imagem analisada, mas nenhuma rota segura foi encontrada."
+        };
+        this.emitSnapshot();
         return;
       }
 
-      const romaneioMessage = this.buildRomaneioOcrMessage(detected);
-      const message = romaneioMessage || `${config.nomeEnvio} ${detected.code}`.trim();
       const dispatchKey = `${groupJid}:${normalizarTexto(detected.route)}:${detected.code}`;
       if (this.lastOcrDispatchKey === dispatchKey) {
-        this.logger.info(`OCR ignorou rota duplicada: ${detected.route} ${detected.code}.`);
-        return;
+        this.logger.info(`OCR recebeu rota repetida: ${detected.route} ${detected.code}. Atualizando opções no painel.`);
       }
 
+      const imagePreviewUrl = await this.createOcrPreviewDataUrl(imagePath);
       this.lastOcrDispatchKey = dispatchKey;
       this.lastOcrInsight = {
         source: ocr.source,
@@ -1956,25 +1978,46 @@ export class BotService extends EventEmitter {
         code: detected.code,
         confidence: ocr.lines.length ? Math.round(ocr.lines.reduce((total, line) => total + line.confidence, 0) / ocr.lines.length) : undefined,
         processedAt: new Date().toISOString(),
-        imagePreviewUrl: await this.createOcrPreviewDataUrl(imagePath)
+        imagePreviewUrl
       };
-      this.pendingOcrMessages = [message];
-      this.preparedTargetJid = groupJid;
-      this.preparedMessages = [message];
-      this.rebuildPreparedRelayMessages(groupJid, [message]);
 
-      this.logger.success(`OCR detectou ${detected.route} com gaiola ${detected.code} usando ${ocr.source}. Linha usada: "${detected.line}". Mensagem pronta: ${message}.`);
-
-      if (this.groupState === "open") {
-        const cycleId = ++this.sendCycleId;
-        this.enviarMensagensRapidas(cycleId, "automatic", Date.now());
-        this.logger.info("Grupo aberto: disparo por OCR acionado.");
+      const options = this.buildOcrRouteOptions(detected);
+      if (!options.length) {
+        this.ocrRouteSelection = {
+          status: "error",
+          detected: { rota: detected.route, bairro: detected.bairro, gaiola: detected.code },
+          source: ocr.source,
+          line: detected.line,
+          processedAt: new Date().toISOString(),
+          imagePreviewUrl,
+          options: [],
+          message: "Imagem analisada, mas não encontrei opções no romaneio. Confira se o romaneio correto foi confirmado."
+        };
+        this.logger.warning(`[ROMANEIO] OCR detectou ${detected.route} ${detected.code}, mas não há opções de romaneio para aprovação.`);
+        this.emitSnapshot();
         return;
       }
 
-      this.logger.info("Grupo fechado: rota do OCR preparada para disparar quando abrir.");
+      this.ocrRouteSelection = {
+        status: "ready",
+        detected: { rota: detected.route, bairro: detected.bairro, gaiola: detected.code },
+        source: ocr.source,
+        line: detected.line,
+        processedAt: new Date().toISOString(),
+        imagePreviewUrl,
+        options,
+        message: "Imagem analisada. Selecione as rotas para preparar o envio."
+      };
+      this.logger.success(`[ROMANEIO] Imagem analisada. ${options.length} rota(s) disponível(is) para aprovação no painel.`);
       this.emitSnapshot();
     } catch (error) {
+      this.ocrRouteSelection = {
+        status: "error",
+        options: [],
+        processedAt: new Date().toISOString(),
+        message: `OCR da imagem falhou: ${this.getErrorMessage(error)}`
+      };
+      this.emitSnapshot();
       this.logger.warning(`OCR da imagem falhou: ${this.getErrorMessage(error)}`);
     } finally {
       try {
@@ -1985,23 +2028,82 @@ export class BotService extends EventEmitter {
     }
   }
 
-  private buildRomaneioOcrMessage(detected: { route?: string; bairro?: string; code?: string }) {
-    if (!this.romaneioStore) return undefined;
+  confirmOcrRouteSelection(optionIds: string[]) {
+    const selection = this.ocrRouteSelection;
+    if (selection.status !== "ready" || !selection.options.length) {
+      throw new Error("Nenhuma análise de imagem aguardando confirmação.");
+    }
+
+    const selectedIds = new Set(optionIds.filter(Boolean).slice(0, MAX_OUTGOING_MESSAGES));
+    const selected = selection.options.filter((option) => selectedIds.has(option.id));
+    if (!selected.length) throw new Error("Selecione pelo menos uma rota.");
+
+    const config = this.configStore.load();
+    const messages = selected
+      .map((option) => `${config.nomeEnvio} ${option.gaiola}`.trim())
+      .filter(Boolean);
+    if (!messages.length) throw new Error("Configure o nome de envio antes de confirmar a rota.");
+
+    const activeGroup = this.getActiveMonitoringGroup(config);
+    this.pendingOcrMessages = messages;
+    this.preparedTargetJid = activeGroup.jid;
+    this.preparedMessages = messages;
+    if (activeGroup.jid) this.rebuildPreparedRelayMessages(activeGroup.jid, messages);
+
+    this.ocrRouteSelection = {
+      ...selection,
+      status: "confirmed",
+      selectedOptionIds: selected.map((option) => option.id),
+      preparedMessages: messages,
+      message: "Rotas confirmadas. O bot enviará quando o grupo abrir."
+    };
+    this.logger.success(`[ROMANEIO] Cliente confirmou ${selected.length} rota(s): ${messages.join(" | ")}.`);
+    this.emitSnapshot();
+  }
+
+  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string }): OcrRouteOption[] {
+    if (!this.romaneioStore) return [];
 
     try {
-      const message = this.romaneioStore.buildMessageForDetected({
+      const primary = this.romaneioStore.rankForDetected({
         rota: detected.route,
         bairro: detected.bairro,
         gaiola: detected.code
       });
-      if (message) {
-        this.logger.info(`[ROMANEIO] Cruzamento aplicado ao OCR: rota=${detected.route || "-"} gaiola=${detected.code || "-"} bairro=${detected.bairro || "-"}.`);
+      const byNeighborhood = detected.bairro
+        ? this.romaneioStore.rankForDetected({ bairro: detected.bairro })
+        : [];
+      const merged = new Map<string, RomaneioRankedRoute>();
+      for (const route of [...primary, ...byNeighborhood]) {
+        merged.set(`${route.rota}::${route.gaiola}::${route.plannedAt || ""}`, route);
       }
-      return message;
+      return Array.from(merged.values()).slice(0, 8).map((route) => this.toOcrRouteOption(route));
     } catch (error) {
       this.logger.warning(`[ROMANEIO] Falha ao cruzar OCR com romaneio: ${this.getErrorMessage(error)}`);
-      return undefined;
+      return [];
     }
+  }
+
+  private toOcrRouteOption(route: RomaneioRankedRoute): OcrRouteOption {
+    const bairro = route.bairroMatch || route.bairros[0];
+    return {
+      id: `${route.rota}::${route.gaiola}::${route.plannedAt || ""}`,
+      rota: route.rota,
+      gaiola: route.gaiola,
+      bairro: bairro?.nome || "Bairro não informado",
+      bairroPercentual: bairro?.percentualNaRota,
+      cidade: route.cidade,
+      distanciaKm: route.distanciaKm,
+      pacotes: route.pacotes,
+      paradas: route.paradas,
+      passedFilters: route.passedFilters,
+      reasons: route.reasons,
+      score: route.score
+    };
+  }
+
+  private resetOcrRouteSelection() {
+    this.ocrRouteSelection = { status: "idle", options: [] };
   }
 
   private cacheRomaneioDocumentCandidates(messages: any[], connectionId: number) {

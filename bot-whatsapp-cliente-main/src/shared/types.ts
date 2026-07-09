@@ -130,6 +130,34 @@ export type BotStatusEvent = {
   message: string;
 };
 
+export type OcrRouteOption = {
+  id: string;
+  rota: string;
+  gaiola: string;
+  bairro: string;
+  bairroPercentual?: number;
+  cidade?: string;
+  distanciaKm: number;
+  pacotes: number;
+  paradas: number;
+  passedFilters: boolean;
+  reasons: string[];
+  score: number;
+};
+
+export type OcrRouteSelectionState = {
+  status: "idle" | "analyzing" | "ready" | "confirmed" | "error";
+  detected?: RomaneioDetectedInfo;
+  source?: string;
+  line?: string;
+  processedAt?: string;
+  imagePreviewUrl?: string;
+  options: OcrRouteOption[];
+  selectedOptionIds?: string[];
+  preparedMessages?: string[];
+  message?: string;
+};
+
 export type BotSnapshot = {
   status: BotStatus;
   groupState: BotGroupState;
@@ -149,6 +177,7 @@ export type BotSnapshot = {
   performanceMetrics?: BotPerformanceMetrics;
   routeDispatches?: RouteDispatch[];
   statusEvents?: BotStatusEvent[];
+  ocrRouteSelection?: OcrRouteSelectionState;
 };
 
 export type PanelUserRole = "client" | "admin";
@@ -496,6 +525,7 @@ export type DesktopApi = {
   saveWarmupMessageSettings: (payload: SaveWarmupMessageSettingsPayload) => Promise<BotSnapshot>;
   saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) => Promise<BotSnapshot>;
   saveGeneralSettings: (payload: GeneralSettingsPayload) => Promise<BotSnapshot>;
+  confirmOcrRoutes: (payload: { optionIds: string[] }) => Promise<BotSnapshot>;
   submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) => Promise<BotSnapshot>;
   snoozeRouteIncident: (payload: { routeId: string }) => Promise<BotSnapshot>;
   onSnapshot: (callback: (snapshot: BotSnapshot) => void) => () => void;

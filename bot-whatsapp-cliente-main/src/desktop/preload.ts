@@ -38,6 +38,7 @@ const api: DesktopApi = {
   saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) =>
     ipcRenderer.invoke("bot:saveTargetMessageSettings", payload),
   saveGeneralSettings: (payload: GeneralSettingsPayload) => ipcRenderer.invoke("bot:saveGeneralSettings", payload),
+  confirmOcrRoutes: (payload: { optionIds: string[] }) => ipcRenderer.invoke("bot:confirmOcrRoutes", payload),
   submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) =>
     ipcRenderer.invoke("bot:submitRouteIncident", payload),
   snoozeRouteIncident: (payload: { routeId: string }) => ipcRenderer.invoke("bot:snoozeRouteIncident", payload),

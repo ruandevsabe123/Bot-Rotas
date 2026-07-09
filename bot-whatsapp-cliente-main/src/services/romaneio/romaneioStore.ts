@@ -94,6 +94,12 @@ export class RomaneioStore {
     return rankRoutes(snapshot.routes, { bairro }, snapshot.settings);
   }
 
+  rankForDetected(detectedInfo: RomaneioDetectedInfo) {
+    const snapshot = this.all();
+    if (!snapshot.status.loaded || !snapshot.routes.length) return [];
+    return rankRoutes(snapshot.routes, detectedInfo, snapshot.settings);
+  }
+
   buildMessageForDetected(detectedInfo: RomaneioDetectedInfo) {
     const snapshot = this.all();
     if (!snapshot.status.loaded || !snapshot.routes.length) return undefined;

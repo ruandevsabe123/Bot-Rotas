@@ -122,6 +122,48 @@
   font-weight: 900;
 }
 
+.ocr-approval-panel {
+  gap: 14px;
+}
+
+.approval-message {
+  margin: 0;
+  color: #cbd5df;
+  font-weight: 800;
+}
+
+.ocr-option-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.ocr-option {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid rgba(245, 247, 248, 0.12);
+  border-radius: 8px;
+  color: #f4f7f8;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ocr-option.selected {
+  border-color: rgba(53, 208, 127, 0.5);
+  background: rgba(53, 208, 127, 0.1);
+}
+
+.ocr-option strong {
+  color: #ffffff;
+}
+
+.ocr-option > span,
+.ocr-option small {
+  color: #a9b2bb;
+}
+
 * {
   box-sizing: border-box;
 }

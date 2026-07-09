@@ -743,6 +743,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
         keepAliveIntervalMs: body.keepAliveIntervalMs
       });
       break;
+    case "confirm-ocr-routes":
+      bot.confirmOcrRouteSelection(Array.isArray(body.optionIds) ? body.optionIds : []);
+      break;
     case "submit-route-incident":
       bot.submitClientIncident(String(body.routeId || ""), Boolean(body.valid), String(body.reason || ""));
       break;
