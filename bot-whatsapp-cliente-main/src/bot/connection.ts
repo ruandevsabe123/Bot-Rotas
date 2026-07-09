@@ -2006,9 +2006,9 @@ export class BotService extends EventEmitter {
         processedAt: new Date().toISOString(),
         imagePreviewUrl,
         options,
-        message: "Imagem analisada. Selecione as rotas para preparar o envio."
+        message: "Imagem analisada. Ranking ordenado por distância, paradas e pacotes."
       };
-      this.logger.success(`[ROMANEIO] Imagem analisada. ${options.length} rota(s) disponível(is) para aprovação no painel.`);
+      this.logger.success(`[ROMANEIO] Imagem analisada. Ranking de ${options.length} rota(s) disponível para aprovação no painel.`);
       this.emitSnapshot();
     } catch (error) {
       this.ocrRouteSelection = {
@@ -2077,17 +2077,43 @@ export class BotService extends EventEmitter {
       for (const route of [...primary, ...byNeighborhood]) {
         merged.set(`${route.rota}::${route.gaiola}::${route.plannedAt || ""}`, route);
       }
-      return Array.from(merged.values()).slice(0, 8).map((route) => this.toOcrRouteOption(route));
+      return this.rankOcrRoutesByOperationalMetrics(Array.from(merged.values()))
+        .slice(0, 8)
+        .map((route, index) => this.toOcrRouteOption(route, index + 1));
     } catch (error) {
       this.logger.warning(`[ROMANEIO] Falha ao cruzar OCR com romaneio: ${this.getErrorMessage(error)}`);
       return [];
     }
   }
 
-  private toOcrRouteOption(route: RomaneioRankedRoute): OcrRouteOption {
+  private rankOcrRoutesByOperationalMetrics(routes: RomaneioRankedRoute[]) {
+    const maxDistance = Math.max(...routes.map((route) => route.distanciaKm || 0), 1);
+    const maxStops = Math.max(...routes.map((route) => route.paradas || 0), 1);
+    const maxPackages = Math.max(...routes.map((route) => route.pacotes || 0), 1);
+
+    return routes
+      .map((route) => ({
+        ...route,
+        score: Number((
+          (1 - ((route.distanciaKm || 0) / maxDistance)) * 0.45 +
+          (1 - ((route.paradas || 0) / maxStops)) * 0.35 +
+          (1 - ((route.pacotes || 0) / maxPackages)) * 0.2
+        ).toFixed(4))
+      }))
+      .sort((a, b) => {
+        if (a.passedFilters !== b.passedFilters) return a.passedFilters ? -1 : 1;
+        return b.score - a.score ||
+          a.distanciaKm - b.distanciaKm ||
+          a.paradas - b.paradas ||
+          a.pacotes - b.pacotes;
+      });
+  }
+
+  private toOcrRouteOption(route: RomaneioRankedRoute, rank: number): OcrRouteOption {
     const bairro = route.bairroMatch || route.bairros[0];
     return {
       id: `${route.rota}::${route.gaiola}::${route.plannedAt || ""}`,
+      rank,
       rota: route.rota,
       gaiola: route.gaiola,
       bairro: bairro?.nome || "Bairro não informado",

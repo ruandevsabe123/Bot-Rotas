@@ -132,6 +132,7 @@ export type BotStatusEvent = {
 
 export type OcrRouteOption = {
   id: string;
+  rank: number;
   rota: string;
   gaiola: string;
   bairro: string;

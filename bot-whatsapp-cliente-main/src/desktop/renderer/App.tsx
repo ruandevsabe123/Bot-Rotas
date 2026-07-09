@@ -2519,13 +2519,15 @@ function OcrRouteApprovalPanel({
   selectedIds,
   busy,
   onToggle,
-  onConfirm
+  onConfirm,
+  onClose
 }: {
   selection?: OcrRouteSelectionState;
   selectedIds: string[];
   busy: boolean;
   onToggle: (option: OcrRouteOption) => void;
   onConfirm: () => void;
+  onClose: () => void;
 }) {
   if (!selection || selection.status === "idle") return null;
 
@@ -2554,46 +2556,56 @@ function OcrRouteApprovalPanel({
   }
 
   return (
-    <section className="quick-panel ocr-approval-panel">
-      <div className="panel-heading">
-        <div>
-          <p className="panel-label">Rotas encontradas</p>
-          <h2>{selection.status === "confirmed" ? "Rotas confirmadas" : "Escolha as rotas"}</h2>
-        </div>
-        <span className={selection.status === "confirmed" ? "mini-badge ok" : "mini-badge"}>{selection.options.length} opção(ões)</span>
-      </div>
-      {selection.message ? <p className="approval-message">{selection.message}</p> : null}
-      <div className="ocr-option-grid">
-        {selection.options.map((option) => {
-          const selected = selectedIds.includes(option.id) || Boolean(selection.selectedOptionIds?.includes(option.id));
-          return (
-            <button
-              key={option.id}
-              className={selected ? "ocr-option selected" : "ocr-option"}
-              disabled={busy || selection.status === "confirmed"}
-              type="button"
-              onClick={() => onToggle(option)}
-            >
-              <strong>{option.rota} / {option.gaiola}</strong>
-              <span>{option.bairro}{option.bairroPercentual !== undefined ? ` · ${option.bairroPercentual.toFixed(1)}%` : ""}</span>
-              <div className="route-row-metrics">
-                <span>{option.distanciaKm.toFixed(3)} km</span>
-                <span>{option.pacotes} pct</span>
-                <span>{option.paradas} paradas</span>
-              </div>
-              {!option.passedFilters && option.reasons.length ? <small>{option.reasons.join(" ")}</small> : null}
-            </button>
-          );
-        })}
-      </div>
-      {selection.status !== "confirmed" ? (
-        <div className="review-actions">
-          <button className="button primary" disabled={busy || !selectedIds.length} type="button" onClick={onConfirm}>
-            Confirmar rota(s)
+    <div className="modal-backdrop" role="presentation">
+      <section className="sheet-dialog ocr-route-dialog" role="dialog" aria-modal="true" aria-labelledby="ocr-routes-title">
+        <div className="sheet-heading">
+          <div>
+            <p className="panel-label">Ranking de rotas</p>
+            <h2 id="ocr-routes-title">{selection.status === "confirmed" ? "Rotas confirmadas" : "Escolha as rotas"}</h2>
+          </div>
+          <button className="icon-button" title="Fechar" type="button" onClick={onClose}>
+            <X size={20} />
           </button>
         </div>
-      ) : null}
-    </section>
+        {selection.message ? <p className="approval-message">{selection.message}</p> : null}
+        <div className="ocr-option-grid">
+          {selection.options.map((option) => {
+            const selected = selectedIds.includes(option.id) || Boolean(selection.selectedOptionIds?.includes(option.id));
+            return (
+              <button
+                key={option.id}
+                className={selected ? "ocr-option selected" : "ocr-option"}
+                disabled={busy || selection.status === "confirmed"}
+                type="button"
+                onClick={() => onToggle(option)}
+              >
+                <strong>#{option.rank} {option.rota} / {option.gaiola}</strong>
+                <span>{option.bairro}{option.bairroPercentual !== undefined ? ` · ${option.bairroPercentual.toFixed(1)}%` : ""}</span>
+                <div className="route-row-metrics">
+                  <span>{option.distanciaKm.toFixed(3)} km</span>
+                  <span>{option.pacotes} pct</span>
+                  <span>{option.paradas} paradas</span>
+                </div>
+                {!option.passedFilters && option.reasons.length ? <small>{option.reasons.join(" ")}</small> : null}
+              </button>
+            );
+          })}
+        </div>
+        {selection.status !== "confirmed" ? (
+          <div className="review-actions">
+            <button className="button primary" disabled={busy || !selectedIds.length} type="button" onClick={onConfirm}>
+              Confirmar rota(s)
+            </button>
+          </div>
+        ) : (
+          <div className="review-actions">
+            <button className="button primary" type="button" onClick={onClose}>
+              Fechar
+            </button>
+          </div>
+        )}
+      </section>
+    </div>
   );
 }
 
@@ -2616,6 +2628,7 @@ export default function App() {
   const [romaneioLocateResult, setRomaneioLocateResult] = useState<RomaneioLocateResult>(emptyRomaneioLocate);
   const [romaneioError, setRomaneioError] = useState("");
   const [selectedOcrOptionIds, setSelectedOcrOptionIds] = useState<string[]>([]);
+  const [ocrRouteDialogOpen, setOcrRouteDialogOpen] = useState(false);
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
   const [incidentClock, setIncidentClock] = useState(Date.now());
@@ -2730,14 +2743,17 @@ export default function App() {
     const selection = snapshot.ocrRouteSelection;
     if (selection?.status === "ready") {
       setSelectedOcrOptionIds(selection.options[0]?.id ? [selection.options[0].id] : []);
+      setOcrRouteDialogOpen(true);
       return;
     }
     if (selection?.status === "confirmed") {
       setSelectedOcrOptionIds(selection.selectedOptionIds || []);
+      setOcrRouteDialogOpen(true);
       return;
     }
     if (selection?.status === "idle" || selection?.status === "analyzing" || selection?.status === "error") {
       setSelectedOcrOptionIds([]);
+      if (selection.status === "error") setOcrRouteDialogOpen(true);
     }
   }, [snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
 
@@ -2844,6 +2860,10 @@ export default function App() {
 
   function isHomeOperationLog(message: string) {
     return /Bot .*ARMADO|NORMAL ARMADO|NUCLEAR ARMADO|Monitoramento desativado|Parou de escutar|FECHADO|ABRIU|Palavra de abertura|Abertura simulada|Disparo acionado|Rajada instantânea|Mensagem .*?(confirmada|enviada)|Disparo .*?(concluído|concluido|terminou)|Abertura ignorada|falhou|erro/i.test(message);
+  }
+
+  function isImageOperationLog(message: string) {
+    return /OCR|imagem|foto|romaneio|rota\(s\)|rotas encontradas|Ranking de rotas|Cliente confirmou|gaiola/i.test(message);
   }
 
   function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual") {
@@ -3305,13 +3325,16 @@ export default function App() {
             monitoringMode={snapshot.monitoringMode}
             groupState={snapshot.groupState}
           />
-          <OcrRouteApprovalPanel
-            selection={snapshot.ocrRouteSelection}
-            selectedIds={selectedOcrOptionIds}
-            busy={busy}
-            onToggle={toggleOcrRouteOption}
-            onConfirm={confirmOcrRoutes}
-          />
+          {ocrRouteDialogOpen || snapshot.ocrRouteSelection?.status === "analyzing" ? (
+            <OcrRouteApprovalPanel
+              selection={snapshot.ocrRouteSelection}
+              selectedIds={selectedOcrOptionIds}
+              busy={busy}
+              onToggle={toggleOcrRouteOption}
+              onConfirm={confirmOcrRoutes}
+              onClose={() => setOcrRouteDialogOpen(false)}
+            />
+          ) : null}
           <RomaneioPanel
             romaneio={romaneio}
             settingsDraft={romaneioSettingsDraft}
@@ -3323,7 +3346,7 @@ export default function App() {
             onSaveSettings={handleSaveRomaneioSettings}
             error={romaneioError}
           />
-          <LogsPanel logs={snapshot.logs.filter((log) => /OCR|imagem|foto|rota/i.test(log.message)).slice(-40)} />
+          <LogsPanel logs={snapshot.logs.filter((log) => isImageOperationLog(log.message)).slice(-60)} />
         </section>
       ) : null}
 
@@ -3394,7 +3417,7 @@ export default function App() {
 
       {activeTab === "settings" ? (
         <section className="tab-stack">
-          <LogsPanel logs={snapshot.logs} />
+          <LogsPanel logs={snapshot.logs.filter((log) => !isImageOperationLog(log.message))} />
           <PerformanceStrip snapshot={snapshot} />
           <SettingsPanel
             config={snapshot.config}
@@ -3416,8 +3439,8 @@ export default function App() {
           const badge =
             id === "test" && snapshot.testStatus?.active
               ? 1
-              : id === "settings" && snapshot.logs.some((log) => log.level === "error")
-              ? snapshot.logs.filter((log) => log.level === "error").length
+              : id === "settings" && snapshot.logs.some((log) => log.level === "error" && !isImageOperationLog(log.message))
+              ? snapshot.logs.filter((log) => log.level === "error" && !isImageOperationLog(log.message)).length
               : 0;
           return (
             <button

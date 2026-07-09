@@ -126,6 +126,10 @@
   gap: 14px;
 }
 
+.ocr-route-dialog {
+  width: min(720px, calc(100vw - 24px));
+}
+
 .approval-message {
   margin: 0;
   color: #cbd5df;
@@ -135,6 +139,9 @@
 .ocr-option-grid {
   display: grid;
   gap: 10px;
+  overflow: auto;
+  max-height: min(58dvh, 520px);
+  padding-right: 2px;
 }
 
 .ocr-option {
