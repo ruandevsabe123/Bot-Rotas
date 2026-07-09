@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   Clock3,
   Edit3,
-  FileSpreadsheet,
   Gauge,
   Home,
   Info,
@@ -44,6 +43,8 @@ import {
   BotSnapshot,
   MonitoredRoute,
   PanelUserRole,
+  RomaneioCandidate,
+  RomaneioLocateResult,
   RomaneioSettings,
   RomaneioSnapshot,
   RouteDispatch,
@@ -58,6 +59,7 @@ import { AdminCommandCenter } from "./admin/AdminCommandCenter";
 import {
   botApi,
   clearAdminMaintenance,
+  confirmRomaneio,
   getRomaneio,
   getAdminMonitor,
   getAdminUserDetail,
@@ -66,6 +68,7 @@ import {
   getPanelUserEmail,
   getPanelUserRole,
   isAuthError,
+  locateRomaneio,
   markSupportMessageRead,
   panelLogin,
   rejectAdminRoute,
@@ -77,7 +80,6 @@ import {
   setPanelUserEmail,
   setPanelUserRole,
   subscribeAdminMonitor,
-  uploadRomaneio,
   validateAdminRoute
 } from "./api";
 import "./styles.css";
@@ -90,7 +92,7 @@ type PendingConfirmation = {
   onConfirm: () => void | Promise<void>;
 };
 
-type AppTab = "home" | "groups" | "image" | "romaneio" | "test" | "settings";
+type AppTab = "home" | "groups" | "image" | "test" | "settings";
 type GroupEditor = "target" | "image" | "test" | undefined;
 type AdminSection = "overview" | "reactions" | "logs" | "routes" | "users" | "support" | "settings" | undefined;
 type AdminMainTab = "dashboard" | "validations" | "history" | "logs" | "reports" | "clients" | "settings";
@@ -147,9 +149,7 @@ const emptySnapshot: BotSnapshot = {
 
 const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
   { id: "home", label: "Inicio", Icon: Home },
-  { id: "groups", label: "Grupos", Icon: Route },
   { id: "image", label: "Imagem", Icon: Sparkles },
-  { id: "romaneio", label: "Romaneio", Icon: FileSpreadsheet },
   { id: "test", label: "Teste", Icon: TestTube2 },
   { id: "settings", label: "Ajustes", Icon: Settings }
 ];
@@ -167,6 +167,12 @@ const emptyRomaneio: RomaneioSnapshot = {
     prioridade: "equilibrio_geral"
   },
   routes: []
+};
+
+const emptyRomaneioLocate: RomaneioLocateResult = {
+  found: false,
+  message: "",
+  candidates: []
 };
 
 const romaneioPriorities: Array<{ id: RomaneioSettings["prioridade"]; label: string }> = [
@@ -2363,17 +2369,21 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
 function RomaneioPanel({
   romaneio,
   settingsDraft,
+  locateResult,
   busy,
   onSettingsChange,
-  onUpload,
+  onLocate,
+  onConfirmCandidate,
   onSaveSettings,
   error
 }: {
   romaneio: RomaneioSnapshot;
   settingsDraft: RomaneioSettings;
+  locateResult: RomaneioLocateResult;
   busy: boolean;
   onSettingsChange: (settings: RomaneioSettings) => void;
-  onUpload: (file: File) => void;
+  onLocate: () => void;
+  onConfirmCandidate: (candidate: RomaneioCandidate) => void;
   onSaveSettings: () => void;
   error: string;
 }) {
@@ -2396,20 +2406,9 @@ function RomaneioPanel({
             <p className="panel-label">Análise de Romaneio</p>
             <h2>{romaneio.status.loaded ? `${romaneio.status.totalRoutes} rota(s)` : "Nenhum arquivo carregado"}</h2>
           </div>
-          <label className="button primary">
-            Upload Excel
-            <input
-              accept=".xlsx"
-              disabled={busy}
-              hidden
-              type="file"
-              onChange={(event) => {
-                const file = event.currentTarget.files?.[0];
-                if (file) onUpload(file);
-                event.currentTarget.value = "";
-              }}
-            />
-          </label>
+          <button className="button primary" disabled={busy} type="button" onClick={onLocate}>
+            Localizar romaneio
+          </button>
         </div>
         <div className="review-grid">
           <article className={romaneio.status.loaded ? "review-item ok" : "review-item"}>
@@ -2426,6 +2425,21 @@ function RomaneioPanel({
           </article>
         </div>
         {romaneio.status.error || error ? <p className="inline-error">{romaneio.status.error || error}</p> : null}
+        {locateResult.message ? (
+          <div className={locateResult.found ? "romaneio-found-box" : "inline-error"}>
+            <strong>{locateResult.message}</strong>
+            {locateResult.candidates.length ? (
+              <div className="romaneio-candidate-list">
+                {locateResult.candidates.map((candidate) => (
+                  <button key={candidate.id} className="romaneio-candidate" disabled={busy} type="button" onClick={() => onConfirmCandidate(candidate)}>
+                    <span>{candidate.fileName}</span>
+                    <small>{new Date(candidate.timestamp).toLocaleString("pt-BR")}</small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="quick-panel">
@@ -2514,6 +2528,7 @@ export default function App() {
   const [actionToast, setActionToast] = useState("");
   const [romaneio, setRomaneio] = useState<RomaneioSnapshot>(emptyRomaneio);
   const [romaneioSettingsDraft, setRomaneioSettingsDraft] = useState<RomaneioSettings>(emptyRomaneio.settings);
+  const [romaneioLocateResult, setRomaneioLocateResult] = useState<RomaneioLocateResult>(emptyRomaneioLocate);
   const [romaneioError, setRomaneioError] = useState("");
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
@@ -2971,16 +2986,35 @@ export default function App() {
     }));
   }
 
-  async function handleRomaneioUpload(file: File) {
+  async function handleLocateRomaneio() {
     setBusy(true);
     setRomaneioError("");
     try {
-      const nextRomaneio = await uploadRomaneio(file);
+      const result = await locateRomaneio();
+      setRomaneioLocateResult(result);
+      showActionToast(result.found ? "Romaneio encontrado." : "Busca concluída.");
+    } catch (error) {
+      setRomaneioError(error instanceof Error ? error.message : "Não consegui localizar o romaneio.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleConfirmRomaneio(candidate: RomaneioCandidate) {
+    setBusy(true);
+    setRomaneioError("");
+    try {
+      const nextRomaneio = await confirmRomaneio(candidate.id);
       setRomaneio(nextRomaneio);
       setRomaneioSettingsDraft(nextRomaneio.settings);
+      setRomaneioLocateResult({
+        found: true,
+        message: `Romaneio confirmado: ${candidate.fileName}`,
+        candidates: []
+      });
       showActionToast("Romaneio processado.");
     } catch (error) {
-      setRomaneioError(error instanceof Error ? error.message : "Não consegui processar o romaneio.");
+      setRomaneioError(error instanceof Error ? error.message : "Não consegui confirmar o romaneio.");
     } finally {
       setBusy(false);
     }
@@ -3159,20 +3193,19 @@ export default function App() {
             monitoringMode={snapshot.monitoringMode}
             groupState={snapshot.groupState}
           />
+          <RomaneioPanel
+            romaneio={romaneio}
+            settingsDraft={romaneioSettingsDraft}
+            locateResult={romaneioLocateResult}
+            busy={busy}
+            onSettingsChange={setRomaneioSettingsDraft}
+            onLocate={handleLocateRomaneio}
+            onConfirmCandidate={handleConfirmRomaneio}
+            onSaveSettings={handleSaveRomaneioSettings}
+            error={romaneioError}
+          />
           <LogsPanel logs={snapshot.logs.filter((log) => /OCR|imagem|foto|rota/i.test(log.message)).slice(-40)} />
         </section>
-      ) : null}
-
-      {activeTab === "romaneio" ? (
-        <RomaneioPanel
-          romaneio={romaneio}
-          settingsDraft={romaneioSettingsDraft}
-          busy={busy}
-          onSettingsChange={setRomaneioSettingsDraft}
-          onUpload={handleRomaneioUpload}
-          onSaveSettings={handleSaveRomaneioSettings}
-          error={romaneioError}
-        />
       ) : null}
 
       {activeTab === "test" ? (

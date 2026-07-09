@@ -13,7 +13,7 @@ import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
 import { RomaneioStore } from "../services/romaneio/romaneioStore";
-import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, RomaneioCandidate, RomaneioLocateResult, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -86,6 +86,7 @@ const CRITICAL_KEEP_ALIVE_INTERVAL_MS = 5000;
 const SOCKET_KEEP_ALIVE_INTERVAL_MS = 10000;
 const SOCKET_CONNECT_TIMEOUT_MS = 15000;
 const SOCKET_QUERY_TIMEOUT_MS = 15000;
+const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
 const TARGET_PARALLEL_STAGGER_MS = 90;
 const MAX_OUTGOING_MESSAGES = 2;
@@ -225,6 +226,7 @@ export class BotService extends EventEmitter {
   private lastFullMetadataWarmAt = 0;
   private adaptiveOpeningSettleMs = 0;
   private lastNotAcceptableAlertAt = 0;
+  private romaneioDocumentCandidates = new Map<string, { candidate: RomaneioCandidate; message: any }>();
 
   constructor(options: BotServiceOptions = {}) {
     super();
@@ -1378,6 +1380,68 @@ export class BotService extends EventEmitter {
     this.logger.success(`Teste atualizado: ${config.testMessageCount} mensagens, intervalo ${config.testMessageIntervalMs}ms.`);
   }
 
+  locateRomaneioInGroup(): RomaneioLocateResult {
+    if (!this.sock || this.status !== "connected") {
+      return {
+        found: false,
+        message: "Conecte o WhatsApp antes de localizar o romaneio.",
+        candidates: []
+      };
+    }
+
+    const activeGroup = this.getActiveMonitoringGroup();
+    if (!activeGroup.jid) {
+      return {
+        found: false,
+        message: "Configure o grupo alvo antes de localizar o romaneio.",
+        candidates: []
+      };
+    }
+
+    this.purgeOldRomaneioCandidates();
+    const candidates = Array.from(this.romaneioDocumentCandidates.values())
+      .map((item) => item.candidate)
+      .filter((candidate) => candidate.groupJid === activeGroup.jid)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    if (!candidates.length) {
+      this.logger.warning("[ROMANEIO] Nenhum arquivo de hoje com nome romaneio foi encontrado no histórico recebido do grupo alvo.");
+      return {
+        found: false,
+        message: "Não encontrei arquivo .xlsx de hoje com 'romaneio' no nome. Aguarde alguns segundos após conectar ou peça para reenviar o arquivo no grupo.",
+        candidates: []
+      };
+    }
+
+    this.logger.info(`[ROMANEIO] ${candidates.length} candidato(s) encontrado(s) no grupo alvo.`);
+    return {
+      found: true,
+      message: "Romaneio encontrado. Confirme o arquivo para processar.",
+      candidates
+    };
+  }
+
+  async confirmRomaneioCandidate(candidateId: string): Promise<RomaneioSnapshot> {
+    if (!this.romaneioStore) throw new Error("Armazenamento de romaneio não configurado.");
+    if (!downloadMediaMessage) throw new Error("WhatsApp ainda não está pronto para baixar mídia.");
+
+    const item = this.romaneioDocumentCandidates.get(candidateId);
+    if (!item) throw new Error("Arquivo de romaneio não encontrado. Clique em localizar novamente.");
+
+    const buffer = await downloadMediaMessage(
+      item.message,
+      "buffer",
+      {},
+      {
+        logger: P({ level: "silent" }),
+        reuploadRequest: this.sock?.updateMediaMessage
+      }
+    );
+    const snapshot = this.romaneioStore.saveUpload(item.candidate.fileName, buffer);
+    this.logger.success(`[ROMANEIO] Arquivo confirmado e processado: ${item.candidate.fileName}. Rotas: ${snapshot.status.totalRoutes}. Pacotes: ${snapshot.status.totalPackages}.`);
+    return snapshot;
+  }
+
   private async connect() {
     const connectionId = ++this.activeConnectionId;
     this.qrReceivedInCurrentConnection = false;
@@ -1403,7 +1467,7 @@ export class BotService extends EventEmitter {
       defaultQueryTimeoutMs: SOCKET_QUERY_TIMEOUT_MS,
       keepAliveIntervalMs: SOCKET_KEEP_ALIVE_INTERVAL_MS,
       emitOwnEvents: false,
-      fireInitQueries: false,
+      fireInitQueries: true,
       printQRInTerminal: false,
       markOnlineOnConnect: true,
       syncFullHistory: false,
@@ -1420,7 +1484,11 @@ export class BotService extends EventEmitter {
       this.handleGroupsUpdate(updates, connectionId)
     );
     this.sock.ev.on("messages.upsert", ({ messages }: any) => {
+      this.cacheRomaneioDocumentCandidates(messages, connectionId);
       void this.handleMessages(messages, connectionId);
+    });
+    this.sock.ev.on("messaging-history.set", ({ messages }: any) => {
+      this.cacheRomaneioDocumentCandidates(messages || [], connectionId);
     });
 
   }
@@ -1932,6 +2000,72 @@ export class BotService extends EventEmitter {
       this.logger.warning(`[ROMANEIO] Falha ao cruzar OCR com romaneio: ${this.getErrorMessage(error)}`);
       return undefined;
     }
+  }
+
+  private cacheRomaneioDocumentCandidates(messages: any[], connectionId: number) {
+    if (connectionId !== this.activeConnectionId) return;
+    const activeGroup = this.getActiveMonitoringGroup();
+    if (!activeGroup.jid) return;
+
+    for (const msg of messages || []) {
+      if (msg?.key?.remoteJid !== activeGroup.jid) continue;
+      const document = this.getDocumentMessage(msg);
+      if (!document) continue;
+
+      const fileName = String(document.fileName || "").trim();
+      if (!this.isRomaneioFileName(fileName)) continue;
+      if (!this.isMessageFromToday(msg)) continue;
+
+      const id = String(msg?.key?.id || `${fileName}-${msg?.messageTimestamp || Date.now()}`);
+      this.romaneioDocumentCandidates.set(id, {
+        candidate: {
+          id,
+          fileName,
+          timestamp: new Date(this.getMessageTimestampMs(msg)).toISOString(),
+          sender: String(msg?.key?.participant || msg?.pushName || ""),
+          groupJid: activeGroup.jid
+        },
+        message: msg
+      });
+    }
+
+    this.purgeOldRomaneioCandidates();
+  }
+
+  private getDocumentMessage(msg: any) {
+    const message = msg?.message || {};
+    return message.documentMessage ||
+      message.documentWithCaptionMessage?.message?.documentMessage ||
+      message.viewOnceMessage?.message?.documentMessage ||
+      message.viewOnceMessageV2?.message?.documentMessage ||
+      undefined;
+  }
+
+  private isRomaneioFileName(fileName: string) {
+    const normalized = normalizarTexto(fileName);
+    return normalized.includes("romaneio") && /\.xlsx$/i.test(fileName);
+  }
+
+  private isMessageFromToday(msg: any) {
+    const date = new Date(this.getMessageTimestampMs(msg));
+    const now = new Date();
+    return date.getFullYear() === now.getFullYear() &&
+      date.getMonth() === now.getMonth() &&
+      date.getDate() === now.getDate();
+  }
+
+  private getMessageTimestampMs(msg: any) {
+    const raw = msg?.messageTimestamp;
+    const value = typeof raw === "number" ? raw : Number(raw?.low || raw || 0);
+    return value > 10_000_000_000 ? value : value * 1000 || Date.now();
+  }
+
+  private purgeOldRomaneioCandidates() {
+    const entries = Array.from(this.romaneioDocumentCandidates.entries())
+      .filter(([, item]) => this.isMessageFromToday(item.message))
+      .sort(([, a], [, b]) => new Date(b.candidate.timestamp).getTime() - new Date(a.candidate.timestamp).getTime())
+      .slice(0, ROMANEIO_CANDIDATE_LIMIT);
+    this.romaneioDocumentCandidates = new Map(entries);
   }
 
   private async handleReactions(messages: any[]) {

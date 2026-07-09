@@ -45,6 +45,40 @@
   font-weight: 800;
 }
 
+.romaneio-found-box {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0 0;
+  border: 1px solid rgba(53, 208, 127, 0.24);
+  border-radius: 8px;
+  color: #dfffe9;
+  background: rgba(53, 208, 127, 0.08);
+  padding: 10px 12px;
+  font-weight: 800;
+}
+
+.romaneio-candidate-list {
+  display: grid;
+  gap: 8px;
+}
+
+.romaneio-candidate {
+  display: grid;
+  gap: 3px;
+  width: 100%;
+  border: 1px solid rgba(245, 247, 248, 0.12);
+  border-radius: 8px;
+  color: #f4f7f8;
+  background: rgba(255, 255, 255, 0.06);
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.romaneio-candidate small {
+  color: #a9b2bb;
+}
+
 .admin-route-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

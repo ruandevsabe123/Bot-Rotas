@@ -332,6 +332,20 @@ export type RomaneioSnapshot = {
   routes: RomaneioRouteSummary[];
 };
 
+export type RomaneioCandidate = {
+  id: string;
+  fileName: string;
+  timestamp: string;
+  sender?: string;
+  groupJid?: string;
+};
+
+export type RomaneioLocateResult = {
+  found: boolean;
+  message: string;
+  candidates: RomaneioCandidate[];
+};
+
 export type RomaneioDetectedInfo = {
   bairro?: string;
   rota?: string;

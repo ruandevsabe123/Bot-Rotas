@@ -1164,6 +1164,21 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/api/romaneio/locate") {
+      sendJson(response, 200, activeBot!.locateRomaneioInGroup());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/romaneio/confirm") {
+      const body = await readJsonBody<{ candidateId?: string }>(request);
+      try {
+        sendJson(response, 200, await activeBot!.confirmRomaneioCandidate(String(body.candidateId || "")));
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Não foi possível confirmar o romaneio." });
+      }
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/romaneio/status") {
       sendJson(response, 200, activeRomaneio!.status());
       return;

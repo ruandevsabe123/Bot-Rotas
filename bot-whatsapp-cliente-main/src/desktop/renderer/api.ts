@@ -10,6 +10,7 @@ import {
   LeaderContact,
   PanelUser,
   PanelUserRole,
+  RomaneioLocateResult,
   RomaneioSettings,
   RomaneioSnapshot,
   SaveCodesPayload,
@@ -232,6 +233,20 @@ export function saveRomaneioSettings(settings: RomaneioSettings) {
   return fetchJson<RomaneioSettings>("/api/romaneio/settings", {
     method: "POST",
     body: JSON.stringify(settings)
+  });
+}
+
+export function locateRomaneio() {
+  return fetchJson<RomaneioLocateResult>("/api/romaneio/locate", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
+export function confirmRomaneio(candidateId: string) {
+  return fetchJson<RomaneioSnapshot>("/api/romaneio/confirm", {
+    method: "POST",
+    body: JSON.stringify({ candidateId })
   });
 }
 
