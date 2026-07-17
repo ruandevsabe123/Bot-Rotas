@@ -1,6 +1,7 @@
 import {
   AdminRoutesSnapshot,
   AdminMonitorSnapshot,
+  AdminImageUsageSnapshot,
   AdminSupportMessagesSnapshot,
   AdminUserDetail,
   AdminUsersSnapshot,
@@ -106,6 +107,20 @@ export function getAdminRoutes() {
 
 export function getAdminMonitor() {
   return fetchJson<AdminMonitorSnapshot>("/api/admin/monitor");
+}
+
+export function decideImageUsage(id: string, payload: { decision: "pending" | "billable" | "excluded"; amountCents?: number; note?: string }) {
+  return fetchJson<AdminImageUsageSnapshot>(`/api/admin/image-usage/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
+
+export function saveImagePricing(clientEmail: string, amountCents: number) {
+  return fetchJson<AdminImageUsageSnapshot>(`/api/admin/image-pricing/${encodeURIComponent(clientEmail)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ amountCents })
+  });
 }
 
 export function subscribeAdminMonitor(callback: (snapshot: AdminMonitorSnapshot) => void, onError?: () => void) {

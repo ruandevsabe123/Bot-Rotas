@@ -90,7 +90,6 @@ const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
 const TARGET_PARALLEL_STAGGER_MS = 90;
 const MANUAL_ROUTE_SELECTION_STAGGER_MS = 180;
-const SAFE_OCR_GAIOLA_CONFIDENCE = 60;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
 const PREPARED_RELAY_TTL_MS = 25000;
@@ -177,6 +176,7 @@ export class BotService extends EventEmitter {
   private lastOcrInsight?: RouteOcrInsight;
   private ocrRouteSelection: OcrRouteSelectionState = { status: "idle", options: [] };
   private processingImageIds = new Set<string>();
+  private latestRouteImageSequence = 0;
   private warmupMessagesSent = 0;
   private warmupCompleted = false;
   private activeTestRunId = 0;
@@ -565,6 +565,7 @@ export class BotService extends EventEmitter {
     this.pendingOcrMessages = [];
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
+    this.latestRouteImageSequence += 1;
     this.logger.info(`Modo ${modeLabel} selecionado. Os outros modos ficarão desligados.`);
 
     if (!this.hasReadyMessages()) {
@@ -922,6 +923,7 @@ export class BotService extends EventEmitter {
     this.pendingOcrMessages = [];
     this.resetOcrRouteSelection();
     this.processingImageIds.clear();
+    this.latestRouteImageSequence += 1;
     this.dispatchQueueIdByCycle.clear();
     this.preparedTargetJid = "";
     this.preparedMessages = [];
@@ -1011,6 +1013,7 @@ export class BotService extends EventEmitter {
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.processingImageIds.clear();
+    this.latestRouteImageSequence += 1;
     this.estadoInicialDoGrupoCapturado = false;
     this.grupoJaFechouDepoisDoInicio = false;
     this.currentUserInTargetGroup = false;
@@ -1046,6 +1049,7 @@ export class BotService extends EventEmitter {
     this.pendingOcrMessages = [];
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
+    this.latestRouteImageSequence += 1;
     this.logger.success(`Grupo alterado para: ${config.grupoAlvoNome || config.grupoAlvoJid}`);
 
     if (this.sock && this.status === "connected") {
@@ -1372,6 +1376,10 @@ export class BotService extends EventEmitter {
       rotasMonitoradasDetalhadas: detailedRoutes,
       ...(targetDispatchMode ? { targetDispatchMode } : {})
     });
+    this.latestRouteImageSequence += 1;
+    this.pendingOcrMessages = [];
+    this.resetOcrRouteSelection();
+    this.lastOcrDispatchKey = "";
     this.montarMensagens();
     this.prepareSendPlan();
     this.logger.success(targetDispatchMode === "ocr"
@@ -1919,15 +1927,16 @@ export class BotService extends EventEmitter {
     const messageId = String(msg?.key?.id || "");
     if (!messageId || this.processingImageIds.has(messageId)) return;
 
+    const sequence = ++this.latestRouteImageSequence;
     this.processingImageIds.add(messageId);
     setTimeout(() => {
-      void this.processRouteImage(msg, groupJid).finally(() => {
+      void this.processRouteImage(msg, groupJid, sequence).finally(() => {
         this.processingImageIds.delete(messageId);
       });
     }, this.criticalDispatchInProgress ? 3000 : 0);
   }
 
-  private async processRouteImage(msg: any, groupJid: string) {
+  private async processRouteImage(msg: any, groupJid: string, sequence: number) {
     const config = this.configStore.load();
     if (config.targetDispatchMode !== "ocr" || !this.hasConfiguredOcrRoutes(config) || !this.sock) return;
 
@@ -1955,8 +1964,17 @@ export class BotService extends EventEmitter {
 
       await fs.promises.writeFile(imagePath, buffer);
       const ocr = await readRouteImageOcr(imagePath);
+      if (sequence !== this.latestRouteImageSequence) {
+        this.logger.info("OCR descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
+        return;
+      }
       const detected = findConfiguredRouteCodeFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
       if (!detected) {
+        this.emit("image-analysis", {
+          id: `${this.clientEmail}:${messageId}`,
+          messageId,
+          result: "unreadable"
+        });
         const wanted = this.describeConfiguredOcrRoutes(config);
         this.logger.info(`OCR (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou bairro na coluna correta com gaiola segura na mesma linha. Procurando: ${wanted}.`);
         this.ocrRouteSelection = {
@@ -1979,6 +1997,7 @@ export class BotService extends EventEmitter {
       const imagePreviewUrl = await this.createOcrPreviewDataUrl(imagePath);
       this.lastOcrDispatchKey = dispatchKey;
       this.lastOcrInsight = {
+        analysisId: `${this.clientEmail}:${messageId}`,
         source: ocr.source,
         text: ocr.text,
         line: detected.line,
@@ -1990,6 +2009,15 @@ export class BotService extends EventEmitter {
         processedAt: new Date().toISOString(),
         imagePreviewUrl
       };
+      this.emit("image-analysis", {
+        id: `${this.clientEmail}:${messageId}`,
+        messageId,
+        result: "detected",
+        route: detected.route,
+        bairro: detected.bairro,
+        gaiola: detected.code,
+        confidence: detected.confidence
+      });
 
       const options = this.buildOcrRouteOptions(detected);
       if (!options.length) {
@@ -2016,16 +2044,19 @@ export class BotService extends EventEmitter {
         processedAt: new Date().toISOString(),
         imagePreviewUrl,
         options,
-        message: "Imagem analisada. Ranking ordenado por distância, paradas e pacotes."
+        message: "Imagem analisada. Ranking ordenado pelos filtros e pela prioridade configurada no romaneio."
       };
       this.logger.success(`[ROMANEIO] Imagem analisada. Ranking de ${options.length} rota(s) disponível para aprovação no painel.`);
       if (!config.ocrManualRouteSelection) {
-        if (detected.confidence < SAFE_OCR_GAIOLA_CONFIDENCE) {
+        if (!detected.safeForAutomatic) {
+          const disagreement = detected.evidenceCount < 2
+            ? `apenas ${detected.evidenceCount} leitura segura em ${detected.variantCount} tratamento(s)`
+            : "os tratamentos da imagem produziram leituras diferentes";
           this.ocrRouteSelection = {
             ...this.ocrRouteSelection,
-            message: `Leitura da gaiola com confiança baixa (${detected.confidence}%). Confirme a rota no painel para evitar envio errado.`
+            message: `Envio automático bloqueado: ${disagreement} (confiança ${detected.confidence}%). Confirme a gaiola no painel.`
           };
-          this.logger.warning(`[ROMANEIO] OCR com confiança baixa (${detected.confidence}%). Envio automático bloqueado para evitar gaiola errada.`);
+          this.logger.warning(`[ROMANEIO] OCR sem consenso seguro (${detected.evidenceCount}/${detected.variantCount}, confiança ${detected.confidence}%). Envio automático bloqueado para evitar gaiola errada.`);
           this.emitSnapshot();
           return;
         }
@@ -2040,6 +2071,12 @@ export class BotService extends EventEmitter {
       }
       this.emitSnapshot();
     } catch (error) {
+      if (sequence !== this.latestRouteImageSequence) return;
+      this.emit("image-analysis", {
+        id: `${this.clientEmail}:${messageId}`,
+        messageId,
+        result: "failed"
+      });
       this.ocrRouteSelection = {
         status: "error",
         options: [],
@@ -2105,24 +2142,12 @@ export class BotService extends EventEmitter {
     if (!this.romaneioStore) return [];
 
     try {
-      const routeAndNeighborhood = this.romaneioStore.rankForDetected({
-        rota: detected.route,
-        bairro: detected.bairro
-      });
-      const safeGaiola = (detected.confidence ?? 0) >= SAFE_OCR_GAIOLA_CONFIDENCE;
-      const byGaiola = safeGaiola && detected.code
-        ? this.romaneioStore.rankForDetected({ gaiola: detected.code })
-        : [];
-      const byNeighborhood = detected.bairro
-        ? this.romaneioStore.rankForDetected({ bairro: detected.bairro })
-        : [];
-      const merged = new Map<string, RomaneioRankedRoute>();
-      const ordered = [...byGaiola, ...routeAndNeighborhood, ...byNeighborhood]
-        .filter((route) => this.ocrRouteLooksCompatible(route, detected, safeGaiola));
-      for (const route of ordered) {
-        merged.set(`${route.rota}::${route.gaiola}::${route.plannedAt || ""}`, route);
-      }
-      return this.rankOcrRoutesByOperationalMetrics(Array.from(merged.values()))
+      if (!detected.code) return [];
+      const exactGaiolaOptions = this.romaneioStore
+        .rankForDetected({ gaiola: detected.code, bairro: detected.bairro })
+        .filter((route) => this.ocrRouteLooksCompatible(route, detected));
+
+      return exactGaiolaOptions
         .slice(0, 8)
         .map((route, index) => this.toOcrRouteOption(route, index + 1));
     } catch (error) {
@@ -2131,7 +2156,7 @@ export class BotService extends EventEmitter {
     }
   }
 
-  private ocrRouteLooksCompatible(route: RomaneioRankedRoute, detected: { route?: string; bairro?: string; code?: string }, safeGaiola: boolean) {
+  private ocrRouteLooksCompatible(route: RomaneioRankedRoute, detected: { route?: string; bairro?: string; code?: string }) {
     const wantedBairro = normalizarTexto(detected.bairro || "");
     const wantedRoute = normalizarTexto(detected.route || "");
     const routeText = normalizarTexto(route.rota || "");
@@ -2143,34 +2168,8 @@ export class BotService extends EventEmitter {
       const name = normalizarTexto(bairro.nome || "");
       return name.includes(wantedBairro) || wantedBairro.includes(name);
     });
-    const gaiolaMatches = safeGaiola && detected.code
-      ? normalizarTexto(route.gaiola) === normalizarTexto(detected.code)
-      : false;
-
-    return (routeMatches && bairroMatches) || (gaiolaMatches && bairroMatches);
-  }
-
-  private rankOcrRoutesByOperationalMetrics(routes: RomaneioRankedRoute[]) {
-    const maxDistance = Math.max(...routes.map((route) => route.distanciaKm || 0), 1);
-    const maxStops = Math.max(...routes.map((route) => route.paradas || 0), 1);
-    const maxPackages = Math.max(...routes.map((route) => route.pacotes || 0), 1);
-
-    return routes
-      .map((route) => ({
-        ...route,
-        score: Number((
-          (1 - ((route.distanciaKm || 0) / maxDistance)) * 0.45 +
-          (1 - ((route.paradas || 0) / maxStops)) * 0.35 +
-          (1 - ((route.pacotes || 0) / maxPackages)) * 0.2
-        ).toFixed(4))
-      }))
-      .sort((a, b) => {
-        if (a.passedFilters !== b.passedFilters) return a.passedFilters ? -1 : 1;
-        return b.score - a.score ||
-          a.distanciaKm - b.distanciaKm ||
-          a.paradas - b.paradas ||
-          a.pacotes - b.pacotes;
-      });
+    const gaiolaMatches = Boolean(detected.code) && normalizarTexto(route.gaiola) === normalizarTexto(detected.code);
+    return gaiolaMatches && bairroMatches && routeMatches;
   }
 
   private toOcrRouteOption(route: RomaneioRankedRoute, rank: number): OcrRouteOption {

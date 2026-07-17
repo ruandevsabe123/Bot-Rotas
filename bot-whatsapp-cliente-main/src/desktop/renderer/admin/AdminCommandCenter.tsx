@@ -5,8 +5,10 @@ import {
   Ban,
   Bell,
   Bot,
+  BrainCircuit,
   CheckCircle2,
   Clock3,
+  CircleDollarSign,
   Download,
   FileJson,
   Gauge,
@@ -28,6 +30,7 @@ import {
 } from "lucide-react";
 import {
   AdminLogEntry,
+  AdminImageUsageSnapshot,
   AdminMonitorSnapshot,
   AdminRoutesSnapshot,
   AdminSupportMessagesSnapshot,
@@ -42,6 +45,7 @@ import {
 import {
   bulkDecideAdminRoutes,
   clearAdminMaintenance,
+  decideImageUsage,
   getAdminMonitor,
   getAdminUserDetail,
   isAuthError,
@@ -51,6 +55,7 @@ import {
   runAdminUserBotAction,
   saveAdminLeader,
   saveAdminUser,
+  saveImagePricing,
   subscribeAdminMonitor,
   validateAdminRoute
 } from "../api";
@@ -60,7 +65,7 @@ type AdminCommandCenterProps = {
   onLogout: () => void;
 };
 
-type AdminPage = "today" | "dashboard" | "clients" | "validations" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
+type AdminPage = "today" | "dashboard" | "clients" | "validations" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
 type DatePreset = "today" | "7d" | "30d" | "all";
 type DecisionFilter = "all" | "pending" | "validated" | "rejected" | "leader" | "removed";
 type ModeFilter = "all" | "target" | "test" | "manual" | "ocr" | "warmup" | "simulation";
@@ -89,6 +94,12 @@ const emptyRoutes: AdminRoutesSnapshot = {
 
 const emptyUsers: AdminUsersSnapshot = { users: [] };
 const emptySupport: AdminSupportMessagesSnapshot = { messages: [], unread: 0 };
+const emptyImageUsage: AdminImageUsageSnapshot = {
+  month: new Date().toISOString().slice(0, 7),
+  entries: [],
+  clients: [],
+  totals: { total: 0, pending: 0, billable: 0, excluded: 0, detected: 0, amountCents: 0 }
+};
 
 const emptyEditor: UserEditorState = {
   email: "",
@@ -133,12 +144,16 @@ function formatMs(value?: number) {
   return `${Math.round(value)}ms`;
 }
 
+function formatMoney(cents = 0) {
+  return (cents / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
 function routeDecision(route: RouteDispatch) {
   return route.decisionStatus || (route.validated ? "validated" : "pending");
 }
 
 function triggerLabel(route: RouteDispatch) {
-  if (route.ocr) return "OCR imagem";
+  if (route.ocr) return "Análise visual";
   if (route.trigger === "target-simulation") return "Simulação alvo";
   if (route.trigger === "simulation") return "Simulação abertura";
   if (route.trigger === "warmup") return "Aquecimento";
@@ -222,11 +237,11 @@ function isRealValidationRoute(route: RouteDispatch) {
   const groupName = normalizeAdminText(route.groupName);
   const groupJid = normalizeAdminText(route.groupJid);
   const sentInRealGroup = groupName === targetGroup || groupName.includes(targetGroup) || groupJid.includes(targetGroup);
-  return sentInRealGroup && route.mode === "target" && route.trigger !== "warmup" && route.trigger !== "simulation";
+  return sentInRealGroup && route.mode === "target" && !["warmup", "simulation", "target-simulation"].includes(route.trigger);
 }
 
 function needsRealReview(route: RouteDispatch) {
-  return isRealValidationRoute(route) && (routeDecision(route) === "pending" || hasAnyReaction(route));
+  return isRealValidationRoute(route) && routeDecision(route) === "pending";
 }
 
 function colorStyle(color?: string) {
@@ -401,12 +416,12 @@ function RouteSidePanel({
         </section>
         {route.ocr ? (
           <section className="adminx-detail-section">
-            <h3>OCR imagem</h3>
-            {route.ocr.imagePreviewUrl ? <img className="adminx-ocr-preview" src={route.ocr.imagePreviewUrl} alt="Prévia da imagem processada pelo OCR" /> : null}
+            <h3>Análise inteligente da imagem</h3>
+            {route.ocr.imagePreviewUrl ? <img className="adminx-ocr-preview" src={route.ocr.imagePreviewUrl} alt="Prévia da imagem processada" /> : null}
             <dl className="adminx-kv">
               <dt>Rota</dt><dd>{route.ocr.route || route.ocr.bairro || "Não registrada"}</dd>
               <dt>Código</dt><dd>{route.ocr.code || "Não registrado"}</dd>
-              <dt>Fonte</dt><dd>{route.ocr.source}</dd>
+              <dt>Motor</dt><dd>Análise visual local</dd>
               <dt>Confiança</dt><dd>{route.ocr.confidence ? `${route.ocr.confidence}%` : "Sem média"}</dd>
               <dt>Linha</dt><dd>{route.ocr.line || "Sem linha"}</dd>
             </dl>
@@ -556,6 +571,8 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const [routes, setRoutes] = useState<AdminRoutesSnapshot>(emptyRoutes);
   const [users, setUsers] = useState<AdminUsersSnapshot>(emptyUsers);
   const [support, setSupport] = useState<AdminSupportMessagesSnapshot>(emptySupport);
+  const [imageUsage, setImageUsage] = useState<AdminImageUsageSnapshot>(emptyImageUsage);
+  const [usageAmounts, setUsageAmounts] = useState<Record<string, string>>({});
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [page, setPage] = useState<AdminPage>("dashboard");
   const [clientFilter, setClientFilter] = useState("all");
@@ -587,6 +604,18 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     setRoutes(snapshot.routes);
     setUsers(snapshot.users);
     setSupport(snapshot.support);
+    setImageUsage(snapshot.imageUsage || emptyImageUsage);
+    setUsageAmounts((current) => {
+      const next = { ...current };
+      (snapshot.imageUsage?.entries || []).forEach((entry) => {
+        if (next[entry.id] === undefined) next[entry.id] = (entry.amountCents / 100).toFixed(2).replace(".", ",");
+      });
+      (snapshot.imageUsage?.clients || []).forEach((client) => {
+        const key = `client:${client.clientEmail}`;
+        if (next[key] === undefined) next[key] = (client.defaultAmountCents / 100).toFixed(2).replace(".", ",");
+      });
+      return next;
+    });
     setLogs(snapshot.logs);
     setLeaders(snapshot.leaders || []);
     setStreamState("live");
@@ -675,7 +704,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const realValidationRoutes = visibleRoutes.filter(isRealValidationRoute);
   const validationReviewRoutes = visibleRoutes.filter(needsRealReview);
   const validationPendingRoutes = realValidationRoutes.filter((route) => routeDecision(route) === "pending");
-  const validationReactionRoutes = realValidationRoutes.filter(hasAnyReaction);
+  const validationReactionRoutes = validationPendingRoutes.filter(hasAnyReaction);
   const validationLeaderRoutes = realValidationRoutes.filter(hasLeaderReaction);
   const validatedRealRoutes = realValidationRoutes.filter((route) => routeDecision(route) === "validated");
   const nonValidationRoutes = visibleRoutes.filter((route) => !isRealValidationRoute(route));
@@ -715,6 +744,24 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const averageFirstAck = averageNumber(visibleRoutes.map((route) => route.dispatchTimeline?.firstAckMs || 0).filter(Boolean));
   const p95FirstAck = routeP95(visibleRoutes.map((route) => route.dispatchTimeline?.firstAckMs || 0).filter(Boolean));
   const topRouteLabels = topLabels(visibleRoutes, 5);
+  const visibleUsageEntries = imageUsage.entries.filter((entry) => {
+    const clientOk = clientFilter === "all" || entry.clientEmail === clientFilter;
+    const query = search.trim().toLowerCase();
+    const queryOk = !query || [entry.clientEmail, entry.route, entry.bairro, entry.gaiola, entry.result, entry.decision]
+      .some((item) => String(item || "").toLowerCase().includes(query));
+    return clientOk && queryOk;
+  });
+  const pricingClients = clients.map((client) => imageUsage.clients.find((item) => item.clientEmail === client.email) || {
+    clientEmail: client.email,
+    month: imageUsage.month,
+    total: 0,
+    pending: 0,
+    billable: 0,
+    excluded: 0,
+    detected: 0,
+    amountCents: 0,
+    defaultAmountCents: 0
+  });
 
   const clientIntelligence = useMemo(() => {
     const now = Date.now();
@@ -832,6 +879,39 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
       refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui atualizar rota.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function parseMoney(value: string) {
+    const normalized = value.includes(",") ? value.replace(/\./g, "").replace(",", ".") : value;
+    return Math.max(0, Math.round(Number(normalized) * 100) || 0);
+  }
+
+  async function updateImageUsage(id: string, decision: "pending" | "billable" | "excluded") {
+    setBusy(true);
+    try {
+      const next = await decideImageUsage(id, { decision, amountCents: parseMoney(usageAmounts[id] || "0") });
+      setImageUsage(next);
+      showToast(decision === "billable" ? "Análise aprovada para consumo." : decision === "excluded" ? "Análise excluída do consumo." : "Análise devolvida para revisão.");
+      refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui atualizar o consumo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateImagePricing(clientEmail: string) {
+    setBusy(true);
+    try {
+      const next = await saveImagePricing(clientEmail, parseMoney(usageAmounts[`client:${clientEmail}`] || "0"));
+      setImageUsage(next);
+      showToast("Valor padrão atualizado.");
+      refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui salvar o valor padrão.");
     } finally {
       setBusy(false);
     }
@@ -1006,6 +1086,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     { id: "dashboard", label: "Dashboard", Icon: Gauge },
     { id: "clients", label: "Clientes", Icon: Users, badge: onlineClients },
     { id: "validations", label: "Validações", Icon: ShieldCheck, badge: validationReviewRoutes.length },
+    { id: "usage", label: "Análises", Icon: BrainCircuit, badge: imageUsage.totals.pending },
     { id: "history", label: "Histórico", Icon: History },
     { id: "logs", label: "Logs", Icon: Activity, badge: visibleLogs.filter((log) => log.level === "error").length },
     { id: "support", label: "Suporte", Icon: Inbox, badge: support.unread },
@@ -1026,7 +1107,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
         </div>
         <nav>
           {pages.map(({ id, label, Icon, badge }) => (
-            <button className={page === id ? "active" : ""} key={id} type="button" onClick={() => setPage(id)}>
+            <button className={page === id ? "active" : ""} key={id} type="button" onClick={() => { setPage(id); if (id === "validations") setDecisionFilter("all"); }}>
               <Icon size={19} />
               <span>{label}</span>
               {badge ? <b>{badge}</b> : null}
@@ -1048,7 +1129,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
           <div className="adminx-global-filters">
             <label>
               <Search size={17} />
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente, grupo, OCR, log..." />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar cliente, grupo, análise, log..." />
             </label>
             <select value={clientFilter} onChange={(event) => setClientFilter(event.target.value)}>
               <option value="all">Todos os clientes</option>
@@ -1199,7 +1280,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
               </article>
               <article className="adminx-panel">
                 <div className="adminx-panel-head">
-                  <div><p>OCR</p><h2>{ocrRoutes.length} disparos por imagem</h2></div>
+                  <div><p>Motor visual</p><h2>{ocrRoutes.length} disparos por imagem</h2></div>
                   <button className="button" type="button" onClick={() => { setModeFilter("ocr"); setPage("history"); }}>Auditar</button>
                 </div>
                 <div className="adminx-ocr-list">
@@ -1209,7 +1290,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
                       <small>{route.clientEmail} - {route.ocr?.source}</small>
                     </button>
                   ))}
-                  {!ocrRoutes.length ? <p className="adminx-empty-text">Nenhum OCR no filtro atual.</p> : null}
+                  {!ocrRoutes.length ? <p className="adminx-empty-text">Nenhuma análise visual no filtro atual.</p> : null}
                 </div>
               </article>
             </section>
@@ -1232,11 +1313,8 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             <RouteFilters decisionFilter={decisionFilter} modeFilter={modeFilter} onDecision={setDecisionFilter} onMode={setModeFilter} />
             <div className="adminx-metrics">
               <MetricCard Icon={ShieldCheck} tone="yellow" title="Para examinar" value={validationReviewRoutes.length} detail={REAL_VALIDATION_GROUP} />
-              <MetricCard Icon={MessageSquareText} tone="blue" title="Com reação" value={validationReactionRoutes.length} detail="qualquer reação conta" />
+              <MetricCard Icon={MessageSquareText} tone="blue" title="Com reação" value={validationReactionRoutes.length} detail="ainda pendentes" />
               <MetricCard Icon={Clock3} tone="yellow" title="Pendentes reais" value={validationPendingRoutes.length} detail="aguardando decisão" />
-              <MetricCard Icon={CheckCircle2} tone="green" title="Validadas reais" value={validatedRealRoutes.length} detail="grupo de motoristas" />
-              <MetricCard Icon={Users} tone="green" title="Com líder" value={validationLeaderRoutes.length} detail="líder conhecido" />
-              <MetricCard Icon={Ban} tone="red" title="Fora validação" value={nonValidationRoutes.length} detail="teste/aquecimento/outro grupo" />
             </div>
             <div className="adminx-page-actions">
               <StatusPill tone="yellow">{selectedRoutes.length} selecionada(s)</StatusPill>
@@ -1251,24 +1329,63 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
                 </div>
                 <RouteTable routes={validationReviewRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
               </article>
-              <article className="adminx-panel">
+            </section>
+          </section>
+        ) : null}
+
+        {page === "usage" ? (
+          <section className="adminx-page adminx-usage-page">
+            <div className="adminx-metrics">
+              <MetricCard Icon={BrainCircuit} tone="blue" title="Análises do mês" value={imageUsage.totals.total} detail={`${imageUsage.totals.detected} com leitura segura`} />
+              <MetricCard Icon={Clock3} tone="yellow" title="Para revisar" value={imageUsage.totals.pending} detail="aguardando sua decisão" />
+              <MetricCard Icon={CheckCircle2} tone="green" title="Aprovadas" value={imageUsage.totals.billable} detail="incluídas no consumo" />
+              <MetricCard Icon={CircleDollarSign} tone="green" title="Consumo aprovado" value={formatMoney(imageUsage.totals.amountCents)} detail={imageUsage.month.split("-").reverse().join("/")} />
+            </div>
+
+            <section className="adminx-usage-layout">
+              <article className="adminx-panel adminx-pricing-panel">
                 <div className="adminx-panel-head">
-                  <div><p>Mesmo sem líder</p><h2>Reações no grupo real</h2></div>
+                  <div><p>Valor por cliente</p><h2>Tabela padrão</h2></div>
+                  <CircleDollarSign size={22} />
                 </div>
-                <RouteTable routes={validationReactionRoutes.slice(0, 12)} selectedRoutes={selectedRoutes} compact onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+                <div className="adminx-pricing-list">
+                  {pricingClients.map((client) => (
+                    <div className="adminx-pricing-row" key={client.clientEmail}>
+                      <div><strong>{client.clientEmail}</strong><small>{client.billable} aprovada(s) · {formatMoney(client.amountCents)}</small></div>
+                      <label><span>R$</span><input inputMode="decimal" value={usageAmounts[`client:${client.clientEmail}`] || "0,00"} onChange={(event) => setUsageAmounts((current) => ({ ...current, [`client:${client.clientEmail}`]: event.target.value }))} /></label>
+                      <button className="button" disabled={busy} type="button" onClick={() => updateImagePricing(client.clientEmail)}>Salvar</button>
+                    </div>
+                  ))}
+                  {!pricingClients.length ? <p className="adminx-empty-text">Nenhum cliente cadastrado.</p> : null}
+                </div>
               </article>
-              <article className="adminx-panel">
+
+              <article className="adminx-panel adminx-panel-wide adminx-analysis-panel">
                 <div className="adminx-panel-head">
-                  <div><p>Separadas</p><h2>Já validadas no grupo real</h2></div>
+                  <div><p>Análise inteligente</p><h2>Revisão de consumo</h2></div>
+                  <StatusPill tone={imageUsage.totals.pending ? "yellow" : "green"}>{imageUsage.totals.pending ? `${imageUsage.totals.pending} pendente(s)` : "Tudo revisado"}</StatusPill>
                 </div>
-                <RouteTable routes={validatedRealRoutes.slice(0, 12)} selectedRoutes={selectedRoutes} compact onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
-              </article>
-              <article className="adminx-panel adminx-panel-wide">
-                <div className="adminx-panel-head">
-                  <div><p>Não entram na validação real</p><h2>Teste, aquecimento e outros grupos</h2></div>
-                  <StatusPill tone="muted">{nonValidationRoutes.length} rota(s)</StatusPill>
+                <div className="adminx-analysis-list">
+                  {visibleUsageEntries.map((entry) => (
+                    <article className={`adminx-analysis-row status-${entry.decision}`} key={entry.id}>
+                      <div className="adminx-analysis-signal"><BrainCircuit size={20} /><span>{entry.confidence === undefined ? "--" : `${entry.confidence}%`}</span></div>
+                      <div className="adminx-analysis-copy">
+                        <strong>{entry.route || entry.bairro || (entry.result === "unreadable" ? "Imagem sem leitura segura" : "Falha na análise")}</strong>
+                        <small>{entry.clientEmail} · {entry.gaiola || "gaiola não confirmada"} · {formatShort(entry.createdAt)}</small>
+                      </div>
+                      <StatusPill tone={entry.decision === "billable" ? "green" : entry.decision === "excluded" ? "muted" : "yellow"}>
+                        {entry.decision === "billable" ? "Aprovada" : entry.decision === "excluded" ? "Excluída" : "Pendente"}
+                      </StatusPill>
+                      <label className="adminx-analysis-value"><span>R$</span><input inputMode="decimal" value={usageAmounts[entry.id] || "0,00"} onChange={(event) => setUsageAmounts((current) => ({ ...current, [entry.id]: event.target.value }))} /></label>
+                      <div className="adminx-analysis-actions">
+                        <button className="icon-button success" disabled={busy} type="button" title="Aprovar consumo" onClick={() => updateImageUsage(entry.id, "billable")}><CheckCircle2 size={18} /></button>
+                        <button className="icon-button danger" disabled={busy} type="button" title="Excluir teste do consumo" onClick={() => updateImageUsage(entry.id, "excluded")}><Ban size={18} /></button>
+                        {entry.decision !== "pending" ? <button className="icon-button" disabled={busy} type="button" title="Reabrir revisão" onClick={() => updateImageUsage(entry.id, "pending")}><RotateCcw size={18} /></button> : null}
+                      </div>
+                    </article>
+                  ))}
+                  {!visibleUsageEntries.length ? <p className="adminx-empty-text">Nenhuma análise neste filtro.</p> : null}
                 </div>
-                <RouteTable routes={nonValidationRoutes.slice(0, 16)} selectedRoutes={selectedRoutes} compact readOnly onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
               </article>
             </section>
           </section>
@@ -1425,7 +1542,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
 
       <nav className="adminx-bottom-nav">
         {pages.map(({ id, label, Icon, badge }) => (
-          <button className={page === id ? "active" : ""} key={id} type="button" onClick={() => setPage(id)}>
+          <button className={page === id ? "active" : ""} key={id} type="button" onClick={() => { setPage(id); if (id === "validations") setDecisionFilter("all"); }}>
             {badge ? <b>{badge}</b> : null}
             <Icon size={21} />
             <span>{label}</span>
@@ -1489,7 +1606,7 @@ function RouteFilters({
         <option value="target">Alvo</option>
         <option value="test">Teste</option>
         <option value="manual">Manual</option>
-        <option value="ocr">OCR imagem</option>
+        <option value="ocr">Análise visual</option>
         <option value="warmup">Aquecimento</option>
         <option value="simulation">Simulação</option>
       </select>
@@ -1537,7 +1654,7 @@ function RouteTable({
             <tr className={`adminx-route-${routeAgeState(route)}`} key={route.id} style={colorStyle(route.clientColor)}>
               {!readOnly ? <td data-label="Selecionar"><input type="checkbox" checked={selectedRoutes.includes(route.id)} onChange={() => onSelect(route.id)} /></td> : null}
               <td data-label="Cliente"><span className="adminx-client-dot" />{route.clientEmail}</td>
-              <td data-label="Modo">{route.ocr ? <StatusPill tone="blue">OCR</StatusPill> : <StatusPill tone={route.mode === "test" ? "yellow" : "green"}>{route.mode}</StatusPill>}</td>
+              <td data-label="Modo">{route.ocr ? <StatusPill tone="blue">Imagem</StatusPill> : <StatusPill tone={route.mode === "test" ? "yellow" : "green"}>{route.mode}</StatusPill>}</td>
               <td data-label="Trigger">{triggerLabel(route)}</td>
               <td data-label="Mensagens"><button className="adminx-link-cell" type="button" onClick={() => onOpen(route)}>{route.messages.join(" | ") || "Sem mensagem"}</button></td>
               <td data-label="Reação final">

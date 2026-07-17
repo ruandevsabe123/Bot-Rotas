@@ -5,6 +5,7 @@ import {
   Ban,
   Bell,
   Bot,
+  BrainCircuit,
   CalendarDays,
   CheckCircle2,
   Clock3,
@@ -439,7 +440,7 @@ function getIncidentAuditLines(route: RouteDispatch) {
     `Envio original: ${formatDate(route.createdAt)}`,
     `Grupo: ${route.groupName || route.groupJid || "Não identificado"}`,
     `Status do envio: ${route.confirmedCount}/${route.totalCount} confirmada(s), status ${route.status}`,
-    `Modo: ${route.ocr ? "Bot imagem/OCR" : route.mode === "test" ? "Teste/aquecimento" : "Grupo alvo"}`,
+    `Modo: ${route.ocr ? "Bot imagem/análise visual" : route.mode === "test" ? "Teste/aquecimento" : "Grupo alvo"}`,
     `Trigger: ${route.trigger || (route.mode === "test" ? "warmup" : "automatic")}`
   ];
 
@@ -617,7 +618,7 @@ function LaunchReviewPanel({
           <strong>{snapshot.config.nomeEnvio || "Não configurado"}</strong>
         </article>
         <article className={hasMessages ? "review-item ok" : "review-item pending"}>
-          <span>{ocrMode ? "Ranking OCR" : "Mensagens"}</span>
+          <span>{ocrMode ? "Ranking inteligente" : "Mensagens"}</span>
           <strong>{messages.length ? `${messages.length} salvo(s)` : "Nenhuma"}</strong>
         </article>
       </div>
@@ -1042,7 +1043,7 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
             <span>Nome configurado: <b>{detail.config.nomeEnvio || "Não configurado"}</b></span>
             <span>Grupo alvo: <b>{detail.config.grupoAlvoNome || detail.config.grupoAlvoJid || "Não configurado"}</b></span>
             <span>Grupo teste: <b>{detail.config.grupoTesteNome || detail.config.grupoTesteJid || "Não configurado"}</b></span>
-            <span>Rotas OCR: <b>{formatOcrRoutes(detail.config.rotasMonitoradas || [], detail.config.rotasMonitoradasDetalhadas || []).join(", ") || "Nenhuma"}</b></span>
+            <span>Rotas por imagem: <b>{formatOcrRoutes(detail.config.rotasMonitoradas || [], detail.config.rotasMonitoradasDetalhadas || []).join(", ") || "Nenhuma"}</b></span>
             <span>Mensagens alvo: <b>{(detail.config.codigosMensagensAlvo || []).join(", ") || "Nenhuma"}</b></span>
             <span>Mensagens teste: <b>{(detail.config.codigosMensagensTeste || []).join(", ") || "Nenhuma"}</b></span>
           </div>
@@ -1975,7 +1976,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
               <input
                 value={adminLogSearch}
                 onChange={(event) => setAdminLogSearch(event.target.value)}
-                placeholder="Buscar log, cliente, erro, OCR..."
+                placeholder="Buscar log, cliente, erro, imagem..."
               />
             </label>
             <label>
@@ -2537,7 +2538,7 @@ function OcrRouteApprovalPanel({
             <p className="panel-label">Bot imagem</p>
             <h2>Analisando imagem...</h2>
           </div>
-          <span className="mini-badge">OCR</span>
+          <span className="mini-badge">VISÃO</span>
         </div>
       </section>
     );
@@ -3052,7 +3053,7 @@ export default function App() {
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Estado atual: ${snapshot.groupState === "open" ? "aberto" : snapshot.groupState === "closed" ? "fechado" : "desconhecido"}`,
-        messages.length ? `Mensagens manuais: ${messages.join(" | ")}` : "Nenhuma mensagem manual configurada. O modo principal usa foto/OCR."
+        messages.length ? `Mensagens manuais: ${messages.join(" | ")}` : "Nenhuma mensagem manual configurada. O modo principal usa análise de foto."
       ],
       confirmLabel: "Disparar agora",
       onConfirm: async () => {
@@ -3328,6 +3329,22 @@ export default function App() {
             <button className="button" type="button" onClick={() => setGroupEditor("image")}>
               Configurar rota
             </button>
+          </section>
+          <section className="quick-panel client-usage-panel">
+            <div className="client-usage-head">
+              <div className="client-usage-icon"><BrainCircuit size={22} /></div>
+              <div>
+                <p className="panel-label">Análise inteligente</p>
+                <h2>Consumo de imagens</h2>
+              </div>
+              <strong>{((snapshot.imageUsage?.summary.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
+            </div>
+            <div className="client-usage-stats">
+              <span><b>{snapshot.imageUsage?.summary.total || 0}</b> analisadas</span>
+              <span><b>{snapshot.imageUsage?.summary.billable || 0}</b> aprovadas</span>
+              <span><b>{snapshot.imageUsage?.summary.pending || 0}</b> em revisão</span>
+              <span><b>{snapshot.imageUsage?.summary.excluded || 0}</b> excluídas</span>
+            </div>
           </section>
           <MessagePreviewStrip
             title="Ranking de rotas"

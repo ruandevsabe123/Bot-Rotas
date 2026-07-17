@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { RouteClientIncident, RouteDispatch, RouteDispatchTimeline, RouteReaction, RouteReactionFinalState, RouteReactionHistoryEvent } from "../shared/types";
 
-const MAX_ROUTES = 5000;
+const MAX_ROUTES = 50_000;
 const INCIDENT_SNOOZE_DELAYS_MINUTES = [10, 5, 2];
 
 export class RouteStore {
@@ -249,14 +249,16 @@ export class RouteStore {
   }
 
   private load(): RouteDispatch[] {
-    if (!fs.existsSync(this.filePath)) return [];
-
-    try {
-      const data = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
-      return Array.isArray(data) ? data.map((item) => this.normalize(item)).filter(Boolean) as RouteDispatch[] : [];
-    } catch {
-      return [];
+    for (const candidate of [this.filePath, `${this.filePath}.bak`]) {
+      if (!fs.existsSync(candidate)) continue;
+      try {
+        const data = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+        if (Array.isArray(data)) return data.map((item) => this.normalize(item)).filter(Boolean) as RouteDispatch[];
+      } catch {
+        // Um arquivo interrompido não pode apagar o histórico válido do backup.
+      }
     }
+    return [];
   }
 
   private saveNow(routes: RouteDispatch[]) {
@@ -266,7 +268,19 @@ export class RouteStore {
       this.flushTimer = undefined;
     }
     fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(routes, null, 2));
+    const tempPath = `${this.filePath}.${process.pid}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(routes, null, 2));
+    if (this.hasValidRouteFile(this.filePath)) fs.copyFileSync(this.filePath, `${this.filePath}.bak`);
+    fs.renameSync(tempPath, this.filePath);
+  }
+
+  private hasValidRouteFile(filePath: string) {
+    if (!fs.existsSync(filePath)) return false;
+    try {
+      return Array.isArray(JSON.parse(fs.readFileSync(filePath, "utf-8")));
+    } catch {
+      return false;
+    }
   }
 
   private scheduleSave(delayMs = 250) {
@@ -351,6 +365,7 @@ export class RouteStore {
         : { status: "none" as const },
       ocr: input.ocr && typeof input.ocr === "object"
         ? {
+            analysisId: typeof input.ocr.analysisId === "string" ? input.ocr.analysisId : undefined,
             source: typeof input.ocr.source === "string" ? input.ocr.source : "",
             text: typeof input.ocr.text === "string" ? input.ocr.text : undefined,
             line: typeof input.ocr.line === "string" ? input.ocr.line : undefined,

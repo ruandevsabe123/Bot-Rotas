@@ -9,6 +9,7 @@ import { BotService, DEFAULT_LEADER_CONTACTS } from "./bot/connection";
 import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderStore";
 import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
+import { ImageUsageStore } from "./imageUsageStore";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
@@ -128,6 +129,7 @@ const envLeaderContacts: LeaderContact[] = parseList(process.env.LEADER_CONTACTS
 const leaderStore = new LeaderStore(path.join(dataDir, "leaders.json"), [...DEFAULT_LEADER_CONTACTS, ...envLeaderContacts]);
 const panelUserStore = new PanelUserStore(path.join(dataDir, "panel_users.json"));
 const supportMessageStore = new SupportMessageStore(path.join(dataDir, "support_messages.json"));
+const imageUsageStore = new ImageUsageStore(path.join(dataDir, "image_usage.json"));
 const panelUsers = mergeStoredUsers(parsePanelUsers(
   process.env.PANEL_USERS,
   configuredAdminEmails
@@ -248,6 +250,11 @@ function getBotForEmail(email: string) {
     broadcastSnapshot(normalizedEmail);
     broadcastAdminSnapshot();
     logSnapshot(normalizedEmail);
+  });
+  nextBot.on("image-analysis", (analysis) => {
+    imageUsageStore.record({ ...analysis, clientEmail: normalizedEmail });
+    broadcastSnapshot(normalizedEmail);
+    broadcastAdminSnapshot();
   });
 
   bots.set(normalizedEmail, nextBot);
@@ -498,7 +505,7 @@ function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
       const bLast = b.reactions[0]?.timestamp || b.updatedAt;
       return new Date(bLast).getTime() - new Date(aLast).getTime();
     });
-  const routes = allRoutes.slice(0, 100);
+  const routes = allRoutes;
   const clients = new Set(allRoutes.map((route) => route.clientEmail).filter(Boolean));
   return {
     routes,
@@ -517,14 +524,24 @@ function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
 
 function validateAdminRoute(routeId: string, adminEmail: string) {
   for (const email of getClientEmails()) {
-    if (getBotForEmail(email).validateRoute(routeId, adminEmail)) return true;
+    const bot = getBotForEmail(email);
+    const route = bot.getRoutes().find((item) => item.id === routeId);
+    if (bot.validateRoute(routeId, adminEmail)) {
+      imageUsageStore.decideForRoute(route?.ocr?.analysisId, routeId, "billable", adminEmail);
+      return true;
+    }
   }
   return false;
 }
 
 function rejectAdminRoute(routeId: string, adminEmail: string, reason?: string) {
   for (const email of getClientEmails()) {
-    if (getBotForEmail(email).rejectRoute(routeId, adminEmail, reason)) return true;
+    const bot = getBotForEmail(email);
+    const route = bot.getRoutes().find((item) => item.id === routeId);
+    if (bot.rejectRoute(routeId, adminEmail, reason)) {
+      imageUsageStore.decideForRoute(route?.ocr?.analysisId, routeId, "excluded", adminEmail);
+      return true;
+    }
   }
   return false;
 }
@@ -571,8 +588,13 @@ function getAdminMonitorSnapshot(): AdminMonitorSnapshot {
     users: getAdminUsersSnapshot(),
     support: getAdminSupportMessagesSnapshot(),
     logs: getAdminLogsSnapshot(),
-    leaders: leaderStore.all()
+    leaders: leaderStore.all(),
+    imageUsage: imageUsageStore.snapshot()
   };
+}
+
+function getClientSnapshot(email: string) {
+  return { ...getBotForEmail(email).getSnapshot(), imageUsage: imageUsageStore.clientSnapshot(email) };
 }
 
 function broadcastLeadersToBots() {
@@ -622,7 +644,7 @@ function broadcastAdminSnapshot() {
 }
 
 function broadcastSnapshot(email: string) {
-  const snapshot = getBotForEmail(email).getSnapshot();
+  const snapshot = getClientSnapshot(email);
   const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
   for (const client of clients) {
     if (client.email === email) client.response.write(payload);
@@ -959,7 +981,7 @@ const server = http.createServer(async (request, response) => {
       });
       const client = { email, response };
       clients.add(client);
-      response.write(`data: ${JSON.stringify(activeBot.getSnapshot())}\n\n`);
+      response.write(`data: ${JSON.stringify(getClientSnapshot(email))}\n\n`);
       request.on("close", () => clients.delete(client));
       return;
     }
@@ -990,6 +1012,37 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "GET" && url.pathname === "/api/admin/monitor") {
       if (!requireAdmin(authorizedEmail, response)) return;
       sendJson(response, 200, getAdminMonitorSnapshot());
+      return;
+    }
+
+    if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/image-usage/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const body = await readJsonBody<{ decision?: string; amountCents?: number; note?: string }>(request);
+      const id = decodeURIComponent(url.pathname.replace("/api/admin/image-usage/", ""));
+      const decision = body.decision === "billable" || body.decision === "excluded" || body.decision === "pending" ? body.decision : undefined;
+      if (!decision || !imageUsageStore.decide(id, decision, authorizedEmail, body.amountCents, body.note)) {
+        sendJson(response, 404, { error: "Análise não encontrada ou decisão inválida." });
+        return;
+      }
+      broadcastAdminSnapshot();
+      const entry = imageUsageStore.snapshot().entries.find((item) => item.id === id);
+      if (entry) broadcastSnapshot(entry.clientEmail);
+      sendJson(response, 200, imageUsageStore.snapshot());
+      return;
+    }
+
+    if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/image-pricing/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const clientEmail = decodeURIComponent(url.pathname.replace("/api/admin/image-pricing/", "")).trim().toLowerCase();
+      const body = await readJsonBody<{ amountCents?: number }>(request);
+      if (!panelUsers.has(clientEmail) || !Number.isFinite(Number(body.amountCents))) {
+        sendJson(response, 400, { error: "Cliente ou valor inválido." });
+        return;
+      }
+      imageUsageStore.setDefaultAmount(clientEmail, Number(body.amountCents));
+      broadcastAdminSnapshot();
+      broadcastSnapshot(clientEmail);
+      sendJson(response, 200, imageUsageStore.snapshot());
       return;
     }
 
@@ -1211,7 +1264,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/snapshot") {
-      sendJson(response, 200, activeBot!.getSnapshot());
+      sendJson(response, 200, getClientSnapshot(authorizedEmail));
       return;
     }
 
@@ -1241,7 +1294,8 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, 423, { error: "Explique o incidente pendente antes de usar o bot." });
         return;
       }
-      sendJson(response, 200, await handleAction(activeBot!, action, body));
+      await handleAction(activeBot!, action, body);
+      sendJson(response, 200, getClientSnapshot(authorizedEmail));
       return;
     }
 

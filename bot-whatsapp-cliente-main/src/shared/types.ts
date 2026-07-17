@@ -180,6 +180,54 @@ export type BotSnapshot = {
   routeDispatches?: RouteDispatch[];
   statusEvents?: BotStatusEvent[];
   ocrRouteSelection?: OcrRouteSelectionState;
+  imageUsage?: ClientImageUsageSnapshot;
+};
+
+export type ImageUsageDecision = "pending" | "billable" | "excluded";
+export type ImageAnalysisResult = "detected" | "unreadable" | "failed";
+
+export type ImageUsageEntry = {
+  id: string;
+  clientEmail: string;
+  messageId: string;
+  result: ImageAnalysisResult;
+  decision: ImageUsageDecision;
+  amountCents: number;
+  route?: string;
+  bairro?: string;
+  gaiola?: string;
+  confidence?: number;
+  routeDispatchId?: string;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+};
+
+export type ImageUsageClientSummary = {
+  clientEmail: string;
+  month: string;
+  total: number;
+  pending: number;
+  billable: number;
+  excluded: number;
+  detected: number;
+  amountCents: number;
+  defaultAmountCents: number;
+};
+
+export type ClientImageUsageSnapshot = {
+  month: string;
+  summary: ImageUsageClientSummary;
+  recent: ImageUsageEntry[];
+};
+
+export type AdminImageUsageSnapshot = {
+  month: string;
+  entries: ImageUsageEntry[];
+  clients: ImageUsageClientSummary[];
+  totals: Omit<ImageUsageClientSummary, "clientEmail" | "month" | "defaultAmountCents">;
 };
 
 export type PanelUserRole = "client" | "admin";
@@ -290,6 +338,7 @@ export type RouteReactionFinalState = {
 };
 
 export type RouteOcrInsight = {
+  analysisId?: string;
   source: string;
   text?: string;
   line?: string;
@@ -460,6 +509,7 @@ export type AdminMonitorSnapshot = {
   support: AdminSupportMessagesSnapshot;
   logs: AdminLogEntry[];
   leaders?: LeaderContact[];
+  imageUsage: AdminImageUsageSnapshot;
 };
 
 export type SaveGroupPayload = {
