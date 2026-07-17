@@ -2072,11 +2072,8 @@ export class BotService extends EventEmitter {
           return;
         }
         this.applyOcrRouteSelection([options[0]], "automatic");
-        if (this.groupState === "open") {
-          const cycleId = ++this.sendCycleId;
-          this.enviarMensagensRapidas(cycleId, "automatic", Date.now());
-          this.logger.info("[ROMANEIO] Grupo aberto: melhor rota enviada automaticamente após análise da imagem.");
-        } else {
+        const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
+        if (!sentImmediately) {
           this.logger.info("[ROMANEIO] Melhor rota escolhida automaticamente e preparada para quando o grupo abrir.");
         }
       }
@@ -2119,7 +2116,37 @@ export class BotService extends EventEmitter {
     if (!selected.length) throw new Error("Selecione pelo menos uma rota.");
 
     this.applyOcrRouteSelection(selected, "manual");
+    void this.dispatchPreparedOcrIfGroupOpen("manual");
     this.emitSnapshot();
+  }
+
+  private async dispatchPreparedOcrIfGroupOpen(trigger: "manual" | "automatic") {
+    const activeGroup = this.getActiveMonitoringGroup();
+    if (!activeGroup.jid || !this.pendingOcrMessages.length) return false;
+
+    let isOpen = this.groupState === "open";
+    try {
+      const metadata = await this.refreshGroupMetadata(activeGroup.jid);
+      if (metadata?.announce === false) {
+        this.groupState = "open";
+        isOpen = true;
+      } else if (metadata?.announce === true) {
+        this.groupState = "closed";
+        isOpen = false;
+      }
+    } catch (error) {
+      this.logger.warning(`[ROMANEIO] Não consegui atualizar o estado do grupo após a imagem: ${this.getErrorMessage(error)}. Usando estado em memória.`);
+    }
+
+    if (!isOpen) return false;
+    const cycleId = ++this.sendCycleId;
+    this.grupoJaFechouDepoisDoInicio = false;
+    this.enviarMensagensRapidas(cycleId, trigger, Date.now());
+    this.logger.info(trigger === "automatic"
+      ? "[ROMANEIO] Grupo já estava aberto: melhor rota enviada imediatamente após a imagem."
+      : "[ROMANEIO] Grupo já estava aberto: rota confirmada enviada imediatamente.");
+    this.emitSnapshot();
+    return true;
   }
 
   private applyOcrRouteSelection(selected: OcrRouteOption[], mode: "manual" | "automatic") {
