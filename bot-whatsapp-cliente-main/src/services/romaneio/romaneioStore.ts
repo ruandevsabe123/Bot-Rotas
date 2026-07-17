@@ -125,6 +125,30 @@ export class RomaneioStore {
         routes: Array.isArray(parsed.routes) ? parsed.routes : []
       };
     } catch {
+      return this.recoverFromLatestUpload();
+    }
+  }
+
+  private recoverFromLatestUpload(): ProcessedRomaneio | undefined {
+    if (!fs.existsSync(this.latestPath)) return undefined;
+    try {
+      const parsed = parseRomaneioXlsx(this.latestPath);
+      const stat = fs.statSync(this.latestPath);
+      const recovered: ProcessedRomaneio = {
+        loaded: true,
+        uploadedAt: stat.mtime.toISOString(),
+        fileName: "latest.xlsx",
+        sheetName: parsed.sheetName,
+        totalRows: parsed.rowCount,
+        totalRoutes: parsed.routes.length,
+        totalPackages: parsed.routes.reduce((total, route) => total + route.pacotes, 0),
+        columns: parsed.columns,
+        routes: parsed.routes
+      };
+      fs.mkdirSync(this.dir, { recursive: true });
+      fs.writeFileSync(this.processedPath, JSON.stringify(recovered, null, 2));
+      return recovered;
+    } catch {
       return undefined;
     }
   }
