@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   findConfiguredRouteCodeFromOcr,
+  findAllConfiguredRouteCodesFromOcr,
   selectConsensusDetection
 } = require("../dist/bot/ocr.js");
 
@@ -132,4 +133,25 @@ test("não associa gaiola de uma linha vizinha", () => {
   }, [{ cidade: "Campos dos Goytacazes", bairro: "Parque Barão do Rio Branco" }], []);
 
   assert.equal(result, undefined);
+});
+
+test("retorna todas as rotas configuradas encontradas na mesma foto", () => {
+  const lines = [
+    ocrLine("D-4 AT202607177C6TM 88 Campos dos Goytacazes Saturnino Braga", 10, 40),
+    ocrLine("H-32 AT202607177D12J 85 Campos dos Goytacazes Ibitioca", 10, 90)
+  ];
+  const reading = { text: lines.map((line) => line.text).join("\n"), source: "teste", lines };
+  const result = findAllConfiguredRouteCodesFromOcr({
+    ...reading,
+    variants: [reading, reading]
+  }, [
+    { cidade: "Campos dos Goytacazes", bairro: "Saturnino Braga" },
+    { cidade: "Campos dos Goytacazes", bairro: "Ibitioca" }
+  ], []);
+
+  assert.deepEqual(result.map((route) => [route.bairro, route.code]), [
+    ["Saturnino Braga", "D-4"],
+    ["Ibitioca", "H-32"]
+  ]);
+  assert.equal(result.every((route) => route.safeForAutomatic), true);
 });

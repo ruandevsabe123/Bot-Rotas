@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { findConfiguredRouteCodeFromOcr, readRouteImageOcr } from "./ocr";
+import { findAllConfiguredRouteCodesFromOcr, readRouteImageOcr } from "./ocr";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
@@ -1968,7 +1968,8 @@ export class BotService extends EventEmitter {
         this.logger.info("OCR descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;
       }
-      const detected = findConfiguredRouteCodeFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
+      const detectedRoutes = findAllConfiguredRouteCodesFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
+      const detected = detectedRoutes[0];
       if (!detected) {
         this.emit("image-analysis", {
           id: `${this.clientEmail}:${messageId}`,
@@ -2025,7 +2026,11 @@ export class BotService extends EventEmitter {
         confidence: detected.confidence
       });
 
-      const options = this.buildOcrRouteOptions(detected);
+      const options = detectedRoutes
+        .flatMap((route) => this.buildOcrRouteOptions(route))
+        .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index)
+        .slice(0, 12)
+        .map((option, index) => ({ ...option, rank: index + 1 }));
       if (!options.length) {
         this.ocrRouteSelection = {
           status: "error",
@@ -2050,9 +2055,9 @@ export class BotService extends EventEmitter {
         processedAt: new Date().toISOString(),
         imagePreviewUrl,
         options,
-        message: "Imagem analisada. Ranking ordenado pelos filtros e pela prioridade configurada no romaneio."
+        message: `Imagem analisada. ${detectedRoutes.length} rota(s) configurada(s) encontrada(s) na foto.`
       };
-      this.logger.success(`[ROMANEIO] Imagem analisada. Ranking de ${options.length} rota(s) disponível para aprovação no painel.`);
+      this.logger.success(`[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s) e ${options.length} opção(ões) disponível(is) para aprovação.`);
       if (!config.ocrManualRouteSelection) {
         if (!detected.safeForAutomatic) {
           const disagreement = detected.evidenceCount < 2
