@@ -306,7 +306,6 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
       const normalizedCityColumn = normalizeOcrText(columns.city);
       const normalizedDistrictColumn = normalizeOcrText(columns.district);
       const normalizedLine = normalizeOcrText(line.text);
-      if (!normalizedDistrictColumn) continue;
       const cityMatches = !route.normalizedCity ||
         matchesConfiguredText(normalizedCityColumn, route.normalizedCity) ||
         matchesConfiguredText(normalizedLine, route.normalizedCity);
@@ -316,16 +315,16 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
         looselyMatchesRoute(normalizedLine, route.normalizedDistrict);
       if (!cityMatches || !districtMatches) continue;
 
-      const code = extractSafeGaiolaCode(line, columns.code) || extractSafeGaiolaCode(line);
-      if (!code) continue;
+      const gaiola = findGaiolaForRouteLine(line, usefulLines, columns.code);
+      if (!gaiola) continue;
 
       return {
         route: route.raw,
         cidade: route.cidade,
         bairro: route.bairro,
-        code,
-        line: line.text,
-        confidence: getGaiolaConfidence(line, code),
+        code: gaiola.code,
+        line: gaiola.line,
+        confidence: gaiola.confidence,
         evidenceCount: 1,
         variantCount: 1,
         safeForAutomatic: false
@@ -363,6 +362,45 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
   }
 
   return undefined;
+}
+
+function findGaiolaForRouteLine(routeLine: OcrLine, lines: OcrLine[], codeColumn: string) {
+  const directCode = extractSafeGaiolaCode(routeLine, codeColumn) || extractSafeGaiolaCode(routeLine);
+  if (directCode) {
+    return {
+      code: directCode,
+      line: routeLine.text,
+      confidence: getGaiolaConfidence(routeLine, directCode)
+    };
+  }
+
+  // O TSV do Tesseract pode criar duas linhas para uma única linha visual da
+  // tabela: uma contendo a gaiola e outra contendo cidade/bairro. Associa
+  // somente fragmentos muito próximos verticalmente e exige um único código,
+  // evitando pegar a gaiola da rota vizinha.
+  const medianHeight = median(lines.map((line) => line.height).filter((height) => height > 0)) || 18;
+  const nearby = lines.filter((candidate) => {
+    if (candidate === routeLine || candidate.confidence < 35) return false;
+    const verticalDistance = Math.abs(centerY(candidate) - centerY(routeLine));
+    if (verticalDistance > Math.max(14, medianHeight * 0.9)) return false;
+    return candidate.left < routeLine.left || candidate.left < routeLine.left + routeLine.width * 0.25;
+  });
+  const candidates = nearby
+    .map((candidate) => ({ candidate, code: extractSafeGaiolaCode(candidate) }))
+    .filter((item) => item.code);
+  const uniqueCodes = [...new Set(candidates.map((item) => item.code))];
+  if (uniqueCodes.length !== 1) return undefined;
+
+  const match = candidates.find((item) => item.code === uniqueCodes[0])!;
+  return {
+    code: match.code,
+    line: `${match.candidate.text} | ${routeLine.text}`,
+    confidence: Math.round(Math.min(
+      routeLine.confidence,
+      match.candidate.confidence,
+      getGaiolaConfidence(match.candidate, match.code)
+    ))
+  };
 }
 
 function getTableLayout(lines: OcrLine[]) {
