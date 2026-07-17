@@ -1,6 +1,11 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const xlsx = require("xlsx");
 const { rankRoutes } = require("../dist/services/romaneio/rankRoutes.js");
+const { RomaneioStore } = require("../dist/services/romaneio/romaneioStore.js");
 
 function route(rota, gaiola, distanciaKm, paradas, pacotes) {
   return {
@@ -37,4 +42,35 @@ test("rotas dentro dos filtros ficam antes das rotas que ultrapassam limites", (
   assert.equal(ranked[0].rota, "Dentro");
   assert.equal(ranked[0].passedFilters, true);
   assert.equal(ranked[1].passedFilters, false);
+});
+
+test("restaura o romaneio salvo depois de reiniciar ou fazer deploy", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "romaneio-restart-"));
+  try {
+    const workbook = xlsx.utils.book_new();
+    const sheet = xlsx.utils.json_to_sheet([{
+      Rota: "Rota 1",
+      "Corridor Cage": "H-25",
+      Neighborhood: "Centro",
+      "Total Distance": 12,
+      "Num of Order": 80,
+      Stop: 30,
+      City: "Campos dos Goytacazes"
+    }]);
+    xlsx.utils.book_append_sheet(workbook, sheet, "Romaneio");
+    const buffer = xlsx.write(workbook, { type: "buffer", bookType: "xlsx" });
+    const store = new RomaneioStore(dir);
+    store.saveUpload("romaneio.xlsx", buffer);
+
+    fs.rmSync(path.join(dir, "processed.json"));
+    const restartedStore = new RomaneioStore(dir);
+    const restored = restartedStore.all();
+
+    assert.equal(restored.status.loaded, true);
+    assert.equal(restored.routes.length, 1);
+    assert.equal(restored.routes[0].gaiola, "H-25");
+    assert.equal(fs.existsSync(path.join(dir, "processed.json")), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

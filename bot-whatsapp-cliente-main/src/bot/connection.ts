@@ -230,6 +230,8 @@ export class BotService extends EventEmitter {
   private adaptiveOpeningSettleMs = 0;
   private lastNotAcceptableAlertAt = 0;
   private romaneioDocumentCandidates = new Map<string, { candidate: RomaneioCandidate; message: any }>();
+  private processingRomaneioCandidateIds = new Set<string>();
+  private latestAutomaticRomaneioTimestamp = 0;
 
   constructor(options: BotServiceOptions = {}) {
     super();
@@ -2262,9 +2264,40 @@ export class BotService extends EventEmitter {
         },
         message: msg
       });
+      void this.persistRomaneioCandidateAutomatically(id);
     }
 
     this.purgeOldRomaneioCandidates();
+  }
+
+  private async persistRomaneioCandidateAutomatically(candidateId: string) {
+    if (!this.romaneioStore || !downloadMediaMessage || this.processingRomaneioCandidateIds.has(candidateId)) return;
+    const item = this.romaneioDocumentCandidates.get(candidateId);
+    if (!item) return;
+    const candidateTimestamp = new Date(item.candidate.timestamp).getTime();
+    if (candidateTimestamp < this.latestAutomaticRomaneioTimestamp) return;
+
+    this.processingRomaneioCandidateIds.add(candidateId);
+    try {
+      const buffer = await downloadMediaMessage(
+        item.message,
+        "buffer",
+        {},
+        {
+          logger: P({ level: "silent" }),
+          reuploadRequest: this.sock?.updateMediaMessage
+        }
+      );
+      if (candidateTimestamp < this.latestAutomaticRomaneioTimestamp) return;
+      const snapshot = this.romaneioStore.saveUpload(item.candidate.fileName, buffer);
+      this.latestAutomaticRomaneioTimestamp = candidateTimestamp;
+      this.logger.success(`[ROMANEIO] Arquivo recebido, processado e salvo automaticamente (${item.candidate.periodoLabel}): ${item.candidate.fileName}. Rotas: ${snapshot.status.totalRoutes}.`);
+      this.emitSnapshot();
+    } catch (error) {
+      this.logger.warning(`[ROMANEIO] Não consegui persistir automaticamente ${item.candidate.fileName}: ${this.getErrorMessage(error)}.`);
+    } finally {
+      this.processingRomaneioCandidateIds.delete(candidateId);
+    }
   }
 
   private getDocumentMessage(msg: any) {
