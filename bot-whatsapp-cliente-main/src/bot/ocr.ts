@@ -154,7 +154,6 @@ async function createPreprocessedImages(imagePath: string) {
     const baseName = path.join(os.tmpdir(), `ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const enhancedPath = `${baseName}-enhanced.png`;
     const thresholdPath = `${baseName}-threshold.png`;
-    const localContrastPath = `${baseName}-local-contrast.png`;
 
     await sharp(imagePath)
       .rotate()
@@ -178,20 +177,9 @@ async function createPreprocessedImages(imagePath: string) {
       .toFile(thresholdPath);
     generatedPaths.push(thresholdPath);
 
-    await sharp(imagePath)
-      .rotate()
-      .resize({ width: resizeWidth, withoutEnlargement: false })
-      .grayscale()
-      .clahe({ width: 3, height: 3, maxSlope: 3 })
-      .sharpen({ sigma: 1.15 })
-      .png()
-      .toFile(localContrastPath);
-    generatedPaths.push(localContrastPath);
-
     return [
       { path: enhancedPath, label: "contraste-e-nitidez", generated: true },
-      { path: thresholdPath, label: "preto-e-branco", generated: true },
-      { path: localContrastPath, label: "contraste-local", generated: true }
+      { path: thresholdPath, label: "preto-e-branco", generated: true }
     ];
   } catch {
     for (const generatedPath of generatedPaths) {
@@ -243,6 +231,35 @@ export function findConfiguredRouteCodeFromOcr(ocr: RouteOcrResult, monitoredRou
     .filter(Boolean) as DetectedRouteCode[];
 
   return selectConsensusDetection(detections, variants.length);
+}
+
+export function findAllConfiguredRouteCodesFromOcr(
+  ocr: RouteOcrResult,
+  monitoredRoutes: MonitoredRoute[] = [],
+  legacyRoutes: string[] = []
+) {
+  const results: DetectedRouteCode[] = [];
+  const configuredDetailed = monitoredRoutes.filter((route) => route.bairro?.trim());
+
+  for (const route of configuredDetailed) {
+    const detected = findConfiguredRouteCodeFromOcr(ocr, [route], []);
+    if (detected) results.push(detected);
+  }
+
+  const detailedNames = new Set(configuredDetailed.map((route) => normalizeOcrText(route.bairro)));
+  for (const route of legacyRoutes.filter((item) => item.trim())) {
+    if (detailedNames.has(normalizeOcrText(route))) continue;
+    const detected = findConfiguredRouteCodeFromOcr(ocr, [], [route]);
+    if (detected) results.push(detected);
+  }
+
+  const unique = new Map<string, DetectedRouteCode>();
+  for (const detected of results) {
+    const key = `${normalizeOcrText(detected.bairro || detected.route)}::${normalizeOcrText(detected.code)}`;
+    const current = unique.get(key);
+    if (!current || detected.confidence > current.confidence) unique.set(key, detected);
+  }
+  return [...unique.values()];
 }
 
 export function selectConsensusDetection(detections: DetectedRouteCode[], variantCount: number) {
