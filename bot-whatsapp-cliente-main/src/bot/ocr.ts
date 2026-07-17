@@ -155,27 +155,27 @@ async function createPreprocessedImages(imagePath: string) {
     const enhancedPath = `${baseName}-enhanced.png`;
     const thresholdPath = `${baseName}-threshold.png`;
 
-    await sharp(imagePath)
-      .rotate()
-      .resize({ width: resizeWidth, withoutEnlargement: false })
-      .grayscale()
-      .normalize()
-      .linear(1.18, -8)
-      .sharpen({ sigma: 1.05, m1: 1.05, m2: 2 })
-      .png()
-      .toFile(enhancedPath);
-    generatedPaths.push(enhancedPath);
-
-    await sharp(imagePath)
-      .rotate()
-      .resize({ width: resizeWidth, withoutEnlargement: false })
-      .grayscale()
-      .normalize()
-      .sharpen({ sigma: 0.9 })
-      .threshold(165)
-      .png()
-      .toFile(thresholdPath);
-    generatedPaths.push(thresholdPath);
+    await Promise.all([
+      sharp(imagePath)
+        .rotate()
+        .resize({ width: resizeWidth, withoutEnlargement: false })
+        .grayscale()
+        .normalize()
+        .linear(1.18, -8)
+        .sharpen({ sigma: 1.05, m1: 1.05, m2: 2 })
+        .png()
+        .toFile(enhancedPath),
+      sharp(imagePath)
+        .rotate()
+        .resize({ width: resizeWidth, withoutEnlargement: false })
+        .grayscale()
+        .normalize()
+        .sharpen({ sigma: 0.9 })
+        .threshold(165)
+        .png()
+        .toFile(thresholdPath)
+    ]);
+    generatedPaths.push(enhancedPath, thresholdPath);
 
     return [
       { path: enhancedPath, label: "contraste-e-nitidez", generated: true },
