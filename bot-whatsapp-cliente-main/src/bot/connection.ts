@@ -1977,6 +1977,12 @@ export class BotService extends EventEmitter {
         });
         const wanted = this.describeConfiguredOcrRoutes(config);
         this.logger.info(`OCR (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou bairro na coluna correta com gaiola segura na mesma linha. Procurando: ${wanted}.`);
+        const recognizedLines = ocr.variants
+          ?.flatMap((variant) => variant.lines.map((line) => line.text.trim()).filter(Boolean))
+          .filter((line, index, all) => all.indexOf(line) === index)
+          .slice(0, 60)
+          .join(" | ") || ocr.text.replace(/\s*\r?\n\s*/g, " | ").trim();
+        this.logger.info(`OCR texto reconhecido: ${recognizedLines.slice(0, 3000) || "(vazio)"}`);
         this.ocrRouteSelection = {
           status: "error",
           options: [],
