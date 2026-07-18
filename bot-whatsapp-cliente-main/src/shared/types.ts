@@ -145,6 +145,8 @@ export type OcrRouteOption = {
   passedFilters: boolean;
   reasons: string[];
   score: number;
+  romaneioMatch?: boolean;
+  observation?: string;
 };
 
 export type OcrRouteSelectionState = {

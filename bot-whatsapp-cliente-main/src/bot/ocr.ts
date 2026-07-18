@@ -280,7 +280,7 @@ export function selectConsensusDetection(detections: DetectedRouteCode[], varian
   const winner = ranked[0];
   const best = [...winner].sort((left, right) => right.confidence - left.confidence)[0];
   const competingCodes = new Set(detections.map((detection) => detection.code));
-  const strongEvidence = winner.filter((detection) => detection.confidence >= 70);
+  const strongEvidence = winner.filter((detection) => detection.confidence >= 45);
   const confidence = strongEvidence.length
     ? Math.round(Math.min(...strongEvidence.map((detection) => detection.confidence)))
     : best.confidence;

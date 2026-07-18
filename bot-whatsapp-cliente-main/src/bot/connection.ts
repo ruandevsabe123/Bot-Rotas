@@ -88,8 +88,8 @@ const SOCKET_CONNECT_TIMEOUT_MS = 15000;
 const SOCKET_QUERY_TIMEOUT_MS = 15000;
 const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
-const TARGET_PARALLEL_STAGGER_MS = 90;
-const MANUAL_ROUTE_SELECTION_STAGGER_MS = 180;
+const TARGET_PARALLEL_STAGGER_MS = 0;
+const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
 const PREPARED_RELAY_TTL_MS = 25000;
@@ -2031,6 +2031,7 @@ export class BotService extends EventEmitter {
       const options = detectedRoutes
         .flatMap((route) => this.buildOcrRouteOptions(route))
         .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index)
+        .sort((left, right) => Number(right.romaneioMatch !== false) - Number(left.romaneioMatch !== false))
         .slice(0, 12)
         .map((option, index) => ({ ...option, rank: index + 1 }));
       if (!options.length) {
@@ -2127,17 +2128,19 @@ export class BotService extends EventEmitter {
     if (!activeGroup.jid || !this.pendingOcrMessages.length) return false;
 
     let isOpen = this.groupState === "open";
-    try {
-      const metadata = await this.refreshGroupMetadata(activeGroup.jid);
-      if (metadata?.announce === false) {
-        this.groupState = "open";
-        isOpen = true;
-      } else if (metadata?.announce === true) {
-        this.groupState = "closed";
-        isOpen = false;
+    if (!isOpen) {
+      try {
+        const metadata = await this.refreshGroupMetadata(activeGroup.jid);
+        if (metadata?.announce === false) {
+          this.groupState = "open";
+          isOpen = true;
+        } else if (metadata?.announce === true) {
+          this.groupState = "closed";
+          isOpen = false;
+        }
+      } catch (error) {
+        this.logger.warning(`[ROMANEIO] Não consegui atualizar o estado do grupo após a imagem: ${this.getErrorMessage(error)}. Usando estado em memória.`);
       }
-    } catch (error) {
-      this.logger.warning(`[ROMANEIO] Não consegui atualizar o estado do grupo após a imagem: ${this.getErrorMessage(error)}. Usando estado em memória.`);
     }
 
     if (!isOpen) return false;
@@ -2179,21 +2182,42 @@ export class BotService extends EventEmitter {
   }
 
   private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; confidence?: number }): OcrRouteOption[] {
-    if (!this.romaneioStore) return [];
+    if (!detected.code) return [];
+    const fallback = () => [this.toOcrFallbackOption(detected)];
+    if (!this.romaneioStore) return fallback();
 
     try {
-      if (!detected.code) return [];
       const exactGaiolaOptions = this.romaneioStore
         .rankForDetected({ gaiola: detected.code, bairro: detected.bairro })
         .filter((route) => this.ocrRouteLooksCompatible(route, detected));
 
-      return exactGaiolaOptions
+      const matched = exactGaiolaOptions
         .slice(0, 8)
         .map((route, index) => this.toOcrRouteOption(route, index + 1));
+      return matched.length ? matched : fallback();
     } catch (error) {
       this.logger.warning(`[ROMANEIO] Falha ao cruzar OCR com romaneio: ${this.getErrorMessage(error)}`);
-      return [];
+      return fallback();
     }
+  }
+
+  private toOcrFallbackOption(detected: { route?: string; bairro?: string; code?: string; confidence?: number }): OcrRouteOption {
+    const bairro = detected.bairro || detected.route || "Rota identificada";
+    return {
+      id: `ocr-sem-romaneio::${bairro}::${detected.code}`,
+      rank: 1,
+      rota: detected.route || bairro,
+      gaiola: detected.code || "",
+      bairro,
+      distanciaKm: 0,
+      pacotes: 0,
+      paradas: 0,
+      passedFilters: true,
+      reasons: [],
+      score: detected.confidence || 0,
+      romaneioMatch: false,
+      observation: "Rota identificada na imagem, mas não encontrada ou não correspondente no romaneio."
+    };
   }
 
   private ocrRouteLooksCompatible(route: RomaneioRankedRoute, detected: { route?: string; bairro?: string; code?: string }) {
@@ -2227,7 +2251,8 @@ export class BotService extends EventEmitter {
       paradas: route.paradas,
       passedFilters: route.passedFilters,
       reasons: route.reasons,
-      score: route.score
+      score: route.score,
+      romaneioMatch: true
     };
   }
 
@@ -2610,17 +2635,20 @@ export class BotService extends EventEmitter {
       sendStartedAt,
       this.monitoringMode === "target" ? "race" : "normal"
     );
-    this.enqueueDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
-    const routeId = this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger, timeline);
-    this.markQueuedDispatchSending(cycleId, routeId);
     this.performanceMetrics.activeQueue = mensagens.length;
     this.criticalDispatchInProgress = true;
+    // Inicia o relay antes das gravações de auditoria. A primeira chamada ao
+    // WhatsApp ocorre imediatamente; fila e histórico são persistidos ainda
+    // neste mesmo ciclo, antes da Promise do relay concluir.
     const sendCycle =
       this.monitoringMode === "test"
         ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger)
         : config.nuclearMode
         ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline)
         : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline);
+    this.enqueueDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
+    const routeId = this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger, timeline);
+    this.markQueuedDispatchSending(cycleId, routeId);
 
     this.activeSendCycle = sendCycle.finally(() => {
       if (cycleId === this.sendCycleId) {
@@ -3257,7 +3285,7 @@ export class BotService extends EventEmitter {
   private updateAdaptiveOpeningSettle(timeline?: RouteDispatchTimeline) {
     if (!timeline || this.monitoringMode !== "target") return;
     if (timeline.notAcceptableCount >= 2) {
-      this.adaptiveOpeningSettleMs = Math.min(180, this.adaptiveOpeningSettleMs + 30);
+      this.adaptiveOpeningSettleMs = Math.min(60, this.adaptiveOpeningSettleMs + 15);
       return;
     }
     if (timeline.notAcceptableCount === 0 && this.adaptiveOpeningSettleMs > 0) {
