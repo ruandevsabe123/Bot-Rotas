@@ -221,8 +221,7 @@ export type ImageUsageClientSummary = {
 
 export type ClientImageUsageSnapshot = {
   month: string;
-  summary: ImageUsageClientSummary;
-  recent: ImageUsageEntry[];
+  amountCents: number;
 };
 
 export type AdminImageUsageSnapshot = {
