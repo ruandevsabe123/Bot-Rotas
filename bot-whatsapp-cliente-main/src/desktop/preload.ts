@@ -25,6 +25,7 @@ const api: DesktopApi = {
   latencyProbe: () => ipcRenderer.invoke("bot:latencyProbe"),
   restartBot: () => ipcRenderer.invoke("bot:restart"),
   clearSession: () => ipcRenderer.invoke("bot:clearSession"),
+  requestPairingCode: (payload) => ipcRenderer.invoke("bot:requestPairingCode", payload),
   factoryReset: () => ipcRenderer.invoke("bot:factoryReset"),
   clearLogs: () => ipcRenderer.invoke("bot:clearLogs"),
   refreshGroups: () => ipcRenderer.invoke("bot:refreshGroups"),

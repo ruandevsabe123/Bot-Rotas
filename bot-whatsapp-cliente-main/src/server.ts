@@ -692,6 +692,9 @@ async function handleAction(bot: BotService, action: string, body: any) {
     case "clear-session":
       await bot.clearSession();
       break;
+    case "request-pairing-code":
+      await bot.requestPairingCode(String(body.phoneNumber || ""));
+      break;
     case "factory-reset":
       await bot.factoryReset();
       break;
