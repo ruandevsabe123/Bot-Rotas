@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { findAllConfiguredRouteCodesFromOcr, readRouteImageOcr } from "./ocr";
+import { findAllConfiguredRouteCodesFromOcr, findAllGaiolaCodesFromOcr, readRouteImageOcr } from "./ocr";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
@@ -2015,7 +2015,13 @@ export class BotService extends EventEmitter {
         this.logger.info("OCR descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;
       }
-      const detectedRoutes = findAllConfiguredRouteCodesFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
+      const configuredDetectedRoutes = findAllConfiguredRouteCodesFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
+      const detectedRoutes = [...configuredDetectedRoutes];
+      for (const genericDetection of findAllGaiolaCodesFromOcr(ocr)) {
+        if (!detectedRoutes.some((item) => normalizarTexto(item.code) === normalizarTexto(genericDetection.code))) {
+          detectedRoutes.push(genericDetection);
+        }
+      }
       const detected = detectedRoutes[0];
       if (!detected) {
         this.emit("image-analysis", {
@@ -2075,10 +2081,11 @@ export class BotService extends EventEmitter {
 
       const options = detectedRoutes
         .flatMap((route) => this.buildOcrRouteOptions(route))
+        .filter((option) => this.ocrOptionMatchesConfiguredNeighborhood(option, config))
         .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index)
         .sort((left, right) => Number(right.romaneioMatch !== false) - Number(left.romaneioMatch !== false))
         .sort((left, right) => Number(right.passedFilters) - Number(left.passedFilters))
-        .slice(0, 12)
+        .slice(0, 50)
         .map((option, index) => ({ ...option, rank: index + 1 }));
       if (!options.length) {
         this.ocrRouteSelection = {
@@ -2293,6 +2300,21 @@ export class BotService extends EventEmitter {
     });
     const gaiolaMatches = Boolean(detected.code) && normalizarTexto(route.gaiola) === normalizarTexto(detected.code);
     return gaiolaMatches && bairroMatches && routeMatches;
+  }
+
+  private ocrOptionMatchesConfiguredNeighborhood(option: OcrRouteOption, config = this.configStore.load()) {
+    const detailed = (config.rotasMonitoradasDetalhadas || []).filter((route) => route.bairro?.trim());
+    const configured = detailed.length
+      ? detailed
+      : (config.rotasMonitoradas || []).map((bairro) => ({ cidade: "", bairro }));
+    if (!configured.length) return true;
+    const optionBairro = normalizarTexto(option.bairro || "");
+    const optionCidade = normalizarTexto(option.cidade || "");
+    return configured.some((route) => {
+      const bairroMatches = optionBairro === normalizarTexto(route.bairro || "");
+      const cidade = normalizarTexto(route.cidade || "");
+      return bairroMatches && (!cidade || !optionCidade || cidade === optionCidade);
+    });
   }
 
   private toOcrRouteOption(route: RomaneioRankedRoute, rank: number): OcrRouteOption {
