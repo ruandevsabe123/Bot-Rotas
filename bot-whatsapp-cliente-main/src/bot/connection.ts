@@ -909,6 +909,7 @@ export class BotService extends EventEmitter {
         this.sock.ev.removeAllListeners("connection.update");
         this.sock.ev.removeAllListeners("groups.update");
         this.sock.ev.removeAllListeners("messages.upsert");
+        this.sock.ev.removeAllListeners("messaging-history.set");
         this.sock.end?.(undefined);
         this.sock.ws?.close?.();
       } catch (error) {
@@ -1431,6 +1432,18 @@ export class BotService extends EventEmitter {
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
     if (!candidates.length) {
+      const persisted = this.romaneioStore?.all();
+      if (persisted?.status.loaded && persisted.routes.length) {
+        const uploadedAt = persisted.status.uploadedAt
+          ? new Date(persisted.status.uploadedAt).toLocaleString("pt-BR")
+          : "data não informada";
+        this.logger.success(`[ROMANEIO] Romaneio persistido restaurado: ${persisted.status.fileName || "latest.xlsx"}, ${persisted.status.totalRoutes} rota(s).`);
+        return {
+          found: true,
+          message: `Romaneio já carregado do armazenamento persistente: ${persisted.status.fileName || "latest.xlsx"} (${persisted.status.totalRoutes} rotas, salvo em ${uploadedAt}).`,
+          candidates: []
+        };
+      }
       this.logger.warning("[ROMANEIO] Nenhum arquivo de hoje com nome romaneio foi encontrado no histórico recebido do grupo alvo.");
       return {
         found: false,
@@ -1498,7 +1511,7 @@ export class BotService extends EventEmitter {
       fireInitQueries: true,
       printQRInTerminal: false,
       markOnlineOnConnect: true,
-      syncFullHistory: false,
+      syncFullHistory: true,
       browser: Browsers?.ubuntu?.("Bot Rota Rapida") || ["Ubuntu", "Chrome", "1.0.0"],
       shouldIgnoreJid: (jid: string) => this.shouldIgnoreSocketJid(jid),
       cachedGroupMetadata: async (jid: string) => this.groupMetadataCache.get(jid)
