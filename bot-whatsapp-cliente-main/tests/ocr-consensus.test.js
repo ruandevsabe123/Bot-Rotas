@@ -42,11 +42,15 @@ test("bloqueia o automático quando qualquer tratamento encontra outra gaiola", 
   assert.equal(result.safeForAutomatic, false);
 });
 
-test("bloqueia leitura única e leitura de baixa confiança", () => {
+test("bloqueia leitura única, mas libera duas leituras moderadas que concordam", () => {
   assert.equal(selectConsensusDetection([detection("F-14", 95)], 3).safeForAutomatic, false);
   assert.equal(selectConsensusDetection([
     detection("F-14", 92),
     detection("F-14", 65)
+  ], 3).safeForAutomatic, true);
+  assert.equal(selectConsensusDetection([
+    detection("F-14", 44),
+    detection("F-14", 43)
   ], 3).safeForAutomatic, false);
 });
 

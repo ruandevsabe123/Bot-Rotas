@@ -2583,12 +2583,15 @@ function OcrRouteApprovalPanel({
               >
                 <strong>#{option.rank} {option.rota} / {option.gaiola}</strong>
                 <span>{option.bairro}{option.bairroPercentual !== undefined ? ` · ${option.bairroPercentual.toFixed(1)}%` : ""}</span>
+                {option.observation ? <small>{option.observation}</small> : null}
                 {sendOrder ? <b className="send-order-badge">{sendOrder}ª mensagem</b> : null}
-                <div className="route-row-metrics">
-                  <span>{option.distanciaKm.toFixed(3)} km</span>
-                  <span>{option.pacotes} pct</span>
-                  <span>{option.paradas} paradas</span>
-                </div>
+                {option.romaneioMatch !== false ? (
+                  <div className="route-row-metrics">
+                    <span>{option.distanciaKm.toFixed(3)} km</span>
+                    <span>{option.pacotes} pct</span>
+                    <span>{option.paradas} paradas</span>
+                  </div>
+                ) : null}
                 {!option.passedFilters && option.reasons.length ? <small>{option.reasons.join(" ")}</small> : null}
               </button>
             );
