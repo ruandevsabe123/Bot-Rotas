@@ -4,6 +4,7 @@ const {
   findConfiguredRouteCodeFromOcr,
   findAllConfiguredRouteCodesFromOcr,
   findConfiguredRouteInOcrLine,
+  findConfiguredRouteInNeighborhoods,
   selectConsensusDetection
 } = require("../dist/bot/ocr.js");
 
@@ -198,6 +199,24 @@ test("associa a gaiola genérica ao bairro configurado pelo texto completo da li
   ), configured[1]);
   assert.equal(findConfiguredRouteInOcrLine(
     "J-20 AT202607177D1BI 106 Campos dos Goytacazes Parque Rosário",
+    configured,
+    []
+  ), undefined);
+});
+
+test("recupera bairro configurado pelos bairros do romaneio quando a linha OCR tem somente a gaiola", () => {
+  const configured = [
+    { cidade: "Campos dos Goytacazes", bairro: "Saturnino Braga" },
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Rodoviário" }
+  ];
+
+  assert.deepEqual(findConfiguredRouteInNeighborhoods(
+    ["Saturnino Braga", "Centro"],
+    configured,
+    []
+  ), configured[0]);
+  assert.equal(findConfiguredRouteInNeighborhoods(
+    ["Parque Rosário", "Centro"],
     configured,
     []
   ), undefined);
