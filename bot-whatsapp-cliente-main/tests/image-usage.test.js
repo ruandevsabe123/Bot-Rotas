@@ -19,11 +19,9 @@ test("contabiliza somente análises aprovadas e mantém testes excluídos", () =
   store.decide("foto-1", "billable", "admin@teste.com", 900);
   store.decide("foto-2", "excluded", "admin@teste.com");
 
-  const summary = store.clientSnapshot("cliente@teste.com").summary;
-  assert.equal(summary.total, 2);
-  assert.equal(summary.billable, 1);
-  assert.equal(summary.excluded, 1);
-  assert.equal(summary.amountCents, 900);
+  const clientSnapshot = store.clientSnapshot("cliente@teste.com");
+  assert.equal(clientSnapshot.amountCents, 900);
+  assert.deepEqual(Object.keys(clientSnapshot).sort(), ["amountCents", "month"]);
 });
 
 test("não duplica consumo quando o mesmo evento de imagem chega novamente", () => {

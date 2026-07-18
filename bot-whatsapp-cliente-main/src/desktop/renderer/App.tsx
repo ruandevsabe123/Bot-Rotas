@@ -3340,13 +3340,7 @@ export default function App() {
                 <p className="panel-label">Análise inteligente</p>
                 <h2>Consumo de imagens</h2>
               </div>
-              <strong>{((snapshot.imageUsage?.summary.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
-            </div>
-            <div className="client-usage-stats">
-              <span><b>{snapshot.imageUsage?.summary.total || 0}</b> analisadas</span>
-              <span><b>{snapshot.imageUsage?.summary.billable || 0}</b> aprovadas</span>
-              <span><b>{snapshot.imageUsage?.summary.pending || 0}</b> em revisão</span>
-              <span><b>{snapshot.imageUsage?.summary.excluded || 0}</b> excluídas</span>
+              <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
             </div>
           </section>
           <MessagePreviewStrip

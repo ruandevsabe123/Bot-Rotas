@@ -106,7 +106,12 @@ export class ImageUsageStore {
   clientSnapshot(clientEmail: string, month = this.currentMonth()): ClientImageUsageSnapshot {
     const email = clientEmail.trim().toLowerCase();
     const entries = this.data.entries.filter((entry) => entry.clientEmail === email && entry.createdAt.slice(0, 7) === month);
-    return { month, summary: this.summary(email, month, entries), recent: entries.slice(0, 20) };
+    return {
+      month,
+      amountCents: entries
+        .filter((entry) => entry.decision === "billable")
+        .reduce((total, entry) => total + entry.amountCents, 0)
+    };
   }
 
   private summary(clientEmail: string, month: string, entries: ImageUsageEntry[]) {
