@@ -327,17 +327,21 @@ export function findConfiguredRouteInOcrLine(line: string, monitoredRoutes: Moni
   return legacy ? { cidade: "", bairro: legacy.trim() } : undefined;
 }
 
-export function findConfiguredRouteInNeighborhoods(neighborhoods: string[], monitoredRoutes: MonitoredRoute[] = [], legacyRoutes: string[] = []) {
-  const available = new Set(neighborhoods.map(normalizeOcrText).filter(Boolean));
-  const detailed = monitoredRoutes
-    .filter((route) => route.bairro?.trim())
-    .find((route) => available.has(normalizeOcrText(route.bairro)));
-  if (detailed) return { cidade: detailed.cidade.trim(), bairro: detailed.bairro.trim() };
+export function findNeighborhoodInOcrLine(line: string, neighborhoods: string[]) {
+  const normalizedLine = ` ${normalizeOcrText(line)} `;
+  return neighborhoods
+    .filter((bairro) => bairro.trim())
+    .sort((left, right) => right.length - left.length)
+    .find((bairro) => normalizedLine.includes(` ${normalizeOcrText(bairro)} `));
+}
 
-  const legacy = legacyRoutes
-    .filter((route) => route.trim())
-    .find((route) => available.has(normalizeOcrText(route)));
-  return legacy ? { cidade: "", bairro: legacy.trim() } : undefined;
+export function extractNeighborhoodAfterCity(line: string, city: string) {
+  const normalizedLine = normalizeOcrText(line);
+  const normalizedCity = normalizeOcrText(city);
+  if (!normalizedLine || !normalizedCity) return "";
+  const cityIndex = normalizedLine.lastIndexOf(normalizedCity);
+  if (cityIndex < 0) return "";
+  return normalizedLine.slice(cityIndex + normalizedCity.length).trim().replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 export function selectConsensusDetection(detections: DetectedRouteCode[], variantCount: number) {

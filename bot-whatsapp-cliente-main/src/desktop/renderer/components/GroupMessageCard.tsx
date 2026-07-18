@@ -246,12 +246,12 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
 
         {isImageTarget ? (
           <div className="ocr-primary-copy">
-            <strong>Configurar rota por imagem</strong>
-            <span>Organize o ranking dos bairros. O bot pega a gaiola da mesma linha do bairro encontrado.</span>
+            <strong>Ranking automático por imagem</strong>
+            <span>Todos os bairros da foto serão analisados. O romaneio e os filtros definem a ordem.</span>
           </div>
         ) : null}
 
-        {isImageTarget ? (
+        {false && isImageTarget ? (
           <section className="ocr-route-fields">
             <div className="settings-grid compact-settings">
               <label>
@@ -373,11 +373,11 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
           </div>
         ) : null}
 
-        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || (isImageTarget ? !normalizeMonitoredRoutes(monitoredRoutes).length : !codes.trim())} type="submit">
+        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || (!isImageTarget && !codes.trim())} type="submit">
           {label.action}
         </button>
         {isTarget ? (
-          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || (isImageTarget ? !normalizeMonitoredRoutes(monitoredRoutes).length : !codes.trim())} type="button" onClick={(event) => submit(event, true)}>
+          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || (!isImageTarget && !codes.trim())} type="button" onClick={(event) => submit(event, true)}>
             <span aria-hidden="true">☠</span>
             Salvar e iniciar
           </button>
