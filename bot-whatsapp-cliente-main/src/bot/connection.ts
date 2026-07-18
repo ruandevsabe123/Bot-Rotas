@@ -977,6 +977,33 @@ export class BotService extends EventEmitter {
     await this.start();
   }
 
+  async requestPairingCode(phoneNumber: string) {
+    const digits = String(phoneNumber || "").replace(/\D/g, "");
+    if (digits.length < 10 || digits.length > 15) {
+      throw new Error("Informe o número completo com DDI e DDD. Exemplo: 5522999999999.");
+    }
+    if (this.status === "connected" || this.sock?.authState?.creds?.registered) {
+      throw new Error("Já existe uma sessão salva. Use Limpar sessão antes de gerar um código para outro aparelho.");
+    }
+    if (!this.isRunning()) await this.start();
+    if (!this.sock?.requestPairingCode) {
+      throw new Error("A conexão ainda não está pronta. Aguarde o QR aparecer e tente novamente.");
+    }
+
+    this.pairingCodeRequested = true;
+    try {
+      const code = String(await this.sock.requestPairingCode(digits)).replace(/\D/g, "");
+      if (!code) throw new Error("O WhatsApp não retornou um código de pareamento.");
+      this.pairingCode = code.replace(/(.{4})/g, "$1 ").trim();
+      this.logger.info(`Código de pareamento gerado para telefone terminado em ${digits.slice(-4)}.`);
+      this.emitSnapshot();
+    } catch (error) {
+      this.pairingCodeRequested = false;
+      this.pairingCode = "";
+      throw new Error(`Não consegui gerar o código de pareamento: ${this.getErrorMessage(error)}`);
+    }
+  }
+
   async factoryReset() {
     this.logger.warning("Restaurando padrão de fábrica: limpando sessão, configurações e cache local.");
 

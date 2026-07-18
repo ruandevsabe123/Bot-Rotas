@@ -3294,7 +3294,13 @@ export default function App() {
 
           <section ref={connectionSectionRef} className="connection-anchor">
             {snapshot.qrCode || snapshot.status === "waiting_qr" || snapshot.status === "connecting" ? (
-              <QrCodeBox qrCode={snapshot.qrCode} status={snapshot.status} />
+              <QrCodeBox
+                qrCode={snapshot.qrCode}
+                status={snapshot.status}
+                pairingCode={snapshot.pairingCode}
+                busy={busy}
+                onRequestPairingCode={(phoneNumber) => runAction(() => botApi.requestPairingCode({ phoneNumber }))}
+              />
             ) : null}
           </section>
         </section>

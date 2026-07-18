@@ -88,6 +88,10 @@ function registerIpc() {
     await bot.clearSession();
     return bot.getSnapshot();
   });
+  ipcMain.handle("bot:requestPairingCode", async (_event, payload: { phoneNumber: string }) => {
+    await bot.requestPairingCode(String(payload?.phoneNumber || ""));
+    return bot.getSnapshot();
+  });
   ipcMain.handle("bot:factoryReset", async () => {
     await bot.factoryReset();
     return bot.getSnapshot();
