@@ -159,3 +159,34 @@ test("retorna todas as rotas configuradas encontradas na mesma foto", () => {
   ]);
   assert.equal(result.every((route) => route.safeForAutomatic), true);
 });
+
+test("identifica todas as gaiolas da foto mesmo sem bairros configurados", () => {
+  const rawLines = [
+    "G-17 AT202607177D8LJ 109 São Francisco de Itabapoana Centro",
+    "1-24 AT202607177CTER 93 Campos dos Goytacazes Parque Guarus",
+    "G-10 AT202607177CT4H 68 São Francisco de Itabapoana Travessão de barra",
+    "C-13 AT202607177CL3V 119 São João da Barra Barcelos"
+  ];
+  const reading = {
+    text: rawLines.join("\n"),
+    source: "foto-real",
+    lines: rawLines.map((line, index) => ocrLine(line, 10, 40 + index * 50))
+  };
+  const result = findAllConfiguredRouteCodesFromOcr({ ...reading, variants: [reading, reading] }, [], []);
+
+  assert.deepEqual(result.map((route) => route.code), ["G-17", "I-24", "G-10", "C-13"]);
+  assert.equal(result.every((route) => route.safeForAutomatic), true);
+});
+
+test("mantém Parque Guarus configurado quando I-24 é lido como 1-24", () => {
+  const line = ocrLine("1-24 AT202607177CTER 93 Campos dos Goytacazes Parque Guarus", 10, 40);
+  const reading = { text: line.text, source: "foto-real", lines: [line] };
+  const result = findAllConfiguredRouteCodesFromOcr({ ...reading, variants: [reading, reading] }, [
+    { cidade: "", bairro: "Parque Guarus" }
+  ], []);
+
+  assert.equal(result.length, 1);
+  assert.equal(result[0].bairro, "Parque Guarus");
+  assert.equal(result[0].code, "I-24");
+  assert.equal(result[0].safeForAutomatic, true);
+});

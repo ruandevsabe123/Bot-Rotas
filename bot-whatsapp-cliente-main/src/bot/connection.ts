@@ -2071,7 +2071,7 @@ export class BotService extends EventEmitter {
         processedAt: new Date().toISOString(),
         imagePreviewUrl,
         options,
-        message: `Imagem analisada. ${detectedRoutes.length} rota(s) configurada(s) encontrada(s) na foto.`
+        message: `Imagem analisada. ${detectedRoutes.length} rota(s) encontrada(s) na foto.`
       };
       this.logger.success(`[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s) e ${options.length} opção(ões) disponível(is) para aprovação.`);
       if (!config.ocrManualRouteSelection) {
@@ -3534,8 +3534,8 @@ export class BotService extends EventEmitter {
     const detailed = (config.rotasMonitoradasDetalhadas || [])
       .filter((item) => item.bairro?.trim())
       .map((item) => item.cidade?.trim() ? `${item.cidade} / ${item.bairro}` : item.bairro);
-    if (detailed.length) return detailed.slice(0, 4).join(" | ");
-    return (config.rotasMonitoradas || []).slice(0, 4).join(" | ") || "nenhuma rota configurada";
+    if (detailed.length) return detailed.join(" | ");
+    return (config.rotasMonitoradas || []).join(" | ") || "nenhuma rota configurada";
   }
 
   private async waitUntilGroupAcceptsMessages(jid: string, cycleId: number) {
