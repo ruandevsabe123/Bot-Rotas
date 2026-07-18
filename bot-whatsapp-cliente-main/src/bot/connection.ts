@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { findAllConfiguredRouteCodesFromOcr, findAllGaiolaCodesFromOcr, findConfiguredRouteInOcrLine, readRouteImageOcr } from "./ocr";
+import { findAllConfiguredRouteCodesFromOcr, findAllGaiolaCodesFromOcr, findConfiguredRouteInNeighborhoods, findConfiguredRouteInOcrLine, readRouteImageOcr } from "./ocr";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
@@ -2117,7 +2117,7 @@ export class BotService extends EventEmitter {
       });
 
       const options = detectedRoutes
-        .flatMap((route) => this.buildOcrRouteOptions(route))
+        .flatMap((route) => this.buildOcrRouteOptions(route, config))
         .filter((option) => this.ocrOptionMatchesConfiguredNeighborhood(option, config))
         .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index)
         .sort((left, right) => Number(right.romaneioMatch !== false) - Number(left.romaneioMatch !== false))
@@ -2284,7 +2284,7 @@ export class BotService extends EventEmitter {
       : `[ROMANEIO] Bot escolheu automaticamente a melhor rota: ${messages.join(" | ")}.`);
   }
 
-  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; confidence?: number }): OcrRouteOption[] {
+  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; confidence?: number }, config = this.configStore.load()): OcrRouteOption[] {
     if (!detected.code) return [];
     const fallback = () => [this.toOcrFallbackOption(detected)];
     if (!this.romaneioStore) return fallback();
@@ -2296,7 +2296,14 @@ export class BotService extends EventEmitter {
 
       const matched = exactGaiolaOptions
         .slice(0, 8)
-        .map((route, index) => this.toOcrRouteOption(route, index + 1));
+        .map((route, index) => {
+          const configuredRoute = findConfiguredRouteInNeighborhoods(
+            route.bairros.map((bairro) => bairro.nome),
+            config.rotasMonitoradasDetalhadas || [],
+            config.rotasMonitoradas || []
+          );
+          return this.toOcrRouteOption(route, index + 1, configuredRoute?.bairro);
+        });
       return matched.length ? matched : fallback();
     } catch (error) {
       this.logger.warning(`[ROMANEIO] Falha ao cruzar OCR com romaneio: ${this.getErrorMessage(error)}`);
@@ -2354,8 +2361,10 @@ export class BotService extends EventEmitter {
     });
   }
 
-  private toOcrRouteOption(route: RomaneioRankedRoute, rank: number): OcrRouteOption {
-    const bairro = route.bairroMatch || route.bairros[0];
+  private toOcrRouteOption(route: RomaneioRankedRoute, rank: number, configuredBairro?: string): OcrRouteOption {
+    const bairro = (configuredBairro
+      ? route.bairros.find((item) => normalizarTexto(item.nome) === normalizarTexto(configuredBairro))
+      : undefined) || route.bairroMatch || route.bairros[0];
     return {
       id: `${route.rota}::${route.gaiola}::${route.plannedAt || ""}`,
       rank,
