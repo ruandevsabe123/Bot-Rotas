@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const {
   findConfiguredRouteCodeFromOcr,
   findAllConfiguredRouteCodesFromOcr,
+  findConfiguredRouteInOcrLine,
   selectConsensusDetection
 } = require("../dist/bot/ocr.js");
 
@@ -176,6 +177,25 @@ test("identifica todas as gaiolas da foto mesmo sem bairros configurados", () =>
 
   assert.deepEqual(result.map((route) => route.code), ["G-17", "I-24", "G-10", "C-13"]);
   assert.equal(result.every((route) => route.safeForAutomatic), true);
+});
+
+test("associa a gaiola genérica ao bairro configurado pelo texto completo da linha", () => {
+  const configured = [
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Jardim Carioca" },
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Presidente Vargas" },
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Rodoviário" }
+  ];
+
+  assert.deepEqual(findConfiguredRouteInOcrLine(
+    "J-1 AT202607177D1CT 101 Campos dos Goytacazes Parque Jardim Carioca",
+    configured,
+    []
+  ), configured[0]);
+  assert.equal(findConfiguredRouteInOcrLine(
+    "J-20 AT202607177D1BI 106 Campos dos Goytacazes Parque Rosário",
+    configured,
+    []
+  ), undefined);
 });
 
 test("mantém Parque Guarus configurado quando I-24 é lido como 1-24", () => {
