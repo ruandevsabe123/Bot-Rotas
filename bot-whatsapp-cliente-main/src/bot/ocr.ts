@@ -316,8 +316,7 @@ export function findConfiguredRouteInOcrLine(line: string, monitoredRoutes: Moni
     .sort((left, right) => right.bairro.length - left.bairro.length)
     .find((route) => {
       const bairro = normalizeOcrText(route.bairro);
-      const cidade = normalizeOcrText(route.cidade || "");
-      return normalizedLine.includes(` ${bairro} `) && (!cidade || normalizedLine.includes(` ${cidade} `));
+      return normalizedLine.includes(` ${bairro} `);
     });
   if (detailed) return { cidade: detailed.cidade.trim(), bairro: detailed.bairro.trim() };
 
