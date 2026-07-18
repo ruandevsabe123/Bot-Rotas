@@ -126,6 +126,7 @@ const emptySnapshot: BotSnapshot = {
     codigosMensagensAlvo: [],
     rotasMonitoradas: [],
     rotasMonitoradasDetalhadas: [],
+    routePresets: [],
     codigosMensagensTeste: [],
     testMessageCount: 15,
     testMessageIntervalMs: 0,
@@ -2577,7 +2578,7 @@ function OcrRouteApprovalPanel({
               <button
                 key={option.id}
                 className={selected ? "ocr-option selected" : "ocr-option"}
-                disabled={busy || selection.status === "confirmed"}
+                disabled={busy || selection.status === "confirmed" || !option.passedFilters || option.romaneioMatch === false}
                 type="button"
                 onClick={() => onToggle(option)}
               >
@@ -3541,6 +3542,8 @@ export default function App() {
               onSave={groupEditor === "target" || groupEditor === "image" ? confirmSaveTarget : confirmSaveTest}
               onSaveManual={undefined}
               onWarmup={groupEditor === "test" ? confirmWarmup : undefined}
+              onSaveRoutePreset={groupEditor === "image" ? (name, routes) => runAction(() => botApi.saveRoutePreset({ name, routes })) : undefined}
+              onDeleteRoutePreset={groupEditor === "image" ? (id) => runAction(() => botApi.deleteRoutePreset({ id })) : undefined}
             />
           </section>
         </div>

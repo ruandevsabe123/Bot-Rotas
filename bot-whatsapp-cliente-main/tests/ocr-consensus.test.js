@@ -190,3 +190,13 @@ test("mantém Parque Guarus configurado quando I-24 é lido como 1-24", () => {
   assert.equal(result[0].code, "I-24");
   assert.equal(result[0].safeForAutomatic, true);
 });
+
+test("não confunde Parque Rodoviário com Rosário", () => {
+  const line = ocrLine("H-20 AT202607177TESTE 80 Campos dos Goytacazes Rosário", 10, 40);
+  const reading = { text: line.text, source: "foto-real", lines: [line] };
+  const result = findAllConfiguredRouteCodesFromOcr({ ...reading, variants: [reading, reading] }, [
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Rodoviário" }
+  ], []);
+
+  assert.deepEqual(result, []);
+});

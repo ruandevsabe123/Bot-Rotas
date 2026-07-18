@@ -180,6 +180,14 @@ function registerIpc() {
     }
     return bot.getSnapshot();
   });
+  ipcMain.handle("bot:saveRoutePreset", async (_event, payload: { name: string; routes: { cidade: string; bairro: string }[] }) => {
+    bot.saveRoutePreset(payload.name, payload.routes);
+    return bot.getSnapshot();
+  });
+  ipcMain.handle("bot:deleteRoutePreset", async (_event, payload: { id: string }) => {
+    bot.deleteRoutePreset(payload.id);
+    return bot.getSnapshot();
+  });
   ipcMain.handle("bot:warmupGroups", async () => {
     await bot.warmupConnection();
     return bot.getSnapshot();

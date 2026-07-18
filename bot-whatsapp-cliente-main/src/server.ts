@@ -758,6 +758,12 @@ async function handleAction(bot: BotService, action: string, body: any) {
         body.intervalMs
       );
       break;
+    case "save-route-preset":
+      bot.saveRoutePreset(String(body.name || ""), Array.isArray(body.routes) ? body.routes : []);
+      break;
+    case "delete-route-preset":
+      bot.deleteRoutePreset(String(body.id || ""));
+      break;
     case "save-general-settings":
       bot.setGeneralSettings({
         nuclearMode: Boolean(body.nuclearMode),

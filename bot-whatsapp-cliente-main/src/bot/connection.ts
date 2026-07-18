@@ -1391,6 +1391,38 @@ export class BotService extends EventEmitter {
     );
   }
 
+  saveRoutePreset(name: string, routes: { cidade: string; bairro: string }[]) {
+    const presetName = name.trim();
+    const normalizedRoutes = routes
+      .map((route) => ({ cidade: String(route?.cidade || "").trim(), bairro: String(route?.bairro || "").trim() }))
+      .filter((route) => route.bairro);
+    if (!presetName) throw new Error("Digite um nome para a configuração.");
+    if (!normalizedRoutes.length) throw new Error("Adicione pelo menos um bairro antes de salvar a configuração.");
+    const config = this.configStore.load();
+    const now = new Date().toISOString();
+    const existing = (config.routePresets || []).find((preset) => normalizarTexto(preset.name) === normalizarTexto(presetName));
+    const preset = {
+      id: existing?.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: presetName,
+      routes: normalizedRoutes,
+      createdAt: existing?.createdAt || now,
+      updatedAt: now
+    };
+    const routePresets = [preset, ...(config.routePresets || []).filter((item) => item.id !== preset.id)].slice(0, 50);
+    this.configStore.save({ routePresets });
+    this.logger.success(`Configuração de bairros salva: ${presetName} (${normalizedRoutes.length} rota(s)).`);
+    this.emitSnapshot();
+  }
+
+  deleteRoutePreset(id: string) {
+    const config = this.configStore.load();
+    const routePresets = (config.routePresets || []).filter((preset) => preset.id !== id);
+    if (routePresets.length === (config.routePresets || []).length) throw new Error("Configuração salva não encontrada.");
+    this.configStore.save({ routePresets });
+    this.logger.info("Configuração de bairros excluída.");
+    this.emitSnapshot();
+  }
+
   // Save warmup (teste) message settings. This resets the warmup state.
   setWarmupMessageSettings(senderName: string, codes: string[], messageCount?: number, intervalMs?: number) {
     this.resetWarmupState();
@@ -2045,6 +2077,7 @@ export class BotService extends EventEmitter {
         .flatMap((route) => this.buildOcrRouteOptions(route))
         .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index)
         .sort((left, right) => Number(right.romaneioMatch !== false) - Number(left.romaneioMatch !== false))
+        .sort((left, right) => Number(right.passedFilters) - Number(left.passedFilters))
         .slice(0, 12)
         .map((option, index) => ({ ...option, rank: index + 1 }));
       if (!options.length) {
@@ -2087,7 +2120,17 @@ export class BotService extends EventEmitter {
           this.emitSnapshot();
           return;
         }
-        this.applyOcrRouteSelection([options[0]], "automatic");
+        const bestEligibleOption = options.find((option) => option.passedFilters && option.romaneioMatch !== false);
+        if (!bestEligibleOption) {
+          this.ocrRouteSelection = {
+            ...this.ocrRouteSelection,
+            message: "Rotas identificadas, mas nenhuma respeita todos os filtros configurados e possui correspondência no romaneio. Envio bloqueado."
+          };
+          this.logger.warning("[ROMANEIO] Envio automático bloqueado: nenhuma rota identificada passou por todos os filtros configurados.");
+          this.emitSnapshot();
+          return;
+        }
+        this.applyOcrRouteSelection([bestEligibleOption], "automatic");
         const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
         if (!sentImmediately) {
           this.logger.info("[ROMANEIO] Melhor rota escolhida automaticamente e preparada para quando o grupo abrir.");
@@ -2130,6 +2173,9 @@ export class BotService extends EventEmitter {
       .map((id) => selection.options.find((option) => option.id === id))
       .filter(Boolean) as OcrRouteOption[];
     if (!selected.length) throw new Error("Selecione pelo menos uma rota.");
+    if (selected.some((option) => !option.passedFilters || option.romaneioMatch === false)) {
+      throw new Error("A rota selecionada não respeita todos os filtros ou não foi confirmada no romaneio.");
+    }
 
     this.applyOcrRouteSelection(selected, "manual");
     void this.dispatchPreparedOcrIfGroupOpen("manual");
@@ -2225,8 +2271,8 @@ export class BotService extends EventEmitter {
       distanciaKm: 0,
       pacotes: 0,
       paradas: 0,
-      passedFilters: true,
-      reasons: [],
+      passedFilters: false,
+      reasons: ["Sem correspondência no romaneio; não foi possível validar os filtros."],
       score: detected.confidence || 0,
       romaneioMatch: false,
       observation: "Rota identificada na imagem, mas não encontrada ou não correspondente no romaneio."

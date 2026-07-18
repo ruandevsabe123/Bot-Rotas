@@ -42,6 +42,7 @@ export type BotConfig = {
   // nomes de rotas procuradas nas imagens do grupo alvo
   rotasMonitoradas: string[];
   rotasMonitoradasDetalhadas: MonitoredRoute[];
+  routePresets: RoutePreset[];
   // mensagens enviadas durante o aquecimento (grupo de teste)
   codigosMensagensTeste: string[];
   testMessageCount: number;
@@ -56,6 +57,14 @@ export type BotConfig = {
 export type MonitoredRoute = {
   cidade: string;
   bairro: string;
+};
+
+export type RoutePreset = {
+  id: string;
+  name: string;
+  routes: MonitoredRoute[];
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type BotPerformanceMetrics = {
@@ -577,6 +586,8 @@ export type DesktopApi = {
   saveMessageSettings: (payload: SaveMessageSettingsPayload) => Promise<BotSnapshot>;
   saveWarmupMessageSettings: (payload: SaveWarmupMessageSettingsPayload) => Promise<BotSnapshot>;
   saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) => Promise<BotSnapshot>;
+  saveRoutePreset: (payload: { name: string; routes: MonitoredRoute[] }) => Promise<BotSnapshot>;
+  deleteRoutePreset: (payload: { id: string }) => Promise<BotSnapshot>;
   saveGeneralSettings: (payload: GeneralSettingsPayload) => Promise<BotSnapshot>;
   confirmOcrRoutes: (payload: { optionIds: string[] }) => Promise<BotSnapshot>;
   submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) => Promise<BotSnapshot>;

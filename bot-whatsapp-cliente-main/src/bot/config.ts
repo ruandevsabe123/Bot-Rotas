@@ -13,6 +13,7 @@ export const DEFAULT_CONFIG: BotConfig = {
   codigosMensagensAlvo: [],
   rotasMonitoradas: [],
   rotasMonitoradasDetalhadas: [],
+  routePresets: [],
   codigosMensagensTeste: [],
   testMessageCount: 15,
   testMessageIntervalMs: 0,
@@ -138,6 +139,23 @@ export class ConfigStore {
               bairro: typeof item?.bairro === "string" ? item.bairro.trim() : ""
             }))
             .filter((item) => item.bairro)
+        : [],
+      routePresets: Array.isArray(input.routePresets)
+        ? input.routePresets
+            .map((preset: any) => ({
+              id: typeof preset?.id === "string" ? preset.id.trim() : "",
+              name: typeof preset?.name === "string" ? preset.name.trim() : "",
+              routes: Array.isArray(preset?.routes)
+                ? preset.routes.map((item: any) => ({
+                    cidade: typeof item?.cidade === "string" ? item.cidade.trim() : "",
+                    bairro: typeof item?.bairro === "string" ? item.bairro.trim() : ""
+                  })).filter((item: any) => item.bairro)
+                : [],
+              createdAt: typeof preset?.createdAt === "string" ? preset.createdAt : new Date().toISOString(),
+              updatedAt: typeof preset?.updatedAt === "string" ? preset.updatedAt : new Date().toISOString()
+            }))
+            .filter((preset: any) => preset.id && preset.name && preset.routes.length)
+            .slice(0, 50)
         : [],
       codigosMensagensTeste: Array.isArray(input.codigosMensagensTeste)
         ? input.codigosMensagensTeste.filter((item) => typeof item === "string" && item.trim())
