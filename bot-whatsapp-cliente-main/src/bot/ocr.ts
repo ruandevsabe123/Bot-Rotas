@@ -259,9 +259,11 @@ export function findAllConfiguredRouteCodesFromOcr(
     const current = unique.get(key);
     if (!current || detected.confidence > current.confidence) unique.set(key, detected);
   }
-  for (const detected of findGenericGaiolaCodesFromOcr(ocr)) {
-    const alreadyDetected = [...unique.values()].some((current) => normalizeOcrText(current.code) === normalizeOcrText(detected.code));
-    if (!alreadyDetected) unique.set(`gaiola::${normalizeOcrText(detected.code)}`, detected);
+  if (!configuredDetailed.length && !legacyRoutes.some((item) => item.trim())) {
+    for (const detected of findGenericGaiolaCodesFromOcr(ocr)) {
+      const alreadyDetected = [...unique.values()].some((current) => normalizeOcrText(current.code) === normalizeOcrText(detected.code));
+      if (!alreadyDetected) unique.set(`gaiola::${normalizeOcrText(detected.code)}`, detected);
+    }
   }
   return [...unique.values()];
 }
@@ -735,7 +737,8 @@ function looselyMatchesRoute(line: string, route: string) {
     lineWords.some((lineWord) => {
       if (lineWord.includes(routeWord) || routeWord.includes(lineWord)) return true;
       if (hasSameLetters(lineWord, routeWord)) return true;
-      const maxDistance = Math.max(1, Math.ceil(routeWord.length * 0.34));
+      if (Math.abs(lineWord.length - routeWord.length) > Math.max(2, Math.floor(routeWord.length * 0.25))) return false;
+      const maxDistance = Math.max(1, Math.floor(routeWord.length * 0.25));
       return levenshteinDistance(lineWord, routeWord) <= maxDistance;
     })
   );

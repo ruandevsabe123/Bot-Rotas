@@ -343,6 +343,8 @@ function createWebApi(): DesktopApi {
       action("save-warmup-message-settings", payload),
     saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) =>
       action("save-target-message-settings", payload),
+    saveRoutePreset: (payload) => action("save-route-preset", payload),
+    deleteRoutePreset: (payload) => action("delete-route-preset", payload),
     saveGeneralSettings: (payload: GeneralSettingsPayload) => action("save-general-settings", payload),
     confirmOcrRoutes: (payload: { optionIds: string[] }) => action("confirm-ocr-routes", payload),
     submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) =>

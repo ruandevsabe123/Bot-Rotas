@@ -37,6 +37,8 @@ const api: DesktopApi = {
     ipcRenderer.invoke("bot:saveWarmupMessageSettings", payload),
   saveTargetMessageSettings: (payload: SaveTargetMessageSettingsPayload) =>
     ipcRenderer.invoke("bot:saveTargetMessageSettings", payload),
+  saveRoutePreset: (payload) => ipcRenderer.invoke("bot:saveRoutePreset", payload),
+  deleteRoutePreset: (payload) => ipcRenderer.invoke("bot:deleteRoutePreset", payload),
   saveGeneralSettings: (payload: GeneralSettingsPayload) => ipcRenderer.invoke("bot:saveGeneralSettings", payload),
   confirmOcrRoutes: (payload: { optionIds: string[] }) => ipcRenderer.invoke("bot:confirmOcrRoutes", payload),
   submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) =>
