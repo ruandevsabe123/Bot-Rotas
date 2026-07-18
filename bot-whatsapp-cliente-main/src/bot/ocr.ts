@@ -309,6 +309,25 @@ export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
   });
 }
 
+export function findConfiguredRouteInOcrLine(line: string, monitoredRoutes: MonitoredRoute[] = [], legacyRoutes: string[] = []) {
+  const normalizedLine = ` ${normalizeOcrText(line)} `;
+  const detailed = monitoredRoutes
+    .filter((route) => route.bairro?.trim())
+    .sort((left, right) => right.bairro.length - left.bairro.length)
+    .find((route) => {
+      const bairro = normalizeOcrText(route.bairro);
+      const cidade = normalizeOcrText(route.cidade || "");
+      return normalizedLine.includes(` ${bairro} `) && (!cidade || normalizedLine.includes(` ${cidade} `));
+    });
+  if (detailed) return { cidade: detailed.cidade.trim(), bairro: detailed.bairro.trim() };
+
+  const legacy = legacyRoutes
+    .filter((route) => route.trim())
+    .sort((left, right) => right.length - left.length)
+    .find((route) => normalizedLine.includes(` ${normalizeOcrText(route)} `));
+  return legacy ? { cidade: "", bairro: legacy.trim() } : undefined;
+}
+
 export function selectConsensusDetection(detections: DetectedRouteCode[], variantCount: number) {
   if (!detections.length) return undefined;
 

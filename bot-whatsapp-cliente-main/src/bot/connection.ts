@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { findAllConfiguredRouteCodesFromOcr, findAllGaiolaCodesFromOcr, readRouteImageOcr } from "./ocr";
+import { findAllConfiguredRouteCodesFromOcr, findAllGaiolaCodesFromOcr, findConfiguredRouteInOcrLine, readRouteImageOcr } from "./ocr";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
@@ -2019,7 +2019,17 @@ export class BotService extends EventEmitter {
       const detectedRoutes = [...configuredDetectedRoutes];
       for (const genericDetection of findAllGaiolaCodesFromOcr(ocr)) {
         if (!detectedRoutes.some((item) => normalizarTexto(item.code) === normalizarTexto(genericDetection.code))) {
-          detectedRoutes.push(genericDetection);
+          const configuredRoute = findConfiguredRouteInOcrLine(
+            genericDetection.line,
+            config.rotasMonitoradasDetalhadas || [],
+            config.rotasMonitoradas || []
+          );
+          detectedRoutes.push(configuredRoute ? {
+            ...genericDetection,
+            route: configuredRoute.cidade ? `${configuredRoute.cidade} | ${configuredRoute.bairro}` : configuredRoute.bairro,
+            cidade: configuredRoute.cidade,
+            bairro: configuredRoute.bairro
+          } : genericDetection);
         }
       }
       const detected = detectedRoutes[0];
