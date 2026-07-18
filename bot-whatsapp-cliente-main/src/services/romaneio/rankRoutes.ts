@@ -24,7 +24,7 @@ export function rankRoutes(routes: RomaneioRouteSummary[], detectedInfo: Romanei
       const bairroMatch = getBestNeighborhoodMatch(route, detectedInfo.bairro || "");
       const reasons = getFilterReasons(route, filters);
       const bairroScore = (bairroMatch?.percentualNaRota || 0) / 100;
-      const distanciaScore = 1 - ((route.distanciaKm || 0) / maxDistance);
+      const distanciaScore = route.distanciaKm > 0 ? 1 - (route.distanciaKm / maxDistance) : 0;
       const paradasScore = 1 - ((route.paradas || 0) / maxStops);
       const pacotesScore = 1 - ((route.pacotes || 0) / maxPackages);
       return {
@@ -77,9 +77,15 @@ function getFilterReasons(route: RomaneioRouteSummary, filters: RomaneioSettings
 
 function compareRankedRoutes(a: RomaneioRankedRoute, b: RomaneioRankedRoute, priority: RomaneioSettings["prioridade"]) {
   if (a.passedFilters !== b.passedFilters) return a.passedFilters ? -1 : 1;
-  if (priority === "menor_distancia") return a.distanciaKm - b.distanciaKm;
+  if (priority === "menor_distancia") return comparePositiveValues(a.distanciaKm, b.distanciaKm);
   if (priority === "menos_paradas") return a.paradas - b.paradas;
   if (priority === "menos_pacotes") return a.pacotes - b.pacotes;
   if (priority === "maior_concentracao_bairro") return (b.bairroMatch?.percentualNaRota || 0) - (a.bairroMatch?.percentualNaRota || 0);
   return b.score - a.score;
+}
+
+function comparePositiveValues(a: number, b: number) {
+  if (a > 0 && b <= 0) return -1;
+  if (b > 0 && a <= 0) return 1;
+  return a - b;
 }

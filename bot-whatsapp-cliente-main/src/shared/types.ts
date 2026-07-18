@@ -412,6 +412,9 @@ export type RomaneioStatus = {
   totalRoutes: number;
   totalPackages: number;
   columns: string[];
+  headerRow?: number;
+  columnMapping?: Record<string, string>;
+  warnings?: string[];
   error?: string;
 };
 

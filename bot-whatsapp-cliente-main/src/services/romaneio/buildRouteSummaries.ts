@@ -17,6 +17,7 @@ export function buildRouteSummaries(rows: RomaneioRow[]): RomaneioRouteSummary[]
 function buildSummary(rows: RomaneioRow[]): RomaneioRouteSummary {
   const first = rows[0];
   const uniquePackages = new Set(rows.map((row) => row.spxTn).filter(Boolean) as string[]);
+  const uniqueStops = new Set(rows.map((row) => row.stop ? `stop:${row.stop}` : row.endereco ? `address:${normalizeRomaneioText(row.endereco)}` : "").filter(Boolean));
   const bairroCounts = new Map<string, { nome: string; count: number }>();
 
   for (const row of rows) {
@@ -30,7 +31,7 @@ function buildSummary(rows: RomaneioRow[]): RomaneioRouteSummary {
   }
 
   const pacotes = Math.max(...rows.map((row) => row.numOfOrder || 0), uniquePackages.size, rows.length);
-  const paradas = Math.max(...rows.map((row) => row.stop || 0), 0);
+  const paradas = Math.max(...rows.map((row) => row.stop || 0), uniqueStops.size, 0);
   const bairros = Array.from(bairroCounts.values())
     .map(({ nome, count }) => ({
       nome,

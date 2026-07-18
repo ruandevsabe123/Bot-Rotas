@@ -68,6 +68,9 @@ export class RomaneioStore {
         totalRoutes: parsed.routes.length,
         totalPackages: parsed.routes.reduce((total, route) => total + route.pacotes, 0),
         columns: parsed.columns,
+        headerRow: parsed.headerRow,
+        columnMapping: parsed.columnMapping,
+        warnings: parsed.warnings,
         routes: parsed.routes
       };
       fs.writeFileSync(this.processedPath, JSON.stringify(processed, null, 2));
@@ -143,6 +146,9 @@ export class RomaneioStore {
         totalRoutes: parsed.routes.length,
         totalPackages: parsed.routes.reduce((total, route) => total + route.pacotes, 0),
         columns: parsed.columns,
+        headerRow: parsed.headerRow,
+        columnMapping: parsed.columnMapping,
+        warnings: parsed.warnings,
         routes: parsed.routes
       };
       fs.mkdirSync(this.dir, { recursive: true });

@@ -57,6 +57,27 @@
   font-weight: 800;
 }
 
+.romaneio-adaptation-box {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  color: #bae6fd;
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.romaneio-adaptation-box > div {
+  display: grid;
+  gap: 4px;
+}
+
+.romaneio-adaptation-box span {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
 .romaneio-candidate-list {
   display: grid;
   gap: 8px;

@@ -2434,6 +2434,15 @@ function RomaneioPanel({
             <strong>{romaneio.status.totalRows}</strong>
           </article>
         </div>
+        {romaneio.status.warnings?.length ? (
+          <div className="romaneio-adaptation-box">
+            <Info size={18} />
+            <div>
+              <strong>Formato adaptado automaticamente</strong>
+              {romaneio.status.warnings.map((warning) => <span key={warning}>{warning}</span>)}
+            </div>
+          </div>
+        ) : null}
         {romaneio.status.error || error ? <p className="inline-error">{romaneio.status.error || error}</p> : null}
         {locateResult.message ? (
           <div className={locateResult.found ? "romaneio-found-box" : "inline-error"}>
@@ -2502,7 +2511,7 @@ function RomaneioPanel({
                 <span>{route.cidade || "Cidade não informada"} · {route.bairros.slice(0, 3).map((bairro) => bairro.nome).join(", ")}</span>
               </div>
               <div className="route-row-metrics">
-                <span>{route.distanciaKm.toFixed(3)} km</span>
+                <span>{route.distanciaKm > 0 ? `${route.distanciaKm.toFixed(3)} km` : "km não informado"}</span>
                 <span>{route.pacotes} pct</span>
                 <span>{route.paradas} paradas</span>
               </div>
