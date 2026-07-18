@@ -2977,11 +2977,10 @@ export default function App() {
   }
 
   function confirmStartImageMonitoring() {
-    const ocrRoutes = buildRoutePreview(snapshot.config.rotasMonitoradas || [], snapshot.config.rotasMonitoradasDetalhadas || []);
     const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
     const hasName = Boolean(snapshot.config.nomeEnvio);
 
-    if (!hasGroup || !hasName || !ocrRoutes.length) {
+    if (!hasGroup || !hasName) {
       setGroupEditor("image");
       setConfirmation({
         title: "Revise o bot imagem",
@@ -2989,7 +2988,7 @@ export default function App() {
         details: [
           hasGroup ? `Grupo: ${groupLabel}` : "Grupo alvo ainda não configurado.",
           hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",
-          ocrRoutes.length ? `Rotas imagem: ${ocrRoutes.join(" | ")}` : "Nenhuma rota de imagem configurada."
+          "Todas as rotas encontradas na imagem serão analisadas."
         ],
         confirmLabel: "Entendi",
         onConfirm: () => undefined
@@ -3003,7 +3002,7 @@ export default function App() {
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Nome: ${snapshot.config.nomeEnvio}`,
-        `Prioridade: ${ocrRoutes.join(" | ")}`
+        "Ranking definido pelo romaneio e pelos filtros."
       ],
       confirmLabel: "Iniciar imagem",
       onConfirm: async () => {
@@ -3334,10 +3333,10 @@ export default function App() {
           <section className="quick-panel identity-panel">
             <div>
               <p className="panel-label">Bot imagem</p>
-              <h2>{buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas).length || 0} rota(s)</h2>
+              <h2>Todas as rotas da imagem</h2>
             </div>
             <button className="button" type="button" onClick={() => setGroupEditor("image")}>
-              Configurar rota
+              Configurar grupo
             </button>
           </section>
           <section className="quick-panel client-usage-panel">
@@ -3353,7 +3352,7 @@ export default function App() {
           <MessagePreviewStrip
             title="Ranking de rotas"
             group={groupLabel}
-            messages={buildRoutePreview(snapshot.config.rotasMonitoradas, snapshot.config.rotasMonitoradasDetalhadas)}
+            messages={["Ranking automático pelo romaneio", "Sem filtro de bairros preferidos"]}
             onOpen={() => setGroupEditor("image")}
           />
           <section className={snapshot.config.ocrManualRouteSelection ? "quick-panel ocr-mode-panel tone-manual" : "quick-panel ocr-mode-panel tone-auto"}>

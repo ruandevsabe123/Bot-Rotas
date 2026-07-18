@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { findAllConfiguredRouteCodesFromOcr, findAllGaiolaCodesFromOcr, findConfiguredRouteInNeighborhoods, findConfiguredRouteInOcrLine, readRouteImageOcr } from "./ocr";
+import { extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine, readRouteImageOcr } from "./ocr";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
@@ -1996,7 +1996,7 @@ export class BotService extends EventEmitter {
 
   private scheduleRouteImageProcessing(msg: any, groupJid: string) {
     const config = this.configStore.load();
-    if (config.targetDispatchMode !== "ocr" || !this.hasConfiguredOcrRoutes(config) || !downloadMediaMessage) return;
+    if (config.targetDispatchMode !== "ocr" || !downloadMediaMessage) return;
 
     const messageId = String(msg?.key?.id || "");
     if (!messageId || this.processingImageIds.has(messageId)) return;
@@ -2012,7 +2012,7 @@ export class BotService extends EventEmitter {
 
   private async processRouteImage(msg: any, groupJid: string, sequence: number) {
     const config = this.configStore.load();
-    if (config.targetDispatchMode !== "ocr" || !this.hasConfiguredOcrRoutes(config) || !this.sock) return;
+    if (config.targetDispatchMode !== "ocr" || !this.sock) return;
 
     const messageId = String(msg?.key?.id || Date.now());
     const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
@@ -2042,23 +2042,7 @@ export class BotService extends EventEmitter {
         this.logger.info("OCR descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;
       }
-      const configuredDetectedRoutes = findAllConfiguredRouteCodesFromOcr(ocr, config.rotasMonitoradasDetalhadas || [], config.rotasMonitoradas || []);
-      const detectedRoutes = [...configuredDetectedRoutes];
-      for (const genericDetection of findAllGaiolaCodesFromOcr(ocr)) {
-        if (!detectedRoutes.some((item) => normalizarTexto(item.code) === normalizarTexto(genericDetection.code))) {
-          const configuredRoute = findConfiguredRouteInOcrLine(
-            genericDetection.line,
-            config.rotasMonitoradasDetalhadas || [],
-            config.rotasMonitoradas || []
-          );
-          detectedRoutes.push(configuredRoute ? {
-            ...genericDetection,
-            route: configuredRoute.cidade ? `${configuredRoute.cidade} | ${configuredRoute.bairro}` : configuredRoute.bairro,
-            cidade: configuredRoute.cidade,
-            bairro: configuredRoute.bairro
-          } : genericDetection);
-        }
-      }
+      const detectedRoutes = findAllGaiolaCodesFromOcr(ocr);
       const detected = detectedRoutes[0];
       if (!detected) {
         this.emit("image-analysis", {
@@ -2117,11 +2101,9 @@ export class BotService extends EventEmitter {
       });
 
       const options = detectedRoutes
-        .flatMap((route) => this.buildOcrRouteOptions(route, config))
-        .filter((option) => this.ocrOptionMatchesConfiguredNeighborhood(option, config))
+        .flatMap((route) => this.buildOcrRouteOptions(route))
         .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index)
-        .sort((left, right) => Number(right.romaneioMatch !== false) - Number(left.romaneioMatch !== false))
-        .sort((left, right) => Number(right.passedFilters) - Number(left.passedFilters))
+        .sort((left, right) => this.compareOcrRouteOptions(left, right))
         .slice(0, 50)
         .map((option, index) => ({ ...option, rank: index + 1 }));
       if (!options.length) {
@@ -2284,7 +2266,7 @@ export class BotService extends EventEmitter {
       : `[ROMANEIO] Bot escolheu automaticamente a melhor rota: ${messages.join(" | ")}.`);
   }
 
-  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; confidence?: number }, config = this.configStore.load()): OcrRouteOption[] {
+  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; line?: string; confidence?: number }): OcrRouteOption[] {
     if (!detected.code) return [];
     const fallback = () => [this.toOcrFallbackOption(detected)];
     if (!this.romaneioStore) return fallback();
@@ -2297,12 +2279,11 @@ export class BotService extends EventEmitter {
       const matched = exactGaiolaOptions
         .slice(0, 8)
         .map((route, index) => {
-          const configuredRoute = findConfiguredRouteInNeighborhoods(
-            route.bairros.map((bairro) => bairro.nome),
-            config.rotasMonitoradasDetalhadas || [],
-            config.rotasMonitoradas || []
-          );
-          return this.toOcrRouteOption(route, index + 1, configuredRoute?.bairro);
+          const imageBairro = findNeighborhoodInOcrLine(
+            detected.line || "",
+            route.bairros.map((bairro) => bairro.nome)
+          ) || extractNeighborhoodAfterCity(detected.line || "", route.cidade) || detected.bairro;
+          return this.toOcrRouteOption(route, index + 1, imageBairro);
         });
       return matched.length ? matched : fallback();
     } catch (error) {
@@ -2346,25 +2327,11 @@ export class BotService extends EventEmitter {
     return gaiolaMatches && bairroMatches && routeMatches;
   }
 
-  private ocrOptionMatchesConfiguredNeighborhood(option: OcrRouteOption, config = this.configStore.load()) {
-    const detailed = (config.rotasMonitoradasDetalhadas || []).filter((route) => route.bairro?.trim());
-    const configured = detailed.length
-      ? detailed
-      : (config.rotasMonitoradas || []).map((bairro) => ({ cidade: "", bairro }));
-    if (!configured.length) return true;
-    const optionBairro = normalizarTexto(option.bairro || "");
-    const optionCidade = normalizarTexto(option.cidade || "");
-    return configured.some((route) => {
-      const bairroMatches = optionBairro === normalizarTexto(route.bairro || "");
-      const cidade = normalizarTexto(route.cidade || "");
-      return bairroMatches && (!cidade || !optionCidade || cidade === optionCidade);
-    });
-  }
-
   private toOcrRouteOption(route: RomaneioRankedRoute, rank: number, configuredBairro?: string): OcrRouteOption {
-    const bairro = (configuredBairro
+    const matchedBairro = configuredBairro
       ? route.bairros.find((item) => normalizarTexto(item.nome) === normalizarTexto(configuredBairro))
-      : undefined) || route.bairroMatch || route.bairros[0];
+      : undefined;
+    const bairro = matchedBairro || (configuredBairro ? { nome: configuredBairro, percentualNaRota: 0 } : undefined) || route.bairroMatch || route.bairros[0];
     return {
       id: `${route.rota}::${route.gaiola}::${route.plannedAt || ""}`,
       rank,
@@ -2379,8 +2346,22 @@ export class BotService extends EventEmitter {
       passedFilters: route.passedFilters,
       reasons: route.reasons,
       score: route.score,
-      romaneioMatch: true
+      romaneioMatch: true,
+      observation: configuredBairro && !matchedBairro
+        ? "Bairro lido na imagem; a gaiola existe no romaneio, mas o bairro não consta na composição dessa rota."
+        : undefined
     };
+  }
+
+  private compareOcrRouteOptions(left: OcrRouteOption, right: OcrRouteOption) {
+    if (left.passedFilters !== right.passedFilters) return left.passedFilters ? -1 : 1;
+    if (left.romaneioMatch !== right.romaneioMatch) return left.romaneioMatch === false ? 1 : -1;
+    const priority = this.romaneioStore?.getSettings().prioridade;
+    if (priority === "menor_distancia") return left.distanciaKm - right.distanciaKm;
+    if (priority === "menos_paradas") return left.paradas - right.paradas;
+    if (priority === "menos_pacotes") return left.pacotes - right.pacotes;
+    if (priority === "maior_concentracao_bairro") return (right.bairroPercentual || 0) - (left.bairroPercentual || 0);
+    return (left.distanciaKm + left.paradas + left.pacotes) - (right.distanciaKm + right.paradas + right.pacotes);
   }
 
   private resetOcrRouteSelection() {
@@ -3320,7 +3301,7 @@ export class BotService extends EventEmitter {
 
     return Boolean(
       this.preparedTargetJid &&
-      (this.preparedMessages.length || (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && this.hasConfiguredOcrRoutes(config)))
+      (this.preparedMessages.length || (this.monitoringMode === "target" && config.targetDispatchMode === "ocr"))
     );
   }
 
@@ -3632,16 +3613,9 @@ export class BotService extends EventEmitter {
   private hasReadyMessages(mode: MonitoringMode = this.monitoringMode) {
     const config = this.configStore.load();
     const codes = mode === "test" ? config.codigosMensagensTeste : config.codigosMensagensAlvo;
-    if (mode === "target" && config.targetDispatchMode === "ocr") return this.hasConfiguredOcrRoutes(config);
+    if (mode === "target" && config.targetDispatchMode === "ocr") return true;
     if ((codes || []).some((item) => item.trim())) return true;
     return false;
-  }
-
-  private hasConfiguredOcrRoutes(config = this.configStore.load()) {
-    return (
-      (config.rotasMonitoradasDetalhadas || []).some((item) => item.bairro?.trim()) ||
-      (config.rotasMonitoradas || []).some((item) => item.trim())
-    );
   }
 
   private describeConfiguredOcrRoutes(config = this.configStore.load()) {

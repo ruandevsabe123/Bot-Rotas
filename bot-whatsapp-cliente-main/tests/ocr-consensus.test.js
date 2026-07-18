@@ -4,7 +4,9 @@ const {
   findConfiguredRouteCodeFromOcr,
   findAllConfiguredRouteCodesFromOcr,
   findConfiguredRouteInOcrLine,
-  findConfiguredRouteInNeighborhoods,
+  findNeighborhoodInOcrLine,
+  findAllGaiolaCodesFromOcr,
+  extractNeighborhoodAfterCity,
   selectConsensusDetection
 } = require("../dist/bot/ocr.js");
 
@@ -204,21 +206,16 @@ test("associa a gaiola genérica ao bairro configurado pelo texto completo da li
   ), undefined);
 });
 
-test("recupera bairro configurado pelos bairros do romaneio quando a linha OCR tem somente a gaiola", () => {
-  const configured = [
-    { cidade: "Campos dos Goytacazes", bairro: "Saturnino Braga" },
-    { cidade: "Campos dos Goytacazes", bairro: "Parque Rodoviário" }
-  ];
+test("usa somente o bairro presente na linha da gaiola e não outro bairro interno do romaneio", () => {
+  const bairrosDoRomaneio = ["Parque Aldeia", "Centro"];
 
-  assert.deepEqual(findConfiguredRouteInNeighborhoods(
-    ["Saturnino Braga", "Centro"],
-    configured,
-    []
-  ), configured[0]);
-  assert.equal(findConfiguredRouteInNeighborhoods(
-    ["Parque Rosário", "Centro"],
-    configured,
-    []
+  assert.equal(findNeighborhoodInOcrLine(
+    "H-25 AT202607177D10N 112 Campos dos Goytacazes Centro",
+    bairrosDoRomaneio
+  ), "Centro");
+  assert.equal(findNeighborhoodInOcrLine(
+    "H-25 AT202607177D10N 112 Campos dos Goytacazes Centro",
+    ["Parque Aldeia"]
   ), undefined);
 });
 
@@ -243,4 +240,29 @@ test("não confunde Parque Rodoviário com Rosário", () => {
   ], []);
 
   assert.deepEqual(result, []);
+});
+
+test("identifica as 15 gaiolas da imagem sem bairros preferidos", () => {
+  const rawLines = [
+    "C-11 AT202607177C60A 113 Sao Joao da Barra Praia do Acu",
+    "C-13 AT202607177CL3V 119 Sao Joao da Barra Barcelos",
+    "D-4 AT202607177C6TM 88 Campos dos Goytacazes Saturnino Braga",
+    "F-28 AT202607177CSWH 90 Campos dos Goytacazes Travessao",
+    "G-12 AT202607177D0RI 76 Sao Francisco de Itabapoana Floresta",
+    "G-13 AT202607177D8X5 84 Sao Francisco de Itabapoana Guaxindiba",
+    "G-14 AT202607177D0JZ 75 Sao Francisco de Itabapoana Santa Clara",
+    "G-23 AT202607177CTCH 105 Italva Centro",
+    "H-1 AT202607177D8VE 77 Sao Joao da Barra Atafona",
+    "H-12 AT202607177D10J 87 Quissama Piteiras",
+    "H-16 AT202607177CTH5 60 Campos dos Goytacazes Sto Amaro Campos",
+    "H-17 AT202607177D1HP 61 Campos dos Goytacazes Baixa grande",
+    "H-24 AT202607177D8Q9 112 Campos dos Goytacazes Centro",
+    "H-25 AT202607177D10N 112 Campos dos Goytacazes Centro",
+    "H-28 AT202607177CTA3 103 Campos dos Goytacazes Centro"
+  ];
+  const reading = { text: rawLines.join("\n"), source: "foto-real-15", lines: rawLines.map((line, index) => ocrLine(line, 10, 40 + index * 40)) };
+  const result = findAllGaiolaCodesFromOcr({ ...reading, variants: [reading, reading] });
+
+  assert.equal(result.length, 15);
+  assert.equal(extractNeighborhoodAfterCity(rawLines[13], "Campos dos Goytacazes"), "Centro");
 });
