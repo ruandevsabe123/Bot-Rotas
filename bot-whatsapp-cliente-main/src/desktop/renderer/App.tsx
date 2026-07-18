@@ -2529,15 +2529,29 @@ function OcrRouteApprovalPanel({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const [analysisClock, setAnalysisClock] = useState(Date.now());
+
+  useEffect(() => {
+    if (selection?.status !== "analyzing") return;
+    setAnalysisClock(Date.now());
+    const interval = window.setInterval(() => setAnalysisClock(Date.now()), 250);
+    return () => window.clearInterval(interval);
+  }, [selection?.status, selection?.processedAt]);
+
   if (!selection || selection.status === "idle") return null;
 
   if (selection.status === "analyzing") {
+    const startedAt = Date.parse(selection.processedAt || "") || analysisClock;
+    const elapsedSeconds = Math.max(0, Math.floor((analysisClock - startedAt) / 1000));
+    const timer = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:${String(elapsedSeconds % 60).padStart(2, "0")}`;
     return (
       <section className="quick-panel ocr-approval-panel">
         <div className="panel-heading">
           <div>
             <p className="panel-label">Bot imagem</p>
             <h2>Analisando imagem...</h2>
+            <strong className="ocr-analysis-timer" aria-live="polite">{timer}</strong>
+            <p className="approval-message">Tempo real da operação. As rotas aparecerão automaticamente ao terminar.</p>
           </div>
           <span className="mini-badge">VISÃO</span>
         </div>

@@ -1635,9 +1635,11 @@ export class BotService extends EventEmitter {
     }
 
     if (connection === "close") {
+      const closedSocket = this.sock;
       this.sock = undefined;
       this.clearHealthCheckTimer();
       this.clearWarmKeepAliveTimer();
+      this.disposeSocket(closedSocket);
       if (this.stopping) return;
 
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
@@ -1655,6 +1657,22 @@ export class BotService extends EventEmitter {
         this.error = `Erro interno ao iniciar WhatsApp: ${errorMessage}`;
         this.setStatus("error");
         this.logger.error(this.error);
+        return;
+      }
+
+      if (this.isRestartRequired(statusCode, errorMessage)) {
+        this.reconnectAttempts = 0;
+        this.unknownDisconnects = 0;
+        this.logger.info("WhatsApp solicitou reinício da conexão. Credenciais preservadas; reconectando agora.");
+        this.addStatusEvent("reconnecting", "WhatsApp solicitou reinício. Reconectando automaticamente.");
+        this.scheduleReconnect(true);
+        return;
+      }
+
+      if (this.isConnectionConflict(statusCode, errorMessage)) {
+        this.logger.warning("Conflito de socket detectado. Sessão preservada; encerrando a conexão antiga antes de tentar novamente.");
+        this.addStatusEvent("reconnecting", "Conflito de conexão resolvido sem apagar a sessão.");
+        this.scheduleReconnect(false);
         return;
       }
 
@@ -2021,6 +2039,7 @@ export class BotService extends EventEmitter {
       this.ocrRouteSelection = {
         status: "analyzing",
         options: [],
+        processedAt: new Date().toISOString(),
         message: "Analisando imagem..."
       };
       this.pendingOcrMessages = [];
@@ -3681,14 +3700,38 @@ export class BotService extends EventEmitter {
     return [
       DisconnectReason.loggedOut,
       DisconnectReason.badSession,
-      DisconnectReason.connectionReplaced,
       DisconnectReason.multideviceMismatch
     ].includes(statusCode) ||
       normalizedMessage.includes("logged out") ||
       normalizedMessage.includes("bad session") ||
-      normalizedMessage.includes("connection replaced") ||
       normalizedMessage.includes("multidevice mismatch") ||
       normalizedMessage.includes("invalid");
+  }
+
+  private isRestartRequired(statusCode?: number, errorMessage = "") {
+    const normalizedMessage = errorMessage.toLowerCase();
+    return statusCode === DisconnectReason?.restartRequired || statusCode === 515 || normalizedMessage.includes("restart required");
+  }
+
+  private isConnectionConflict(statusCode?: number, errorMessage = "") {
+    const normalizedMessage = errorMessage.toLowerCase();
+    return statusCode === DisconnectReason?.connectionReplaced || (
+      statusCode === 401 && (normalizedMessage.includes("conflict") || normalizedMessage.includes("connection replaced"))
+    );
+  }
+
+  private disposeSocket(socket: any) {
+    if (!socket) return;
+    try {
+      socket.ev?.removeAllListeners?.("connection.update");
+      socket.ev?.removeAllListeners?.("groups.update");
+      socket.ev?.removeAllListeners?.("messages.upsert");
+      socket.ev?.removeAllListeners?.("messaging-history.set");
+      socket.end?.(undefined);
+      socket.ws?.close?.();
+    } catch {
+      // O socket já pode ter sido encerrado pelo próprio WhatsApp.
+    }
   }
 
   private isQrRefAttemptLimit(statusCode?: number, errorMessage = "") {
