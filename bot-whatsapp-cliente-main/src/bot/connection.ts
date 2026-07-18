@@ -2057,7 +2057,7 @@ export class BotService extends EventEmitter {
 
       await fs.promises.writeFile(imagePath, buffer);
       const ocr = await readRouteImageOcr(imagePath, {
-        maxReadings: config.ocrManualRouteSelection ? 1 : 2
+        maxReadings: 1
       });
       if (sequence !== this.latestRouteImageSequence) {
         this.logger.info("OCR descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
@@ -2139,7 +2139,7 @@ export class BotService extends EventEmitter {
         return;
       }
 
-      this.ocrRouteSelection = {
+      const readySelection = {
         status: "ready",
         detected: { rota: detected.route, bairro: detected.bairro, gaiola: detected.code },
         source: ocr.source,
@@ -2147,36 +2147,28 @@ export class BotService extends EventEmitter {
         processedAt: new Date().toISOString(),
         options,
         message: `Imagem analisada. ${detectedRoutes.length} rota(s) encontrada(s) na foto.`
-      };
-      this.logger.success(`[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s) e ${options.length} opção(ões) disponível(is) para aprovação.`);
+      } as const;
       if (!config.ocrManualRouteSelection) {
-        if (!detected.safeForAutomatic) {
-          const disagreement = detected.evidenceCount < 2
-            ? `apenas ${detected.evidenceCount} leitura segura em ${detected.variantCount} tratamento(s)`
-            : "os tratamentos da imagem produziram leituras diferentes";
-          this.ocrRouteSelection = {
-            ...this.ocrRouteSelection,
-            message: `Envio automático bloqueado: ${disagreement} (confiança ${detected.confidence}%). Confirme a gaiola no painel.`
-          };
-          this.logger.warning(`[ROMANEIO] OCR sem consenso seguro (${detected.evidenceCount}/${detected.variantCount}, confiança ${detected.confidence}%). Envio automático bloqueado para evitar gaiola errada.`);
-          this.emitSnapshot();
-          return;
-        }
         const bestEligibleOption = options.find((option) => option.passedFilters && option.romaneioMatch !== false);
         if (!bestEligibleOption) {
           this.ocrRouteSelection = {
-            ...this.ocrRouteSelection,
+            ...readySelection,
             message: "Rotas identificadas, mas nenhuma respeita todos os filtros configurados e possui correspondência no romaneio. Envio bloqueado."
           };
           this.logger.warning("[ROMANEIO] Envio automático bloqueado: nenhuma rota identificada passou por todos os filtros configurados.");
           this.emitSnapshot();
           return;
         }
+        this.ocrRouteSelection = readySelection;
         this.applyOcrRouteSelection([bestEligibleOption], "automatic");
+        this.logger.success(`[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s); melhor opção selecionada automaticamente.`);
         const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
         if (!sentImmediately) {
           this.logger.info("[ROMANEIO] Melhor rota escolhida automaticamente e preparada para quando o grupo abrir.");
         }
+      } else {
+        this.ocrRouteSelection = readySelection;
+        this.logger.success(`[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s) e ${options.length} opção(ões) disponível(is) para aprovação manual.`);
       }
       this.emitSnapshot();
     } catch (error) {

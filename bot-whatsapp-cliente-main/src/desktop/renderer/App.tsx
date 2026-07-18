@@ -2763,23 +2763,29 @@ export default function App() {
   useEffect(() => {
     const selection = snapshot.ocrRouteSelection;
     if (selection?.status === "analyzing") {
+      setActiveTab("image");
       setSelectedOcrOptionIds([]);
       setOcrRouteDialogOpen(true);
       return;
     }
     if (selection?.status === "ready") {
+      setActiveTab("image");
       setSelectedOcrOptionIds(selection.options[0]?.id ? [selection.options[0].id] : []);
       setOcrRouteDialogOpen(true);
       return;
     }
     if (selection?.status === "confirmed") {
+      setActiveTab("image");
       setSelectedOcrOptionIds(selection.selectedOptionIds || []);
       setOcrRouteDialogOpen(true);
       return;
     }
     if (selection?.status === "idle" || selection?.status === "error") {
       setSelectedOcrOptionIds([]);
-      if (selection.status === "error") setOcrRouteDialogOpen(true);
+      if (selection.status === "error") {
+        setActiveTab("image");
+        setOcrRouteDialogOpen(true);
+      }
     }
   }, [snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
 
@@ -3125,7 +3131,7 @@ export default function App() {
   }
 
   function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean }) {
-    void runAction(() => botApi.saveGeneralSettings({
+    return runAction(() => botApi.saveGeneralSettings({
       nuclearMode: settings.nuclearMode ?? snapshot.config.nuclearMode,
       alwaysWarmMode: settings.alwaysWarmMode ?? snapshot.config.alwaysWarmMode,
       keepAliveIntervalMs: settings.keepAliveIntervalMs ?? snapshot.config.keepAliveIntervalMs,
@@ -3145,7 +3151,7 @@ export default function App() {
       confirmLabel: nextManualMode ? "Ligar escolha" : "Desligar escolha",
       tone: nextManualMode ? "manual" : "auto",
       onConfirm: async () => {
-        saveGeneralSettings({ ocrManualRouteSelection: nextManualMode });
+        await saveGeneralSettings({ ocrManualRouteSelection: nextManualMode });
         showActionToast(
           nextManualMode ? "Modo seleção manual ligado." : "Modo automático ligado.",
           nextManualMode ? "manual" : "auto"
@@ -3380,14 +3386,24 @@ export default function App() {
                 <p className="panel-label">Escolha da rota</p>
                 <h2>{snapshot.config.ocrManualRouteSelection ? "Manual" : "Automática"}</h2>
               </div>
-              <button
-                className={snapshot.config.ocrManualRouteSelection ? "button" : "button primary"}
-                disabled={busy}
-                type="button"
-                onClick={() => confirmOcrSelectionMode(!snapshot.config.ocrManualRouteSelection)}
-              >
-                {snapshot.config.ocrManualRouteSelection ? "Desligar escolha" : "Ligar escolha"}
-              </button>
+              <div className="ocr-mode-actions" role="group" aria-label="Modo de escolha da rota">
+                <button
+                  className={!snapshot.config.ocrManualRouteSelection ? "button primary" : "button"}
+                  disabled={busy || !snapshot.config.ocrManualRouteSelection}
+                  type="button"
+                  onClick={() => confirmOcrSelectionMode(false)}
+                >
+                  Automática
+                </button>
+                <button
+                  className={snapshot.config.ocrManualRouteSelection ? "button primary" : "button"}
+                  disabled={busy || snapshot.config.ocrManualRouteSelection}
+                  type="button"
+                  onClick={() => confirmOcrSelectionMode(true)}
+                >
+                  Manual
+                </button>
+              </div>
             </div>
             <p className="approval-message">
               {snapshot.config.ocrManualRouteSelection
