@@ -966,8 +966,10 @@ const server = http.createServer(async (request, response) => {
       response.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
         Connection: "keep-alive"
       });
+      response.flushHeaders?.();
       adminClients.add(response);
       response.write(`data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`);
       request.on("close", () => adminClients.delete(response));
@@ -986,8 +988,10 @@ const server = http.createServer(async (request, response) => {
       response.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
         Connection: "keep-alive"
       });
+      response.flushHeaders?.();
       const client = { email, response };
       clients.add(client);
       response.write(`data: ${JSON.stringify(getClientSnapshot(email))}\n\n`);

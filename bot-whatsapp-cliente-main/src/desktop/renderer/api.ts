@@ -355,6 +355,13 @@ function createWebApi(): DesktopApi {
       const token = getPanelToken();
       if (token && "EventSource" in window) {
         const source = new EventSource(`/events?token=${encodeURIComponent(token)}`);
+        let interval = 0;
+        const startPolling = () => {
+          if (interval) return;
+          const refresh = () => fetchJson<BotSnapshot>("/api/snapshot").then(callback).catch(() => undefined);
+          void refresh();
+          interval = window.setInterval(refresh, 1000);
+        };
         source.onmessage = (event) => {
           try {
             callback(JSON.parse(event.data) as BotSnapshot);
@@ -362,8 +369,17 @@ function createWebApi(): DesktopApi {
             // Mantém o canal aberto se vier algum pacote inválido.
           }
         };
-        source.onerror = () => undefined;
-        return () => source.close();
+        source.onerror = () => {
+          source.close();
+          startPolling();
+        };
+        // Alguns proxies mantêm o SSE aberto, mas deixam de entregar eventos.
+        // A consulta leve garante que análises OCR prontas sempre cheguem ao painel.
+        startPolling();
+        return () => {
+          source.close();
+          if (interval) window.clearInterval(interval);
+        };
       }
 
       const interval = window.setInterval(() => {

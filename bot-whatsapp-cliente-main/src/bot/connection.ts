@@ -2037,7 +2037,9 @@ export class BotService extends EventEmitter {
       );
 
       await fs.promises.writeFile(imagePath, buffer);
-      const ocr = await readRouteImageOcr(imagePath);
+      const ocr = await readRouteImageOcr(imagePath, {
+        maxReadings: config.ocrManualRouteSelection ? 1 : 2
+      });
       if (sequence !== this.latestRouteImageSequence) {
         this.logger.info("OCR descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;
@@ -2063,7 +2065,6 @@ export class BotService extends EventEmitter {
           options: [],
           source: ocr.source,
           processedAt: new Date().toISOString(),
-          imagePreviewUrl: await this.createOcrPreviewDataUrl(imagePath),
           message: "Imagem analisada, mas nenhuma rota segura foi encontrada."
         };
         this.emitSnapshot();
@@ -2075,7 +2076,6 @@ export class BotService extends EventEmitter {
         this.logger.info(`OCR recebeu rota repetida: ${detected.route} ${detected.code}. Atualizando opções no painel.`);
       }
 
-      const imagePreviewUrl = await this.createOcrPreviewDataUrl(imagePath);
       this.lastOcrDispatchKey = dispatchKey;
       this.lastOcrInsight = {
         analysisId: `${this.clientEmail}:${messageId}`,
@@ -2087,8 +2087,7 @@ export class BotService extends EventEmitter {
         bairro: detected.bairro,
         code: detected.code,
         confidence: detected.confidence,
-        processedAt: new Date().toISOString(),
-        imagePreviewUrl
+        processedAt: new Date().toISOString()
       };
       this.emit("image-analysis", {
         id: `${this.clientEmail}:${messageId}`,
@@ -2113,7 +2112,6 @@ export class BotService extends EventEmitter {
           source: ocr.source,
           line: detected.line,
           processedAt: new Date().toISOString(),
-          imagePreviewUrl,
           options: [],
           message: "Imagem analisada, mas não encontrei opções no romaneio. Confira se o romaneio correto foi confirmado."
         };
@@ -2128,7 +2126,6 @@ export class BotService extends EventEmitter {
         source: ocr.source,
         line: detected.line,
         processedAt: new Date().toISOString(),
-        imagePreviewUrl,
         options,
         message: `Imagem analisada. ${detectedRoutes.length} rota(s) encontrada(s) na foto.`
       };
@@ -3843,20 +3840,6 @@ export class BotService extends EventEmitter {
   private setStatus(status: BotStatus) {
     this.status = status;
     this.emitSnapshot();
-  }
-
-  private async createOcrPreviewDataUrl(imagePath: string) {
-    try {
-      const { default: sharp } = await import("sharp");
-      const buffer = await sharp(imagePath)
-        .rotate()
-        .resize({ width: 420, withoutEnlargement: true })
-        .webp({ quality: 58 })
-        .toBuffer();
-      return `data:image/webp;base64,${buffer.toString("base64")}`;
-    } catch {
-      return undefined;
-    }
   }
 
   private addStatusEvent(type: BotStatusEvent["type"], message: string) {

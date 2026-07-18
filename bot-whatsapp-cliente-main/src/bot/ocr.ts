@@ -59,8 +59,9 @@ export function readImageText(imagePath: string) {
   return readRouteImageOcr(imagePath).then((result) => result.text);
 }
 
-export async function readRouteImageOcr(imagePath: string) {
+export async function readRouteImageOcr(imagePath: string, options: { maxReadings?: number } = {}) {
   const variants = await createPreprocessedImages(imagePath);
+  const maxReadings = Math.max(1, Math.min(variants.length, options.maxReadings || variants.length));
 
   try {
     const readings: RouteOcrResult[] = [];
@@ -68,6 +69,7 @@ export async function readRouteImageOcr(imagePath: string) {
     for (const variant of variants) {
       try {
         readings.push(await readSingleRouteImageOcr(variant.path, variant.label));
+        if (readings.length >= maxReadings) break;
       } catch (error) {
         errors.push(error instanceof Error ? error.message : String(error));
       }

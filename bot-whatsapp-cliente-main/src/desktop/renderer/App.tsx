@@ -2748,6 +2748,11 @@ export default function App() {
 
   useEffect(() => {
     const selection = snapshot.ocrRouteSelection;
+    if (selection?.status === "analyzing") {
+      setSelectedOcrOptionIds([]);
+      setOcrRouteDialogOpen(true);
+      return;
+    }
     if (selection?.status === "ready") {
       setSelectedOcrOptionIds(selection.options[0]?.id ? [selection.options[0].id] : []);
       setOcrRouteDialogOpen(true);
@@ -2758,7 +2763,7 @@ export default function App() {
       setOcrRouteDialogOpen(true);
       return;
     }
-    if (selection?.status === "idle" || selection?.status === "analyzing" || selection?.status === "error") {
+    if (selection?.status === "idle" || selection?.status === "error") {
       setSelectedOcrOptionIds([]);
       if (selection.status === "error") setOcrRouteDialogOpen(true);
     }
@@ -3349,12 +3354,12 @@ export default function App() {
               <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
             </div>
           </section>
-          <MessagePreviewStrip
+          {false ? <MessagePreviewStrip
             title="Ranking de rotas"
             group={groupLabel}
             messages={["Ranking automático pelo romaneio", "Sem filtro de bairros preferidos"]}
             onOpen={() => setGroupEditor("image")}
-          />
+          /> : null}
           <section className={snapshot.config.ocrManualRouteSelection ? "quick-panel ocr-mode-panel tone-manual" : "quick-panel ocr-mode-panel tone-auto"}>
             <div className="panel-heading">
               <div>
