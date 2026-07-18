@@ -191,6 +191,11 @@ test("associa a gaiola genérica ao bairro configurado pelo texto completo da li
     configured,
     []
   ), configured[0]);
+  assert.deepEqual(findConfiguredRouteInOcrLine(
+    "J-3 AT202607177D92H 102 Cmps Goytcazes Parque Presidente Vargas",
+    configured,
+    []
+  ), configured[1]);
   assert.equal(findConfiguredRouteInOcrLine(
     "J-20 AT202607177D1BI 106 Campos dos Goytacazes Parque Rosário",
     configured,
