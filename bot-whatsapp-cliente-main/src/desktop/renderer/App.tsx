@@ -2762,6 +2762,12 @@ export default function App() {
 
   useEffect(() => {
     const selection = snapshot.ocrRouteSelection;
+    const imageBotActive = snapshot.config.targetDispatchMode === "ocr";
+    if (!imageBotActive) {
+      setSelectedOcrOptionIds([]);
+      setOcrRouteDialogOpen(false);
+      return;
+    }
     if (selection?.status === "analyzing") {
       setActiveTab("image");
       setSelectedOcrOptionIds([]);
@@ -2787,7 +2793,7 @@ export default function App() {
         setOcrRouteDialogOpen(true);
       }
     }
-  }, [snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
+  }, [snapshot.config.targetDispatchMode, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
 
   const groupLabel = useMemo(() => {
     return snapshot.config.grupoAlvoNome || "Nenhum grupo alvo";
@@ -3425,7 +3431,7 @@ export default function App() {
             monitoringMode={snapshot.monitoringMode}
             groupState={snapshot.groupState}
           />
-          {ocrRouteDialogOpen || snapshot.ocrRouteSelection?.status === "analyzing" ? (
+          {snapshot.config.targetDispatchMode === "ocr" && (ocrRouteDialogOpen || snapshot.ocrRouteSelection?.status === "analyzing") ? (
             <OcrRouteApprovalPanel
               selection={snapshot.ocrRouteSelection}
               selectedIds={selectedOcrOptionIds}
