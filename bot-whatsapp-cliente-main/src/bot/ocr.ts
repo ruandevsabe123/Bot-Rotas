@@ -259,7 +259,52 @@ export function findAllConfiguredRouteCodesFromOcr(
     const current = unique.get(key);
     if (!current || detected.confidence > current.confidence) unique.set(key, detected);
   }
+  for (const detected of findGenericGaiolaCodesFromOcr(ocr)) {
+    const alreadyDetected = [...unique.values()].some((current) => normalizeOcrText(current.code) === normalizeOcrText(detected.code));
+    if (!alreadyDetected) unique.set(`gaiola::${normalizeOcrText(detected.code)}`, detected);
+  }
   return [...unique.values()];
+}
+
+function findGenericGaiolaCodesFromOcr(ocr: RouteOcrResult) {
+  const variants = ocr.variants?.length ? ocr.variants : [ocr];
+  const byCode = new Map<string, DetectedRouteCode[]>();
+
+  for (const variant of variants) {
+    const sourceLines = variant.lines.length
+      ? variant.lines
+      : variant.text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map(createPlainOcrLine);
+    const lines = mergeLikelySplitRows(sourceLines);
+    const layout = getTableLayout(lines);
+    for (const line of lines) {
+      if (line.confidence < 35) continue;
+      const columns = splitLineIntoRouteColumns(line, layout);
+      const code = extractSafeGaiolaCode(line, columns.code) || extractSafeGaiolaCode(line) || extractMisreadLeadingICode(line.text);
+      if (!code) continue;
+      const detected: DetectedRouteCode = {
+        route: "",
+        code,
+        line: line.text,
+        confidence: getGaiolaConfidence(line, code),
+        evidenceCount: 1,
+        variantCount: variants.length,
+        safeForAutomatic: false
+      };
+      byCode.set(code, [...(byCode.get(code) || []), detected]);
+    }
+  }
+
+  return [...byCode.values()].map((matches) => {
+    const best = [...matches].sort((left, right) => right.confidence - left.confidence)[0];
+    const evidence = matches.filter((item) => item.confidence >= 45);
+    return {
+      ...best,
+      confidence: evidence.length ? Math.round(Math.min(...evidence.map((item) => item.confidence))) : best.confidence,
+      evidenceCount: evidence.length,
+      variantCount: variants.length,
+      safeForAutomatic: evidence.length >= 2
+    };
+  });
 }
 
 export function selectConsensusDetection(detections: DetectedRouteCode[], variantCount: number) {
@@ -382,7 +427,7 @@ function findConfiguredRouteCodeInLines(lines: OcrLine[], monitoredRoutes: Monit
 }
 
 function findGaiolaForRouteLine(routeLine: OcrLine, lines: OcrLine[], codeColumn: string) {
-  const directCode = extractSafeGaiolaCode(routeLine, codeColumn) || extractSafeGaiolaCode(routeLine);
+  const directCode = extractSafeGaiolaCode(routeLine, codeColumn) || extractSafeGaiolaCode(routeLine) || extractMisreadLeadingICode(routeLine.text);
   if (directCode) {
     return {
       code: directCode,
@@ -403,7 +448,7 @@ function findGaiolaForRouteLine(routeLine: OcrLine, lines: OcrLine[], codeColumn
     return candidate.left < routeLine.left || candidate.left < routeLine.left + routeLine.width * 0.25;
   });
   const candidates = nearby
-    .map((candidate) => ({ candidate, code: extractSafeGaiolaCode(candidate) }))
+    .map((candidate) => ({ candidate, code: extractSafeGaiolaCode(candidate) || extractMisreadLeadingICode(candidate.text) }))
     .filter((item) => item.code);
   const uniqueCodes = [...new Set(candidates.map((item) => item.code))];
   if (uniqueCodes.length !== 1) return undefined;
@@ -658,6 +703,11 @@ function collectGaiolaCodes(text: string) {
   return matches
     .map((match) => `${match[1].toUpperCase()}-${match[2]}`)
     .filter((code) => !/^AT-\d/i.test(code));
+}
+
+function extractMisreadLeadingICode(text: string) {
+  const match = normalizeOcrToken(text).match(/^\s*[|1il]\s*-\s*(\d{1,2})\b/i);
+  return match ? `I-${match[1]}` : "";
 }
 
 function getGaiolaConfidence(line: OcrLine, code: string) {
