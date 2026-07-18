@@ -3809,6 +3809,12 @@ h2 {
     linear-gradient(180deg, rgba(18, 21, 24, 0.98), rgba(8, 10, 12, 0.98));
 }
 
+.ocr-mode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .adminx-shell {
   min-height: 100vh;
   display: grid;
