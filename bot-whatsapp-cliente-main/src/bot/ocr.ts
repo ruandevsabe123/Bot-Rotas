@@ -260,7 +260,7 @@ export function findAllConfiguredRouteCodesFromOcr(
     if (!current || detected.confidence > current.confidence) unique.set(key, detected);
   }
   if (!configuredDetailed.length && !legacyRoutes.some((item) => item.trim())) {
-    for (const detected of findGenericGaiolaCodesFromOcr(ocr)) {
+    for (const detected of findAllGaiolaCodesFromOcr(ocr)) {
       const alreadyDetected = [...unique.values()].some((current) => normalizeOcrText(current.code) === normalizeOcrText(detected.code));
       if (!alreadyDetected) unique.set(`gaiola::${normalizeOcrText(detected.code)}`, detected);
     }
@@ -268,7 +268,7 @@ export function findAllConfiguredRouteCodesFromOcr(
   return [...unique.values()];
 }
 
-function findGenericGaiolaCodesFromOcr(ocr: RouteOcrResult) {
+export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
   const variants = ocr.variants?.length ? ocr.variants : [ocr];
   const byCode = new Map<string, DetectedRouteCode[]>();
 
