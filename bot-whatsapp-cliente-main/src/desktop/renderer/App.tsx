@@ -2614,6 +2614,18 @@ function OcrRouteApprovalPanel({
           </button>
         </div>
         {selection.message ? <p className="approval-message">{selection.message}</p> : null}
+        {selection.preferredCity && selection.preferredCityFound === false ? (
+          <div className="ocr-city-alert" role="status">
+            <strong>Nenhuma rota de {selection.preferredCity} foi encontrada</strong>
+            <span>As demais rotas identificadas na imagem estão listadas abaixo.</span>
+          </div>
+        ) : null}
+        {selection.preferredCity && selection.preferredCityFound ? (
+          <div className="ocr-city-priority" role="status">
+            <strong>{selection.preferredCity} priorizada</strong>
+            <span>As rotas da cidade aparecem primeiro no ranking.</span>
+          </div>
+        ) : null}
         <div className="ocr-option-grid">
           {selection.options.map((option) => {
             const selectedOrder = selectedIds.indexOf(option.id);
@@ -2629,7 +2641,7 @@ function OcrRouteApprovalPanel({
                 onClick={() => onToggle(option)}
               >
                 <strong>#{option.rank} {option.rota} / {option.gaiola}</strong>
-                <span>{option.bairro}{option.bairroPercentual !== undefined ? ` · ${option.bairroPercentual.toFixed(1)}%` : ""}</span>
+                <span>{option.cidade || "Cidade não identificada"} · {option.bairro}{option.bairroPercentual !== undefined ? ` · ${option.bairroPercentual.toFixed(1)}%` : ""}</span>
                 {option.observation ? <small>{option.observation}</small> : null}
                 {sendOrder ? <b className="send-order-badge">{sendOrder}ª mensagem</b> : null}
                 {option.romaneioMatch !== false ? (

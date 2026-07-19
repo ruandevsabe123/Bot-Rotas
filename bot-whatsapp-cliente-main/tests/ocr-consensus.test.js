@@ -266,3 +266,41 @@ test("identifica as 15 gaiolas da imagem sem bairros preferidos", () => {
   assert.equal(result.length, 15);
   assert.equal(extractNeighborhoodAfterCity(rawLines[13], "Campos dos Goytacazes"), "Centro");
 });
+
+test("mantém as 21 gaiolas da tabela mesmo quando nenhum destino é Campos", () => {
+  const rawLines = [
+    "B-1 AT202607197FK5G 94 São Francisco de Itabapoana Centro",
+    "B-13 AT202607197FLJYP 108 São Fidélis São José",
+    "B-15 AT202607197FUJ9 108 São Fidélis Ipuca",
+    "B-17 AT202607197FUT9 88 Italva São Caetano",
+    "B-18 AT202607197FK03 88 Italva Parque Industrial",
+    "B-19 AT202607197FUDW 87 Italva Centro",
+    "B-2 AT202607197FUJ8 94 São Francisco de Itabapoana Centro",
+    "B-21 AT202607197FV9D 112 Cardoso Moreira Praça Tiradentes",
+    "B-22 AT202607197FKFV 112 Cardoso Moreira Cachoeiro",
+    "B-23 AT202607197G2YX 112 Cardoso Moreira Centro",
+    "B-24 AT202607197G328 85 São João da Barra Centro",
+    "B-27 AT202607197FK0Z 97 São João da Barra Quixaba",
+    "B-3 AT202607197FU8X 95 São Francisco de Itabapoana Floresta",
+    "B-30 AT202607197FKA7 85 São João da Barra Barcelos",
+    "B-32 AT202607197FK34 100 São João da Barra Grussaí",
+    "B-4 AT202607197FV0J 102 São Francisco de Itabapoana Bom Jardim",
+    "B-7 AT202607197FUL3 101 São Francisco de Itabapoana Brejo Grande",
+    "C-2 AT202607197FUGW 100 São João da Barra Cajueiro",
+    "C-3 AT202607197FK7E 94 São João da Barra Atafona",
+    "C-6 AT202607197FV1H 116 Quissamã Santa Catarina",
+    "C-8 AT202607197FUM0 116 Quissamã Caxias"
+  ];
+  const reading = {
+    text: rawLines.join("\n"),
+    source: "foto-19-07",
+    lines: rawLines.map((line, index) => ocrLine(line, 10, 40 + index * 35))
+  };
+  const result = findAllGaiolaCodesFromOcr({ ...reading, variants: [reading, reading] });
+
+  assert.equal(result.length, 21);
+  assert.deepEqual(result.map((item) => item.code), [
+    "B-1", "B-13", "B-15", "B-17", "B-18", "B-19", "B-2", "B-21", "B-22", "B-23", "B-24",
+    "B-27", "B-3", "B-30", "B-32", "B-4", "B-7", "C-2", "C-3", "C-6", "C-8"
+  ]);
+});

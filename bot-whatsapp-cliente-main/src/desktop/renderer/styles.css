@@ -200,6 +200,35 @@
   font-weight: 800;
 }
 
+.ocr-city-alert,
+.ocr-city-priority {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(255, 107, 95, 0.34);
+  border-radius: 8px;
+  background: rgba(255, 107, 95, 0.09);
+  padding: 12px;
+}
+
+.ocr-city-priority {
+  border-color: rgba(53, 208, 127, 0.34);
+  background: rgba(53, 208, 127, 0.09);
+}
+
+.ocr-city-alert strong {
+  color: #ffb8b2;
+}
+
+.ocr-city-priority strong {
+  color: #79e6aa;
+}
+
+.ocr-city-alert span,
+.ocr-city-priority span {
+  color: #cbd5df;
+  font-size: 0.88rem;
+}
+
 .ocr-option-grid {
   display: grid;
   gap: 10px;

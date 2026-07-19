@@ -13,6 +13,7 @@ import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
 import { RomaneioStore } from "../services/romaneio/romaneioStore";
+import { isPreferredImageCity, PREFERRED_IMAGE_CITY, rankImageRouteOptions } from "../services/romaneio/rankImageRoutes";
 import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, OcrRouteOption, OcrRouteSelectionState, RomaneioCandidate, RomaneioLocateResult, RomaneioRankedRoute, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
@@ -74,6 +75,7 @@ type BotServiceOptions = {
 };
 
 type MonitoringMode = "target" | "test";
+type OpeningSignal = NonNullable<RouteDispatchTimeline["openingSignal"]>;
 
 const MAX_RECONNECT_ATTEMPTS = 0;
 const RECONNECT_DELAY_MS = 3500;
@@ -171,6 +173,8 @@ export class BotService extends EventEmitter {
   private preparedRelayMessages: any[] = []; // esse aqui
   private preparedRelaySignature = "";
   private preparedRelayBuiltAt = 0;
+  private preparedNuclearMode = false;
+  private preparedTargetDispatchMode: BotConfig["targetDispatchMode"] = "manual";
   private pendingOcrMessages: string[] = [];
   private lastOcrDispatchKey = "";
   private lastOcrInsight?: RouteOcrInsight;
@@ -359,7 +363,7 @@ export class BotService extends EventEmitter {
     this.maybeAlertNotAcceptable(event.notAcceptableCount);
   }
 
-  private createDispatchTimeline(eventDetectedAt: number, sendStartedAt: number, mode: RouteDispatchTimeline["mode"]): RouteDispatchTimeline {
+  private createDispatchTimeline(eventDetectedAt: number, sendStartedAt: number, mode: RouteDispatchTimeline["mode"], openingSignal?: OpeningSignal): RouteDispatchTimeline {
     return {
       eventDetectedAt: new Date(eventDetectedAt).toISOString(),
       sendStartedAt: new Date(sendStartedAt).toISOString(),
@@ -368,13 +372,15 @@ export class BotService extends EventEmitter {
       retryUsed: false,
       notAcceptableCount: 0,
       mode,
+      openingSignal,
       events: [
         {
           id: `event-${eventDetectedAt}`,
           label: "Evento detectado",
           at: new Date(eventDetectedAt).toISOString(),
           offsetMs: 0,
-          level: "info"
+          level: "info",
+          detail: openingSignal ? this.openingSignalLabel(openingSignal) : undefined
         },
         {
           id: `start-${sendStartedAt}`,
@@ -385,6 +391,15 @@ export class BotService extends EventEmitter {
         }
       ]
     };
+  }
+
+  private openingSignalLabel(signal: OpeningSignal) {
+    if (signal === "group_update") return "Evento oficial do grupo";
+    if (signal === "opening_message") return "Mensagem de abertura";
+    if (signal === "already_open") return "Grupo já estava aberto ao armar";
+    if (signal === "image_ready") return "Imagem pronta com grupo aberto";
+    if (signal === "manual") return "Comando manual do painel";
+    return "Simulação";
   }
 
   private addTimelineEvent(
@@ -407,7 +422,7 @@ export class BotService extends EventEmitter {
 
   private enqueueDispatch(cycleId: number, jid: string, mensagens: string[], trigger: RouteDispatch["trigger"]) {
     const item = this.dispatchQueueStore.enqueue({
-      id: `${this.clientEmail || "local"}-${cycleId}`,
+      id: `${this.clientEmail || "local"}-${Date.now()}-${cycleId}`,
       cycleId,
       clientEmail: this.clientEmail,
       jid,
@@ -600,6 +615,7 @@ export class BotService extends EventEmitter {
     this.startHealthCheck();
     this.startWarmKeepAlive();
     this.logger.success(targetDispatchMode === "ocr" ? "✅ BOT IMAGEM ARMADO. Aguardando foto da rota..." : useNuclearMode ? "✅ Bot NUCLEAR ARMADO. Aguardando abertura do grupo..." : "✅ Bot MANUAL ARMADO. Aguardando abertura do grupo...");
+    this.dispatchIfGroupAlreadyOpen("armado");
     this.emitSnapshot();
     return true;
   }
@@ -703,7 +719,7 @@ export class BotService extends EventEmitter {
     this.groupState = "open";
     this.grupoJaFechouDepoisDoInicio = false;
     this.logger.warning("Simulação de abertura acionada pelo painel.");
-    this.enviarMensagensRapidas(cycleId, "simulation", Date.now());
+    this.enviarMensagensRapidas(cycleId, "simulation", Date.now(), "simulation");
     this.logger.info("⚡ Abertura simulada. Disparo acionado.");
     this.emitSnapshot();
     return true;
@@ -752,7 +768,7 @@ export class BotService extends EventEmitter {
 
     const cycleId = ++this.sendCycleId;
     this.grupoJaFechouDepoisDoInicio = false;
-    this.enviarMensagensRapidas(cycleId, "manual", Date.now());
+    this.enviarMensagensRapidas(cycleId, "manual", Date.now(), "manual");
     this.logger.info("Disparo manual acionado pelo painel.");
     this.emitSnapshot();
     return true;
@@ -1634,6 +1650,7 @@ export class BotService extends EventEmitter {
           await this.captureInitialGroupState();
           this.startHealthCheck();
           this.logger.success("Monitoramento restaurado após reconexão.");
+          this.dispatchIfGroupAlreadyOpen("reconexão");
         }
         this.logger.info("Aguardando abertura do grupo.");
       } catch (error) {
@@ -1855,6 +1872,22 @@ export class BotService extends EventEmitter {
     }
   }
 
+  private dispatchIfGroupAlreadyOpen(reason: "armado" | "reconexão") {
+    if (!this.monitoringEnabled || this.monitoringMode !== "target" || this.groupState !== "open") return false;
+    if (this.preparedTargetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
+      this.logger.info(`Grupo já está aberto após ${reason}. O bot imagem enviará assim que uma rota segura estiver pronta.`);
+      return false;
+    }
+
+    const cycleId = ++this.sendCycleId;
+    const dispatched = this.enviarMensagensRapidas(cycleId, "automatic", Date.now(), "already_open");
+    if (dispatched) {
+      this.grupoJaFechouDepoisDoInicio = false;
+      this.logger.success(`Grupo já estava aberto após ${reason}: disparo imediato acionado.`);
+    }
+    return dispatched;
+  }
+
   private scheduleReconnect(forceNewQr: boolean) {
     this.clearReconnectTimer();
 
@@ -1893,7 +1926,10 @@ export class BotService extends EventEmitter {
     if (connectionId !== this.activeConnectionId) return;
     if (!this.monitoringEnabled) return;
 
-    const activeGroup = this.getActiveMonitoringGroup();
+    const activeGroup = {
+      jid: this.preparedTargetJid,
+      label: this.monitoringMode === "test" ? "grupo de teste" : "grupo alvo"
+    };
     if (!activeGroup.jid) return;
 
     for (const update of updates) {
@@ -1918,15 +1954,14 @@ export class BotService extends EventEmitter {
           return;
         }
 
-        const config = this.configStore.load();
-        if (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
+        if (this.monitoringMode === "target" && this.preparedTargetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
           this.logger.info("Grupo abriu, mas o bot imagem ainda não tem rota segura lida da foto. Nenhuma mensagem enviada.");
           return;
         }
 
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
-        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now());
+        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now(), "group_update");
         this.logger.info(`⚡ ${activeGroup.label} ABRIU! Disparo acionado.`);
         return;
       }
@@ -1939,20 +1974,21 @@ export class BotService extends EventEmitter {
       return;
     }
 
-    const activeGroup = this.getActiveMonitoringGroup();
+    const activeGroup = {
+      jid: this.preparedTargetJid,
+      label: this.monitoringMode === "test" ? "grupo de teste" : "grupo alvo"
+    };
     if (!activeGroup.jid) {
       this.scheduleReactionProcessing(messages);
       return;
     }
-    const config = this.configStore.load();
-
     for (const msg of messages || []) {
       if (!msg?.message || !msg.key?.remoteJid) continue;
       if (msg.key.remoteJid !== activeGroup.jid) continue;
 
       this.handleDeletedMessageNotice(msg);
 
-      if (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && msg.message.imageMessage) {
+      if (this.monitoringMode === "target" && this.preparedTargetDispatchMode === "ocr" && msg.message.imageMessage) {
         this.logger.info("Imagem recebida no grupo alvo. Iniciando análise da IA e cruzamento com o romaneio.");
         this.scheduleRouteImageProcessing(msg, activeGroup.jid);
       }
@@ -1979,7 +2015,7 @@ export class BotService extends EventEmitter {
           return;
         }
 
-        if (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
+        if (this.monitoringMode === "target" && this.preparedTargetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
           this.logger.info("Palavra de abertura detectada, mas o bot imagem ainda não tem rota segura lida da foto. Nenhuma mensagem enviada.");
           this.scheduleReactionProcessing(messages);
           return;
@@ -1987,7 +2023,7 @@ export class BotService extends EventEmitter {
 
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
-        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now());
+        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now(), "opening_message");
         this.logger.info("Palavra de abertura detectada. Rajada instantânea acionada.");
         this.scheduleReactionProcessing(messages);
         return;
@@ -2078,9 +2114,7 @@ export class BotService extends EventEmitter {
       );
 
       await fs.promises.writeFile(imagePath, buffer);
-      const ocr = await readRouteImageOcr(imagePath, {
-        maxReadings: 1
-      });
+      const ocr = await readRouteImageOcr(imagePath, { maxReadings: 3 });
       if (sequence !== this.latestRouteImageSequence) {
         this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;
@@ -2142,12 +2176,14 @@ export class BotService extends EventEmitter {
         ...analysisContext()
       });
 
-      const options = detectedRoutes
+      const unrankedOptions = detectedRoutes
         .flatMap((route) => this.buildOcrRouteOptions(route))
         .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index)
-        .sort((left, right) => this.compareOcrRouteOptions(left, right))
-        .slice(0, 50)
-        .map((option, index) => ({ ...option, rank: index + 1 }));
+        .slice(0, 100);
+      const options = rankImageRouteOptions(
+        unrankedOptions,
+        this.romaneioStore?.getSettings().prioridade || "equilibrio_geral"
+      );
       if (!options.length) {
         this.ocrRouteSelection = {
           status: "error",
@@ -2170,7 +2206,10 @@ export class BotService extends EventEmitter {
         line: detected.line,
         processedAt: new Date().toISOString(),
         options,
-        message: `Imagem analisada. ${detectedRoutes.length} rota(s) encontrada(s) na foto.`
+        detectedRouteCount: detectedRoutes.length,
+        preferredCity: PREFERRED_IMAGE_CITY,
+        preferredCityFound: detectedRoutes.some((route) => isPreferredImageCity(route.line)) || options.some((option) => isPreferredImageCity(option.cidade)),
+        message: `Imagem analisada. ${detectedRoutes.length} rota(s) encontrada(s) na foto e listada(s) pelo romaneio.`
       } as const;
       if (!config.ocrManualRouteSelection) {
         const bestEligibleOption = options.find((option) => option.passedFilters && option.romaneioMatch !== false);
@@ -2264,7 +2303,7 @@ export class BotService extends EventEmitter {
     if (!isOpen) return false;
     const cycleId = ++this.sendCycleId;
     this.grupoJaFechouDepoisDoInicio = false;
-    this.enviarMensagensRapidas(cycleId, trigger, Date.now());
+    this.enviarMensagensRapidas(cycleId, trigger, Date.now(), "image_ready");
     this.logger.info(trigger === "automatic"
       ? "[ROMANEIO] Grupo já estava aberto: melhor rota enviada imediatamente após a imagem."
       : "[ROMANEIO] Grupo já estava aberto: rota confirmada enviada imediatamente.");
@@ -2384,17 +2423,6 @@ export class BotService extends EventEmitter {
         ? "Bairro lido na imagem; a gaiola existe no romaneio, mas o bairro não consta na composição dessa rota."
         : undefined
     };
-  }
-
-  private compareOcrRouteOptions(left: OcrRouteOption, right: OcrRouteOption) {
-    if (left.passedFilters !== right.passedFilters) return left.passedFilters ? -1 : 1;
-    if (left.romaneioMatch !== right.romaneioMatch) return left.romaneioMatch === false ? 1 : -1;
-    const priority = this.romaneioStore?.getSettings().prioridade;
-    if (priority === "menor_distancia") return left.distanciaKm - right.distanciaKm;
-    if (priority === "menos_paradas") return left.paradas - right.paradas;
-    if (priority === "menos_pacotes") return left.pacotes - right.pacotes;
-    if (priority === "maior_concentracao_bairro") return (right.bairroPercentual || 0) - (left.bairroPercentual || 0);
-    return (left.distanciaKm + left.paradas + left.pacotes) - (right.distanciaKm + right.paradas + right.pacotes);
   }
 
   private resetOcrRouteSelection() {
@@ -2735,24 +2763,29 @@ export class BotService extends EventEmitter {
     return aTail.length >= 10 && bTail.length >= 10 && aTail === bTail;
   }
 
-  private enviarMensagensRapidas(cycleId: number, trigger: RouteDispatch["trigger"] = this.monitoringMode === "test" ? "warmup" : "automatic", eventDetectedAt = Date.now()) {
+  private enviarMensagensRapidas(
+    cycleId: number,
+    trigger: RouteDispatch["trigger"] = this.monitoringMode === "test" ? "warmup" : "automatic",
+    eventDetectedAt = Date.now(),
+    openingSignal?: OpeningSignal
+  ) {
     if (!this.preparedTargetJid || !this.preparedMessages.length) {
       this.prepareSendPlan();
     }
 
     if (!this.monitoringEnabled && trigger === "automatic") {
       this.logger.warning("Abertura ignorada: o bot está parado no painel do cliente.");
-      return;
+      return false;
     }
 
     if (!this.preparedTargetJid) {
       this.logger.error("Grupo alvo ainda não foi configurado.");
-      return;
+      return false;
     }
 
     if (!this.preparedMessages.length) {
       this.logger.error("Nenhuma mensagem está pronta.");
-      return;
+      return false;
     }
 
     let mensagens = [...this.preparedMessages];
@@ -2765,16 +2798,23 @@ export class BotService extends EventEmitter {
     }
 
     if (this.activeSendCycle) {
-      this.logger.warning("Já existe um disparo em andamento. Mantendo apenas o ciclo mais novo.");
+      this.logger.warning("Já existe um disparo em andamento. O novo gatilho foi ignorado para evitar duplicidade.");
+      return false;
     }
 
-    const config = this.configStore.load();
+    const requiresRecentDuplicateGuard = openingSignal === "already_open" || (openingSignal === "image_ready" && trigger === "automatic");
+    if (requiresRecentDuplicateGuard && this.dispatchQueueStore.hasRecentEquivalent(this.preparedTargetJid, mensagens)) {
+      this.logger.warning("Disparo imediato bloqueado: esta mesma rota já foi enviada recentemente e o grupo ainda não passou por um novo ciclo de fechamento.");
+      return false;
+    }
+
     this.ensurePreparedRelayMessages(this.preparedTargetJid, mensagens);
     const sendStartedAt = Date.now();
     const timeline = this.createDispatchTimeline(
       eventDetectedAt,
       sendStartedAt,
-      this.monitoringMode === "target" ? "race" : "normal"
+      this.monitoringMode === "target" ? "race" : "normal",
+      openingSignal
     );
     this.performanceMetrics.activeQueue = mensagens.length;
     this.criticalDispatchInProgress = true;
@@ -2784,7 +2824,7 @@ export class BotService extends EventEmitter {
     const sendCycle =
       this.monitoringMode === "test"
         ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger)
-        : config.nuclearMode
+        : this.preparedNuclearMode
         ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline)
         : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline);
     this.enqueueDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
@@ -2799,8 +2839,9 @@ export class BotService extends EventEmitter {
     });
 
     this.logger.info(
-      `${this.monitoringMode === "test" ? "Aquecimento real do teste" : config.nuclearMode ? "Modo nuclear máximo" : "Modo instantâneo agressivo"}: ${mensagens.length} mensagens preparadas: ${mensagens.join(" | ")}`
+      `${this.monitoringMode === "test" ? "Aquecimento real do teste" : this.preparedNuclearMode ? "Modo nuclear máximo" : "Modo instantâneo agressivo"}: ${mensagens.length} mensagens preparadas: ${mensagens.join(" | ")}`
     );
+    return true;
   }
 
   private ensurePreparedRelayMessages(jid: string, mensagens: string[]) {
@@ -3288,8 +3329,8 @@ export class BotService extends EventEmitter {
     });
   }
 
-  private montarMensagens() {
-    const { nomeEnvio, codigosMensagensAlvo, codigosMensagensTeste } = this.configStore.load();
+  private montarMensagens(config = this.configStore.load()) {
+    const { nomeEnvio, codigosMensagensAlvo, codigosMensagensTeste } = config;
     this.mensagensProntasAlvo = (codigosMensagensAlvo || [])
       .map((codigo) => `${nomeEnvio} ${codigo}`)
       .filter(Boolean);
@@ -3298,14 +3339,16 @@ export class BotService extends EventEmitter {
       .filter(Boolean);
   }
 
-  private syncMessagesFromConfig() {
+  private syncMessagesFromConfig(config = this.configStore.load()) {
     // reload messages from config for both alvo and teste
-    this.montarMensagens();
+    this.montarMensagens(config);
   }
 
   private prepareSendPlan() {
     const config = this.configStore.load();
-    this.syncMessagesFromConfig();
+    this.preparedNuclearMode = Boolean(config.nuclearMode);
+    this.preparedTargetDispatchMode = config.targetDispatchMode;
+    this.syncMessagesFromConfig(config);
     const activeGroup = this.getActiveMonitoringGroup(config);
 
     this.preparedTargetJid = activeGroup.jid;

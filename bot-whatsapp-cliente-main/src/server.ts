@@ -225,6 +225,7 @@ function getBotForEmail(email: string) {
   const userAuthDir = path.join(userDir, "auth_info");
   const userConfigPath = path.join(userDir, "config.json");
   const userRouteStorePath = path.join(userDir, "route_history.json");
+  const userDispatchQueuePath = path.join(userDir, "dispatch_queue.json");
   const userLogStorePath = path.join(userDir, "bot_logs.json");
   const userTelemetryPath = path.join(userDir, "dispatch_telemetry.json");
   const userRomaneioDir = path.join(userDir, "romaneio");
@@ -246,6 +247,7 @@ function getBotForEmail(email: string) {
     authDir: userAuthDir,
     configPath: userConfigPath,
     routeStorePath: userRouteStorePath,
+    dispatchQueuePath: userDispatchQueuePath,
     telemetryPath: userTelemetryPath,
     logStorePath: userLogStorePath,
     romaneioDir: userRomaneioDir,

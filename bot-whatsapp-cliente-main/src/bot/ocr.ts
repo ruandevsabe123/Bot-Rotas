@@ -181,7 +181,8 @@ async function createPreprocessedImages(imagePath: string) {
 
     return [
       { path: enhancedPath, label: "contraste-e-nitidez", generated: true },
-      { path: thresholdPath, label: "preto-e-branco", generated: true }
+      { path: thresholdPath, label: "preto-e-branco", generated: true },
+      { path: imagePath, label: "original", generated: false }
     ];
   } catch {
     for (const generatedPath of generatedPaths) {

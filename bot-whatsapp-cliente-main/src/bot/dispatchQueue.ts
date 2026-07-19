@@ -46,6 +46,15 @@ export class DispatchQueueStore {
     return this.getItems().filter((item) => item.status === "queued" || item.status === "sending");
   }
 
+  hasRecentEquivalent(jid: string, messages: string[], maxAgeMs = 30 * 60 * 1000, now = Date.now()) {
+    const signature = this.signature(jid, messages);
+    return this.getItems().some((item) => {
+      if (!["queued", "sending", "sent", "partial"].includes(item.status)) return false;
+      if (now - new Date(item.createdAt).getTime() > maxAgeMs) return false;
+      return this.signature(item.jid, item.messages) === signature;
+    });
+  }
+
   enqueue(input: Omit<DispatchQueueItem, "id" | "status" | "attempts" | "confirmedCount" | "totalCount" | "createdAt" | "updatedAt"> & { id?: string }) {
     const now = new Date().toISOString();
     const existing = input.id ? this.getItems().find((item) => item.id === input.id) : undefined;
@@ -119,6 +128,10 @@ export class DispatchQueueStore {
   private getItems() {
     if (!this.items) this.items = this.load();
     return this.items;
+  }
+
+  private signature(jid: string, messages: string[]) {
+    return `${jid}::${messages.map((message) => message.trim()).join("\u001f")}`;
   }
 
   private load(): DispatchQueueItem[] {

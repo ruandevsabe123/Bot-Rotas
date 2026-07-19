@@ -118,6 +118,7 @@ export type RouteDispatchTimeline = {
   retryUsed: boolean;
   notAcceptableCount: number;
   mode: "normal" | "race";
+  openingSignal?: "group_update" | "opening_message" | "already_open" | "image_ready" | "manual" | "simulation";
   events: RouteDispatchTimelineEvent[];
 };
 
@@ -169,6 +170,9 @@ export type OcrRouteSelectionState = {
   selectedOptionIds?: string[];
   preparedMessages?: string[];
   message?: string;
+  detectedRouteCount?: number;
+  preferredCity?: string;
+  preferredCityFound?: boolean;
 };
 
 export type BotSnapshot = {

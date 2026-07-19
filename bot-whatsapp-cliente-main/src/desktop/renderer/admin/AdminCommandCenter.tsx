@@ -171,6 +171,16 @@ function triggerLabel(route: RouteDispatch) {
   return "Rota configurada automática";
 }
 
+function openingSignalLabel(signal?: NonNullable<RouteDispatch["dispatchTimeline"]>["openingSignal"]) {
+  if (signal === "group_update") return "Evento oficial do grupo";
+  if (signal === "opening_message") return "Mensagem de abertura";
+  if (signal === "already_open") return "Grupo já estava aberto";
+  if (signal === "image_ready") return "Imagem pronta com grupo aberto";
+  if (signal === "manual") return "Comando manual do painel";
+  if (signal === "simulation") return "Simulação";
+  return "Não registrado";
+}
+
 function routeAgeState(route: RouteDispatch) {
   const ageMs = Date.now() - new Date(route.createdAt).getTime();
   return ageMs <= 10 * 60 * 1000 ? "recent" : "past";
@@ -385,6 +395,7 @@ function RouteSidePanel({
             <dt>Grupo</dt><dd>{route.groupName || route.groupJid || "Não identificado"}</dd>
             <dt>Modo</dt><dd>{route.mode}</dd>
             <dt>Trigger</dt><dd>{triggerLabel(route)}</dd>
+            <dt>Sinal que iniciou</dt><dd>{openingSignalLabel(route.dispatchTimeline?.openingSignal)}</dd>
             <dt>Mensagem enviada em</dt><dd>{formatDate(route.createdAt)}</dd>
             <dt>Recência</dt><dd>{routeAgeState(route) === "recent" ? "Recente (menos de 10 minutos)" : "Passada (mais de 10 minutos)"}</dd>
             <dt>Atualizada</dt><dd>{formatDate(route.updatedAt)}</dd>
@@ -405,6 +416,7 @@ function RouteSidePanel({
             </div>
             <dl className="adminx-kv">
               <dt>Modo corrida</dt><dd>{route.dispatchTimeline.mode === "race" ? "ativo" : "normal"}</dd>
+              <dt>Gatilho mais rápido</dt><dd>{openingSignalLabel(route.dispatchTimeline.openingSignal)}</dd>
               <dt>Timeout usado</dt><dd>{route.dispatchTimeline.timeoutUsed ? "sim" : "não"}</dd>
               <dt>Retry usado</dt><dd>{route.dispatchTimeline.retryUsed ? "sim" : "não"}</dd>
               <dt>Not acceptable</dt><dd>{route.dispatchTimeline.notAcceptableCount}</dd>

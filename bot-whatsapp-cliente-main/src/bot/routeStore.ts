@@ -497,6 +497,7 @@ export class RouteStore {
       retryUsed: Boolean(input.retryUsed),
       notAcceptableCount: Number.isFinite(Number(input.notAcceptableCount)) ? Number(input.notAcceptableCount) : 0,
       mode: input.mode === "race" ? "race" : "normal",
+      openingSignal: ["group_update", "opening_message", "already_open", "image_ready", "manual", "simulation"].includes(input.openingSignal) ? input.openingSignal : undefined,
       events
     };
   }
