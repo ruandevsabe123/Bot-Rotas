@@ -63,3 +63,54 @@ test("grupo aberto aguarda a leitura segura quando o modo é imagem", () => {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("imagem nova dispara assim que fica pronta com o grupo aberto", async () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.groupState = "open";
+    bot.preparedTargetDispatchMode = "ocr";
+    bot.preparedTargetJid = "motoristas@g.us";
+    bot.pendingOcrMessages = ["Cliente B-1"];
+    bot.lastOcrInsight = { analysisId: "cliente@teste.com:imagem-nova" };
+    bot.getActiveMonitoringGroup = () => ({ jid: "motoristas@g.us", label: "grupo alvo" });
+    let called;
+    bot.enviarMensagensRapidas = (...args) => {
+      called = args;
+      return true;
+    };
+
+    assert.equal(await bot.dispatchPreparedOcrIfGroupOpen("automatic"), true);
+    assert.equal(called[1], "automatic");
+    assert.equal(called[3], "image_ready");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("ciclo ativo é liberado mesmo se outro gatilho incrementar o contador", async () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.preparedTargetJid = "motoristas@g.us";
+    bot.preparedMessages = ["Cliente B-1"];
+    bot.preparedNuclearMode = false;
+    bot.ensurePreparedRelayMessages = () => undefined;
+    bot.sendAggressiveTargetSequence = async () => undefined;
+    bot.enqueueDispatch = () => undefined;
+    bot.registerRouteDispatch = () => "route-1";
+    bot.markQueuedDispatchSending = () => undefined;
+
+    assert.equal(bot.enviarMensagensRapidas(1, "automatic", Date.now(), "group_update"), true);
+    const active = bot.activeSendCycle;
+    bot.sendCycleId = 2;
+    await active;
+
+    assert.equal(bot.activeSendCycle, undefined);
+    assert.equal(bot.criticalDispatchInProgress, false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

@@ -1955,6 +1955,7 @@ export class BotService extends EventEmitter {
         }
 
         if (this.monitoringMode === "target" && this.preparedTargetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
+          this.grupoJaFechouDepoisDoInicio = false;
           this.logger.info("Grupo abriu, mas o bot imagem ainda não tem rota segura lida da foto. Nenhuma mensagem enviada.");
           return;
         }
@@ -2007,6 +2008,7 @@ export class BotService extends EventEmitter {
       const detectouAbertura = OPENING_TRIGGER_WORDS.some((palavra) => textoNormalizado.includes(palavra));
 
       if (detectouAbertura) {
+        this.groupState = "open";
         if (!this.grupoJaFechouDepoisDoInicio) {
           this.logger.info(
             "Palavra de abertura detectada, mas o grupo ainda não fechou após o bot iniciar. Nenhuma mensagem enviada."
@@ -2016,6 +2018,7 @@ export class BotService extends EventEmitter {
         }
 
         if (this.monitoringMode === "target" && this.preparedTargetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
+          this.grupoJaFechouDepoisDoInicio = false;
           this.logger.info("Palavra de abertura detectada, mas o bot imagem ainda não tem rota segura lida da foto. Nenhuma mensagem enviada.");
           this.scheduleReactionProcessing(messages);
           return;
@@ -2284,6 +2287,12 @@ export class BotService extends EventEmitter {
     const activeGroup = this.getActiveMonitoringGroup();
     if (!activeGroup.jid || !this.pendingOcrMessages.length) return false;
 
+    const analysisId = this.lastOcrInsight?.analysisId;
+    if (trigger === "automatic" && analysisId && this.routeStore.all().some((route) => route.ocr?.analysisId === analysisId)) {
+      this.logger.info("[ROMANEIO] Esta mesma imagem já iniciou um disparo automático. Reenvio duplicado ignorado.");
+      return false;
+    }
+
     let isOpen = this.groupState === "open";
     if (!isOpen) {
       try {
@@ -2302,8 +2311,18 @@ export class BotService extends EventEmitter {
 
     if (!isOpen) return false;
     const cycleId = ++this.sendCycleId;
+    const dispatched = this.enviarMensagensRapidas(cycleId, trigger, Date.now(), "image_ready");
+    if (!dispatched) {
+      this.logger.warning("[ROMANEIO] A rota ficou pronta com o grupo aberto, mas outro disparo ainda estava concluindo. Tentarei novamente imediatamente após ele terminar.");
+      const activeCycle = this.activeSendCycle;
+      if (activeCycle) {
+        void activeCycle.finally(() => {
+          if (this.groupState === "open" && this.monitoringEnabled) void this.dispatchPreparedOcrIfGroupOpen(trigger);
+        });
+      }
+      return false;
+    }
     this.grupoJaFechouDepoisDoInicio = false;
-    this.enviarMensagensRapidas(cycleId, trigger, Date.now(), "image_ready");
     this.logger.info(trigger === "automatic"
       ? "[ROMANEIO] Grupo já estava aberto: melhor rota enviada imediatamente após a imagem."
       : "[ROMANEIO] Grupo já estava aberto: rota confirmada enviada imediatamente.");
@@ -2802,7 +2821,7 @@ export class BotService extends EventEmitter {
       return false;
     }
 
-    const requiresRecentDuplicateGuard = openingSignal === "already_open" || (openingSignal === "image_ready" && trigger === "automatic");
+    const requiresRecentDuplicateGuard = openingSignal === "already_open";
     if (requiresRecentDuplicateGuard && this.dispatchQueueStore.hasRecentEquivalent(this.preparedTargetJid, mensagens)) {
       this.logger.warning("Disparo imediato bloqueado: esta mesma rota já foi enviada recentemente e o grupo ainda não passou por um novo ciclo de fechamento.");
       return false;
@@ -2831,12 +2850,13 @@ export class BotService extends EventEmitter {
     const routeId = this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger, timeline);
     this.markQueuedDispatchSending(cycleId, routeId);
 
-    this.activeSendCycle = sendCycle.finally(() => {
-      if (cycleId === this.sendCycleId) {
+    const trackedSendCycle = sendCycle.finally(() => {
+      if (this.activeSendCycle === trackedSendCycle) {
         this.activeSendCycle = undefined;
         this.criticalDispatchInProgress = false;
       }
     });
+    this.activeSendCycle = trackedSendCycle;
 
     this.logger.info(
       `${this.monitoringMode === "test" ? "Aquecimento real do teste" : this.preparedNuclearMode ? "Modo nuclear máximo" : "Modo instantâneo agressivo"}: ${mensagens.length} mensagens preparadas: ${mensagens.join(" | ")}`

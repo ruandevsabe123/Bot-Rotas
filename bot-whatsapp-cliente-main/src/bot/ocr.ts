@@ -64,16 +64,16 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
   const maxReadings = Math.max(1, Math.min(variants.length, options.maxReadings || variants.length));
 
   try {
-    const readings: RouteOcrResult[] = [];
-    const errors: string[] = [];
-    for (const variant of variants) {
+    const selectedVariants = variants.slice(0, maxReadings);
+    const attempts = await mapWithConcurrency(selectedVariants, 3, async (variant) => {
       try {
-        readings.push(await readSingleRouteImageOcr(variant.path, variant.label, variant.psm));
-        if (readings.length >= maxReadings) break;
+        return { reading: await readSingleRouteImageOcr(variant.path, variant.label, variant.psm) };
       } catch (error) {
-        errors.push(error instanceof Error ? error.message : String(error));
+        return { error: error instanceof Error ? error.message : String(error) };
       }
-    }
+    });
+    const readings = attempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
+    const errors = attempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
 
     if (!readings.length) {
       throw new Error(errors[0] || "Nenhuma versão da imagem pôde ser analisada.");
@@ -95,6 +95,20 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
       }
     }
   }
+}
+
+async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>) {
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(Math.max(1, concurrency), items.length) }, async () => {
+    while (cursor < items.length) {
+      const index = cursor;
+      cursor += 1;
+      results[index] = await mapper(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function readSingleRouteImageOcr(imagePath: string, label: string, psm = 6) {
