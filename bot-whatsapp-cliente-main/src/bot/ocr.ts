@@ -68,7 +68,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
     const errors: string[] = [];
     for (const variant of variants) {
       try {
-        readings.push(await readSingleRouteImageOcr(variant.path, variant.label));
+        readings.push(await readSingleRouteImageOcr(variant.path, variant.label, variant.psm));
         if (readings.length >= maxReadings) break;
       } catch (error) {
         errors.push(error instanceof Error ? error.message : String(error));
@@ -97,16 +97,16 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
   }
 }
 
-function readSingleRouteImageOcr(imagePath: string, label: string) {
-  return readRouteImageOcrWithBinary(imagePath, label)
+function readSingleRouteImageOcr(imagePath: string, label: string, psm = 6) {
+  return readRouteImageOcrWithBinary(imagePath, label, psm)
     .catch(() => readRouteImageOcrWithTesseractJs(imagePath, label));
 }
 
-function readRouteImageOcrWithBinary(imagePath: string, label: string) {
+function readRouteImageOcrWithBinary(imagePath: string, label: string, psm: number) {
   return new Promise<RouteOcrResult>((resolve, reject) => {
     execFile(
       "tesseract",
-      [imagePath, "stdout", "-l", "por", "--oem", "1", "--psm", "6", "tsv"],
+      [imagePath, "stdout", "-l", "por", "--oem", "1", "--psm", String(psm), "tsv"],
       { timeout: 15000, maxBuffer: 1024 * 1024 * 4 },
       (error, stdout, stderr) => {
         if (error) {
@@ -156,6 +156,17 @@ async function createPreprocessedImages(imagePath: string) {
     const baseName = path.join(os.tmpdir(), `ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const enhancedPath = `${baseName}-enhanced.png`;
     const thresholdPath = `${baseName}-threshold.png`;
+    const cageEnhancedPath = `${baseName}-cage-enhanced.png`;
+    const cageThresholdPath = `${baseName}-cage-threshold.png`;
+    const resizeHeight = metadata.width && metadata.height
+      ? Math.max(1, Math.round((metadata.height / metadata.width) * resizeWidth))
+      : 1200;
+    const cageCrop = {
+      left: Math.max(0, Math.floor(resizeWidth * 0.14)),
+      top: 0,
+      width: Math.max(1, Math.floor(resizeWidth * 0.18)),
+      height: resizeHeight
+    };
 
     await Promise.all([
       sharp(imagePath)
@@ -175,14 +186,36 @@ async function createPreprocessedImages(imagePath: string) {
         .sharpen({ sigma: 0.9 })
         .threshold(165)
         .png()
-        .toFile(thresholdPath)
+        .toFile(thresholdPath),
+      sharp(imagePath)
+        .rotate()
+        .resize({ width: resizeWidth, withoutEnlargement: false })
+        .extract(cageCrop)
+        .grayscale()
+        .normalize()
+        .linear(1.18, -8)
+        .sharpen({ sigma: 1.05, m1: 1.05, m2: 2 })
+        .png()
+        .toFile(cageEnhancedPath),
+      sharp(imagePath)
+        .rotate()
+        .resize({ width: resizeWidth, withoutEnlargement: false })
+        .extract(cageCrop)
+        .grayscale()
+        .normalize()
+        .threshold(165)
+        .png()
+        .toFile(cageThresholdPath)
     ]);
-    generatedPaths.push(enhancedPath, thresholdPath);
+    generatedPaths.push(enhancedPath, thresholdPath, cageEnhancedPath, cageThresholdPath);
 
     return [
-      { path: enhancedPath, label: "contraste-e-nitidez", generated: true },
-      { path: thresholdPath, label: "preto-e-branco", generated: true },
-      { path: imagePath, label: "original", generated: false }
+      { path: enhancedPath, label: "contraste-e-nitidez", generated: true, psm: 6 },
+      { path: enhancedPath, label: "texto-esparso", generated: false, psm: 11 },
+      { path: thresholdPath, label: "preto-e-branco", generated: true, psm: 6 },
+      { path: cageEnhancedPath, label: "coluna-gaiola", generated: true, psm: 6 },
+      { path: cageThresholdPath, label: "coluna-gaiola-pb", generated: true, psm: 6 },
+      { path: imagePath, label: "original", generated: false, psm: 11 }
     ];
   } catch {
     for (const generatedPath of generatedPaths) {
@@ -192,7 +225,7 @@ async function createPreprocessedImages(imagePath: string) {
         // O arquivo temporário pode já ter sido removido.
       }
     }
-    return [{ path: imagePath, label: "original", generated: false }];
+    return [{ path: imagePath, label: "original", generated: false, psm: 6 }];
   }
 }
 
@@ -297,6 +330,27 @@ export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
       };
       byCode.set(code, [...(byCode.get(code) || []), detected]);
     }
+
+    const sourceWords = sourceLines.flatMap((line) => line.words);
+    for (const word of sourceWords) {
+      const code = extractStandaloneGaiolaCode(word.text);
+      if (!code || word.confidence < 35) continue;
+      const rowWords = sourceWords.filter((candidate) => {
+        const verticalDistance = Math.abs((candidate.top + candidate.height / 2) - (word.top + word.height / 2));
+        return verticalDistance <= Math.max(8, word.height * 0.7, candidate.height * 0.7);
+      });
+      const row = rowWords.length ? createOcrLineFromWords(rowWords) : createOcrLineFromWords([word]);
+      const detected: DetectedRouteCode = {
+        route: "",
+        code,
+        line: row.text,
+        confidence: Math.round(Math.min(word.confidence, row.confidence)),
+        evidenceCount: 1,
+        variantCount: variants.length,
+        safeForAutomatic: false
+      };
+      byCode.set(code, [...(byCode.get(code) || []), detected]);
+    }
   }
 
   return [...byCode.values()].map((matches) => {
@@ -310,6 +364,15 @@ export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
       safeForAutomatic: evidence.length >= 2
     };
   });
+}
+
+function extractStandaloneGaiolaCode(text: string) {
+  const normalized = normalizeOcrToken(text).toUpperCase().replace(/[–—]/g, "-");
+  const match = normalized.match(/^([A-Z|1])\s*([-.:]?)\s*(\d{1,2})$/);
+  if (!match) return "";
+  if (/[|1]/.test(match[1]) && !match[2]) return "";
+  const letter = /[|1]/.test(match[1]) ? "I" : match[1];
+  return `${letter}-${match[3]}`;
 }
 
 export function findConfiguredRouteInOcrLine(line: string, monitoredRoutes: MonitoredRoute[] = [], legacyRoutes: string[] = []) {

@@ -2114,7 +2114,7 @@ export class BotService extends EventEmitter {
       );
 
       await fs.promises.writeFile(imagePath, buffer);
-      const ocr = await readRouteImageOcr(imagePath, { maxReadings: 3 });
+      const ocr = await readRouteImageOcr(imagePath, { maxReadings: 6 });
       if (sequence !== this.latestRouteImageSequence) {
         this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;

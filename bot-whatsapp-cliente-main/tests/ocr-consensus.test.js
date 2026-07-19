@@ -304,3 +304,25 @@ test("mantém as 21 gaiolas da tabela mesmo quando nenhum destino é Campos", ()
     "B-27", "B-3", "B-30", "B-32", "B-4", "B-7", "C-2", "C-3", "C-6", "C-8"
   ]);
 });
+
+test("recupera todas as gaiolas quando o OCR agrupa várias linhas da tabela em um bloco", () => {
+  const codes = ["B-1", "B-13", "B-15", "B-17", "B-18", "B-19", "B-2", "B-21", "B-22", "B-23", "B-24", "B-27", "B-3", "B-30", "B-32", "B-4", "B-7", "C-2", "C-3", "C-6", "C-8"];
+  const rows = codes.map((code, index) => ocrLine(`${code} AT20260719${index} Cidade Bairro`, 10, 40 + index * 35));
+  const words = rows.flatMap((row) => row.words);
+  const groupedReading = {
+    text: rows.map((row) => row.text).join(" "),
+    source: "ocr-agrupado",
+    lines: [{
+      text: rows.map((row) => row.text).join(" "),
+      words,
+      left: 10,
+      top: 40,
+      width: 900,
+      height: 21 * 35,
+      confidence: 92
+    }]
+  };
+  const result = findAllGaiolaCodesFromOcr(groupedReading);
+
+  assert.deepEqual(result.map((item) => item.code), codes);
+});
