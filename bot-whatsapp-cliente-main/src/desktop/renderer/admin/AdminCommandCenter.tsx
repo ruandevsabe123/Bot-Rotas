@@ -59,6 +59,7 @@ import {
   subscribeAdminMonitor,
   validateAdminRoute
 } from "../api";
+import { enableWebPushNotifications } from "../pushNotifications";
 
 type AdminCommandCenterProps = {
   userEmail: string;
@@ -68,7 +69,7 @@ type AdminCommandCenterProps = {
 type AdminPage = "today" | "dashboard" | "clients" | "validations" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
 type DatePreset = "today" | "7d" | "30d" | "all";
 type DecisionFilter = "all" | "pending" | "validated" | "rejected" | "leader" | "removed";
-type ModeFilter = "all" | "target" | "test" | "manual" | "ocr" | "warmup" | "simulation";
+type ModeFilter = "all" | "target" | "test" | "manual" | "automatic" | "ocr" | "warmup" | "simulation";
 type LogLevelFilter = "all" | "info" | "success" | "warning" | "error";
 type CleanupTarget = "logs" | "routes" | "support" | "all";
 
@@ -141,6 +142,8 @@ function formatDuration(ms = 0) {
 
 function formatMs(value?: number) {
   if (value === undefined || value === null || Number.isNaN(value)) return "sem dado";
+  if (value >= 60_000) return `${(value / 60_000).toFixed(1).replace(".0", "")}min`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1).replace(".0", "")}s`;
   return `${Math.round(value)}ms`;
 }
 
@@ -152,14 +155,20 @@ function routeDecision(route: RouteDispatch) {
   return route.decisionStatus || (route.validated ? "validated" : "pending");
 }
 
+function routeDecisionLabel(route: RouteDispatch) {
+  if (routeDecision(route) === "pending") return "Pendente";
+  if (routeDecision(route) === "rejected") return "Excluída pelo admin";
+  return route.decisionSource === "leader_reaction_1h" ? "Validada pelo líder após 1h" : "Validada pelo admin";
+}
+
 function triggerLabel(route: RouteDispatch) {
-  if (route.ocr) return "Análise visual";
+  if (route.ocr) return "Imagem IA";
   if (route.trigger === "target-simulation") return "Simulação alvo";
   if (route.trigger === "simulation") return "Simulação abertura";
   if (route.trigger === "warmup") return "Aquecimento";
-  if (route.trigger === "manual") return "Manual";
+  if (route.trigger === "manual") return "Envio manual pelo painel";
   if (route.mode === "test") return "Teste";
-  return "Automático";
+  return "Rota configurada automática";
 }
 
 function routeAgeState(route: RouteDispatch) {
@@ -237,7 +246,7 @@ function isRealValidationRoute(route: RouteDispatch) {
   const groupName = normalizeAdminText(route.groupName);
   const groupJid = normalizeAdminText(route.groupJid);
   const sentInRealGroup = groupName === targetGroup || groupName.includes(targetGroup) || groupJid.includes(targetGroup);
-  return sentInRealGroup && route.mode === "target" && !["warmup", "simulation", "target-simulation"].includes(route.trigger);
+  return (sentInRealGroup || Boolean(route.ocr)) && route.mode === "target" && !["warmup", "simulation", "target-simulation"].includes(route.trigger);
 }
 
 function needsRealReview(route: RouteDispatch) {
@@ -380,6 +389,9 @@ function RouteSidePanel({
             <dt>Recência</dt><dd>{routeAgeState(route) === "recent" ? "Recente (menos de 10 minutos)" : "Passada (mais de 10 minutos)"}</dd>
             <dt>Atualizada</dt><dd>{formatDate(route.updatedAt)}</dd>
             <dt>Motivo do admin</dt><dd>{route.decisionReason || "Sem motivo registrado"}</dd>
+            <dt>Tipo da validação</dt><dd>{route.decisionSource === "leader_reaction_1h" ? "Automática após 1h de reação do líder" : routeDecision(route) === "pending" ? "Aguardando decisão" : "Decisão manual do admin"}</dd>
+            {route.validationLeaderName ? <><dt>Líder responsável</dt><dd>{route.validationLeaderName}</dd></> : null}
+            {route.validationReactionAt ? <><dt>Reação iniciada</dt><dd>{formatDate(route.validationReactionAt)}</dd></> : null}
           </dl>
         </section>
         {route.dispatchTimeline ? (
@@ -424,6 +436,9 @@ function RouteSidePanel({
               <dt>Motor</dt><dd>Análise visual local</dd>
               <dt>Confiança</dt><dd>{route.ocr.confidence ? `${route.ocr.confidence}%` : "Sem média"}</dd>
               <dt>Linha</dt><dd>{route.ocr.line || "Sem linha"}</dd>
+              <dt>Análise concluída</dt><dd>{formatDate(route.ocr.processedAt)}</dd>
+              <dt>Até iniciar o envio</dt><dd>{formatMs(Math.max(0, new Date(route.createdAt).getTime() - new Date(route.ocr.processedAt).getTime()))}</dd>
+              <dt>Duração do envio</dt><dd>{formatMs(route.dispatchTimeline?.totalDurationMs)}</dd>
             </dl>
             {route.ocr.text ? <pre className="adminx-ocr-text">{route.ocr.text}</pre> : null}
           </section>
@@ -574,7 +589,12 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const [imageUsage, setImageUsage] = useState<AdminImageUsageSnapshot>(emptyImageUsage);
   const [usageAmounts, setUsageAmounts] = useState<Record<string, string>>({});
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
-  const [page, setPage] = useState<AdminPage>("dashboard");
+  const [page, setPage] = useState<AdminPage>(() => {
+    const requested = new URLSearchParams(window.location.search).get("admin");
+    return ["today", "dashboard", "clients", "validations", "usage", "history", "logs", "support", "reports", "maintenance", "settings"].includes(requested || "")
+      ? requested as AdminPage
+      : "dashboard";
+  });
   const [clientFilter, setClientFilter] = useState("all");
   const [datePreset, setDatePreset] = useState<DatePreset>("30d");
   const [search, setSearch] = useState("");
@@ -594,6 +614,8 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const [rejectReason, setRejectReason] = useState("Sem reação válida");
   const [leaders, setLeaders] = useState<LeaderContact[]>([]);
   const [leaderDraft, setLeaderDraft] = useState<LeaderContact>({ name: "", phone: "" });
+  const [notificationCenterOpen, setNotificationCenterOpen] = useState(false);
+  const [usageView, setUsageView] = useState<"pending" | "history">("pending");
 
   function showToast(message: string) {
     setToast(message);
@@ -617,6 +639,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
       return next;
     });
     setLogs(snapshot.logs);
+    setSelectedRoutes((current) => current.filter((id) => snapshot.routes.routes.some((route) => route.id === id && routeDecision(route) === "pending")));
     setLeaders(snapshot.leaders || []);
     setStreamState("live");
     setError("");
@@ -668,9 +691,10 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
       const modeOk =
         modeFilter === "all" ||
         route.mode === modeFilter ||
-        route.trigger === modeFilter ||
         (modeFilter === "ocr" && Boolean(route.ocr)) ||
-        (modeFilter === "manual" && route.trigger === "manual");
+        (modeFilter === "manual" && route.trigger === "manual" && !route.ocr) ||
+        (modeFilter === "automatic" && route.trigger === "automatic" && !route.ocr) ||
+        (["warmup", "simulation"].includes(modeFilter) && route.trigger === modeFilter);
       const queryOk = !query || [
         route.clientEmail,
         route.groupName,
@@ -730,6 +754,12 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     ...notAcceptableLogs.slice(0, 8).map((log) => ({ id: `na-${log.clientEmail}-${log.id}`, tone: "red" as const, title: "Falha not-acceptable", detail: `${log.clientEmail} - ${log.message}` })),
     ...support.messages.filter((message) => !message.read).slice(0, 8).map((message) => ({ id: `support-${message.id}`, tone: "red" as const, title: "Suporte não lido", detail: `${message.email} - ${message.message}` }))
   ].slice(0, 18);
+  const importantNotifications = [
+    ...(validationReviewRoutes.length ? [{ id: "validations", title: "Rotas aguardando validação", detail: `${validationReviewRoutes.length} rota(s) precisam da sua decisão.`, target: "validations" as AdminPage }] : []),
+    ...(imageUsage.totals.pending ? [{ id: "usage", title: "Análises aguardando cobrança", detail: `${imageUsage.totals.pending} análise(s) ainda precisam ser classificadas.`, target: "usage" as AdminPage }] : []),
+    ...(support.unread ? [{ id: "support", title: "Mensagens de suporte", detail: `${support.unread} mensagem(ns) ainda não foram lidas.`, target: "support" as AdminPage }] : []),
+    ...logs.filter((log) => log.level === "error" && Date.now() - new Date(log.timestamp).getTime() < 24 * 60 * 60 * 1000).slice(-5).reverse().map((log) => ({ id: `error-${log.id}`, title: "Erro recente no bot", detail: `${log.clientEmail}: ${log.message}`, target: "logs" as AdminPage }))
+  ].slice(0, 10);
   const onlineClients = clients.filter((client) => client.presenceStatus === "online").length;
   const connectedBots = clients.filter((client) => ["connected", "connecting", "waiting_qr", "reconnecting"].includes(client.botStatus || "")).length;
   const activeBots = clients.filter((client) => client.monitoringEnabled).length;
@@ -749,8 +779,12 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     const query = search.trim().toLowerCase();
     const queryOk = !query || [entry.clientEmail, entry.route, entry.bairro, entry.gaiola, entry.result, entry.decision]
       .some((item) => String(item || "").toLowerCase().includes(query));
-    return clientOk && queryOk;
+    const decisionOk = usageView === "history" || entry.decision === "pending";
+    return clientOk && queryOk && decisionOk;
   });
+  const routeByAnalysisId = useMemo(() => new Map(
+    routes.routes.filter((route) => route.ocr?.analysisId).map((route) => [route.ocr!.analysisId!, route])
+  ), [routes.routes]);
   const pricingClients = clients.map((client) => imageUsage.clients.find((item) => item.clientEmail === client.email) || {
     clientEmail: client.email,
     month: imageUsage.month,
@@ -760,7 +794,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     excluded: 0,
     detected: 0,
     amountCents: 0,
-    defaultAmountCents: 0
+    defaultAmountCents: 70
   });
 
   const clientIntelligence = useMemo(() => {
@@ -874,6 +908,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     try {
       const nextRoutes = decision === "validate" ? await validateAdminRoute(routeId) : await rejectAdminRoute(routeId, reason);
       setRoutes(nextRoutes);
+      setSelectedRoutes((current) => current.filter((id) => id !== routeId));
       setRouteDetail(undefined);
       showToast(decision === "validate" ? "Rota validada." : "Rota rejeitada.");
       refresh();
@@ -894,7 +929,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     try {
       const next = await decideImageUsage(id, { decision, amountCents: parseMoney(usageAmounts[id] || "0") });
       setImageUsage(next);
-      showToast(decision === "billable" ? "Análise aprovada para consumo." : decision === "excluded" ? "Análise excluída do consumo." : "Análise devolvida para revisão.");
+      showToast(decision === "billable" ? "Imagem e rota validadas para cobrança." : decision === "excluded" ? "Imagem e rota excluídas da pendência." : "Análise devolvida para revisão.");
       refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui atualizar o consumo.");
@@ -1010,12 +1045,16 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   }
 
   async function enableNotifications() {
-    if (!("Notification" in window)) {
-      setError("Este navegador não suporta notificações.");
-      return;
+    setBusy(true);
+    try {
+      await enableWebPushNotifications();
+      setError("");
+      showToast("Alertas em segundo plano ativados.");
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui ativar as notificações.");
+    } finally {
+      setBusy(false);
     }
-    const permission = await Notification.requestPermission();
-    showToast(permission === "granted" ? "Notificações ativadas." : "Notificações não foram liberadas.");
   }
 
   function resetAdminFilters() {
@@ -1065,6 +1104,9 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
       grupo: route.groupName || route.groupJid,
       origem: triggerLabel(route),
       decisao: routeDecision(route),
+      tipo_validacao: routeDecisionLabel(route),
+      responsavel_validacao: route.validationLeaderName || route.validatedBy || route.rejectedBy || "",
+      reacao_iniciada_em: route.validationReactionAt || "",
       envio: `${route.confirmedCount}/${route.totalCount}`,
       reacao_final: reactionFinalLabel(route),
       mensagens: route.messages.join(" | "),
@@ -1144,6 +1186,39 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             <StatusPill tone={streamState === "live" ? "green" : streamState === "fallback" ? "yellow" : "blue"}>
               {streamState === "live" ? "SSE ao vivo" : streamState === "fallback" ? "Polling" : "Conectando"}
             </StatusPill>
+            <div className="adminx-notification-center">
+              <button
+                aria-expanded={notificationCenterOpen}
+                aria-label="Abrir notificações importantes"
+                className="icon-button adminx-notification-button"
+                type="button"
+                title="Notificações importantes"
+                onClick={() => setNotificationCenterOpen((current) => !current)}
+              >
+                <Bell size={19} />
+                {importantNotifications.length ? <b>{importantNotifications.length}</b> : null}
+              </button>
+              {notificationCenterOpen ? (
+                <section className="adminx-notification-popover">
+                  <header>
+                    <div><p>Central de alertas</p><strong>Importantes</strong></div>
+                    <button className="icon-button" type="button" title="Fechar" onClick={() => setNotificationCenterOpen(false)}><X size={18} /></button>
+                  </header>
+                  <div className="adminx-notification-list">
+                    {importantNotifications.map((notification) => (
+                      <button key={notification.id} type="button" onClick={() => { setPage(notification.target); setNotificationCenterOpen(false); }}>
+                        <strong>{notification.title}</strong>
+                        <span>{notification.detail}</span>
+                      </button>
+                    ))}
+                    {!importantNotifications.length ? <p className="adminx-notification-empty">Nenhuma pendência importante agora.</p> : null}
+                  </div>
+                  <button className="button primary" disabled={busy} type="button" onClick={enableNotifications}>
+                    <Bell size={17} /> Ativar alertas no dispositivo
+                  </button>
+                </section>
+              ) : null}
+            </div>
             <button className="icon-button" type="button" title="Atualizar" onClick={refresh}><RefreshCw size={19} /></button>
           </div>
         </header>
@@ -1313,7 +1388,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             <RouteFilters decisionFilter={decisionFilter} modeFilter={modeFilter} onDecision={setDecisionFilter} onMode={setModeFilter} />
             <div className="adminx-metrics">
               <MetricCard Icon={ShieldCheck} tone="yellow" title="Para examinar" value={validationReviewRoutes.length} detail={REAL_VALIDATION_GROUP} />
-              <MetricCard Icon={MessageSquareText} tone="blue" title="Com reação" value={validationReactionRoutes.length} detail="ainda pendentes" />
+              <MetricCard Icon={MessageSquareText} tone="blue" title="Com reação" value={validationReactionRoutes.length} detail="automática após 1h ativa" />
               <MetricCard Icon={Clock3} tone="yellow" title="Pendentes reais" value={validationPendingRoutes.length} detail="aguardando decisão" />
             </div>
             <div className="adminx-page-actions">
@@ -1365,26 +1440,41 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
                   <div><p>Análise inteligente</p><h2>Revisão de consumo</h2></div>
                   <StatusPill tone={imageUsage.totals.pending ? "yellow" : "green"}>{imageUsage.totals.pending ? `${imageUsage.totals.pending} pendente(s)` : "Tudo revisado"}</StatusPill>
                 </div>
+                <div className="adminx-usage-tabs" role="tablist" aria-label="Exibição das análises">
+                  <button className={usageView === "pending" ? "active" : ""} role="tab" aria-selected={usageView === "pending"} type="button" onClick={() => setUsageView("pending")}>Pendências ({imageUsage.totals.pending})</button>
+                  <button className={usageView === "history" ? "active" : ""} role="tab" aria-selected={usageView === "history"} type="button" onClick={() => setUsageView("history")}>Histórico completo</button>
+                </div>
                 <div className="adminx-analysis-list">
-                  {visibleUsageEntries.map((entry) => (
-                    <article className={`adminx-analysis-row status-${entry.decision}`} key={entry.id}>
+                  {visibleUsageEntries.map((entry) => {
+                    const linkedRoute = routeByAnalysisId.get(entry.id) || routes.routes.find((route) => route.id === entry.routeDispatchId);
+                    const waitUntilDispatchMs = linkedRoute && entry.analysisFinishedAt
+                      ? Math.max(0, new Date(linkedRoute.createdAt).getTime() - new Date(entry.analysisFinishedAt).getTime())
+                      : undefined;
+                    return <article className={`adminx-analysis-row status-${entry.decision}`} key={entry.id}>
                       <div className="adminx-analysis-signal"><BrainCircuit size={20} /><span>{entry.confidence === undefined ? "--" : `${entry.confidence}%`}</span></div>
                       <div className="adminx-analysis-copy">
                         <strong>{entry.route || entry.bairro || (entry.result === "unreadable" ? "Imagem sem leitura segura" : "Falha na análise")}</strong>
                         <small>{entry.clientEmail} · {entry.gaiola || "gaiola não confirmada"} · {formatShort(entry.createdAt)}</small>
+                        <span className="adminx-analysis-group">{entry.groupName || linkedRoute?.groupName || entry.groupJid || linkedRoute?.groupJid || "Grupo não registrado"}</span>
+                        <div className="adminx-analysis-times">
+                          <span><b>{formatMs(entry.analysisDurationMs)}</b> análise</span>
+                          <span><b>{formatMs(waitUntilDispatchMs)}</b> até envio</span>
+                          <span><b>{formatMs(linkedRoute?.dispatchTimeline?.totalDurationMs)}</b> disparo</span>
+                          <span><b>{linkedRoute ? triggerLabel(linkedRoute) : "Imagem recebida"}</b> origem</span>
+                        </div>
                       </div>
                       <StatusPill tone={entry.decision === "billable" ? "green" : entry.decision === "excluded" ? "muted" : "yellow"}>
                         {entry.decision === "billable" ? "Aprovada" : entry.decision === "excluded" ? "Excluída" : "Pendente"}
                       </StatusPill>
                       <label className="adminx-analysis-value"><span>R$</span><input inputMode="decimal" value={usageAmounts[entry.id] || "0,00"} onChange={(event) => setUsageAmounts((current) => ({ ...current, [entry.id]: event.target.value }))} /></label>
                       <div className="adminx-analysis-actions">
-                        <button className="icon-button success" disabled={busy} type="button" title="Aprovar consumo" onClick={() => updateImageUsage(entry.id, "billable")}><CheckCircle2 size={18} /></button>
-                        <button className="icon-button danger" disabled={busy} type="button" title="Excluir teste do consumo" onClick={() => updateImageUsage(entry.id, "excluded")}><Ban size={18} /></button>
+                        <button className="icon-button success" disabled={busy} type="button" title="Validar imagem, rota e cobrança" onClick={() => updateImageUsage(entry.id, "billable")}><CheckCircle2 size={18} /></button>
+                        <button className="icon-button danger" disabled={busy} type="button" title="Excluir imagem e rota da pendência" onClick={() => updateImageUsage(entry.id, "excluded")}><Ban size={18} /></button>
                         {entry.decision !== "pending" ? <button className="icon-button" disabled={busy} type="button" title="Reabrir revisão" onClick={() => updateImageUsage(entry.id, "pending")}><RotateCcw size={18} /></button> : null}
                       </div>
-                    </article>
-                  ))}
-                  {!visibleUsageEntries.length ? <p className="adminx-empty-text">Nenhuma análise neste filtro.</p> : null}
+                    </article>;
+                  })}
+                  {!visibleUsageEntries.length ? <p className="adminx-empty-text">{usageView === "pending" ? "Nenhuma análise pendente. Tudo resolvido." : "Nenhuma análise neste filtro."}</p> : null}
                 </div>
               </article>
             </section>
@@ -1476,8 +1566,8 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
                 <section className="adminx-settings-card">
                   <Bell size={20} />
                   <strong>Notificações</strong>
-                  <span>Ative alertas do navegador para suporte, erro e validação pendente.</span>
-                  <button className="button primary" type="button" onClick={enableNotifications}>Ativar notificações</button>
+                  <span>Receba alertas críticos mesmo quando a aba do painel estiver fechada.</span>
+                  <button className="button primary" disabled={busy} type="button" onClick={enableNotifications}>Ativar notificações</button>
                 </section>
                 <section className="adminx-settings-card">
                   <RefreshCw size={20} />
@@ -1603,10 +1693,11 @@ function RouteFilters({
       </select>
       <select value={modeFilter} onChange={(event) => onMode(event.target.value as ModeFilter)}>
         <option value="all">Todas origens</option>
-        <option value="target">Alvo</option>
+        <option value="target">Todos os envios reais</option>
         <option value="test">Teste</option>
-        <option value="manual">Manual</option>
-        <option value="ocr">Análise visual</option>
+        <option value="manual">Envio manual pelo painel</option>
+        <option value="automatic">Rota configurada automática</option>
+        <option value="ocr">Imagem IA</option>
         <option value="warmup">Aquecimento</option>
         <option value="simulation">Simulação</option>
       </select>
@@ -1644,6 +1735,7 @@ function RouteTable({
             <th>Trigger</th>
             <th>Mensagens</th>
             <th>Status Final da Reação</th>
+            <th>Validação</th>
             <th>Envio</th>
             <th>Data</th>
             <th>Ações</th>
@@ -1661,6 +1753,7 @@ function RouteTable({
                 <StatusPill tone={route.lastReactionState?.status === "removed" ? "yellow" : route.reactions.length ? "green" : "muted"}>{reactionFinalLabel(route)}</StatusPill>
                 {clientIncidentSummary(route) ? <small className="adminx-cell-note">{clientIncidentSummary(route)}</small> : null}
               </td>
+              <td data-label="Validação"><StatusPill tone={routeDecision(route) === "validated" ? "green" : routeDecision(route) === "rejected" ? "red" : "yellow"}>{routeDecisionLabel(route)}</StatusPill></td>
               <td data-label="Envio">{route.confirmedCount}/{route.totalCount} - {route.status}</td>
               <td data-label="Data">{formatShort(route.createdAt)}</td>
               <td data-label="Ações">
@@ -1673,7 +1766,7 @@ function RouteTable({
             </tr>
           ))}
           {!routes.length ? (
-            <tr><td colSpan={readOnly ? 8 : 9}><p className="adminx-empty-text">Nenhuma rota encontrada.</p></td></tr>
+            <tr><td colSpan={readOnly ? 9 : 10}><p className="adminx-empty-text">Nenhuma rota encontrada.</p></td></tr>
           ) : null}
         </tbody>
       </table>

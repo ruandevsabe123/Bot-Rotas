@@ -16,6 +16,11 @@ type RecordAnalysisInput = {
   bairro?: string;
   gaiola?: string;
   confidence?: number;
+  groupJid?: string;
+  groupName?: string;
+  analysisStartedAt?: string;
+  analysisFinishedAt?: string;
+  analysisDurationMs?: number;
 };
 
 const MAX_ENTRIES = 50_000;
@@ -45,6 +50,10 @@ export class ImageUsageStore {
     return entry;
   }
 
+  get(id: string) {
+    return this.data.entries.find((entry) => entry.id === id);
+  }
+
   decide(id: string, decision: ImageUsageDecision, adminEmail: string, amountCents?: number, note?: string) {
     let changed = false;
     const now = new Date().toISOString();
@@ -72,7 +81,15 @@ export class ImageUsageStore {
     this.data.entries = this.data.entries.map((entry) => {
       if (entry.id !== analysisId) return entry;
       changed = true;
-      return { ...entry, routeDispatchId, decision, reviewedAt: now, reviewedBy: adminEmail, updatedAt: now };
+      return {
+        ...entry,
+        routeDispatchId,
+        decision,
+        amountCents: decision === "billable" && entry.amountCents <= 0 ? this.defaultAmount(entry.clientEmail) : entry.amountCents,
+        reviewedAt: now,
+        reviewedBy: adminEmail,
+        updatedAt: now
+      };
     });
     if (changed) this.save();
     return changed;
@@ -130,7 +147,7 @@ export class ImageUsageStore {
   }
 
   private defaultAmount(clientEmail: string) {
-    return this.normalizeAmount(this.data.defaultAmounts[clientEmail] || 0);
+    return this.normalizeAmount(this.data.defaultAmounts[clientEmail] ?? 70);
   }
 
   private normalizeAmount(value: number) {

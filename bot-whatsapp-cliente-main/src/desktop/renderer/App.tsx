@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock3,
   Edit3,
+  FileUp,
   Gauge,
   Home,
   Info,
@@ -59,6 +60,7 @@ import { LogsPanel } from "./components/LogsPanel";
 import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminCommandCenter } from "./admin/AdminCommandCenter";
+import { enableWebPushNotifications } from "./pushNotifications";
 import {
   botApi,
   clearAdminMaintenance,
@@ -83,6 +85,7 @@ import {
   setPanelUserEmail,
   setPanelUserRole,
   subscribeAdminMonitor,
+  uploadRomaneio,
   validateAdminRoute
 } from "./api";
 import "./styles.css";
@@ -2383,6 +2386,7 @@ function RomaneioPanel({
   busy,
   onSettingsChange,
   onLocate,
+  onUpload,
   onConfirmCandidate,
   onSaveSettings,
   error
@@ -2393,10 +2397,12 @@ function RomaneioPanel({
   busy: boolean;
   onSettingsChange: (settings: RomaneioSettings) => void;
   onLocate: () => void;
+  onUpload: (file: File) => void;
   onConfirmCandidate: (candidate: RomaneioCandidate) => void;
   onSaveSettings: () => void;
   error: string;
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const topRoutes = romaneio.routes.slice(0, 12);
   const lastUpload = romaneio.status.uploadedAt ? new Date(romaneio.status.uploadedAt).toLocaleString("pt-BR") : "Nenhum";
 
@@ -2416,9 +2422,26 @@ function RomaneioPanel({
             <p className="panel-label">Análise de Romaneio</p>
             <h2>{romaneio.status.loaded ? `${romaneio.status.totalRoutes} rota(s)` : "Nenhum arquivo carregado"}</h2>
           </div>
-          <button className="button primary" disabled={busy} type="button" onClick={onLocate}>
-            Localizar romaneio
-          </button>
+          <div className="romaneio-source-actions">
+            <input
+              ref={fileInputRef}
+              className="visually-hidden-file"
+              type="file"
+              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) onUpload(file);
+                event.target.value = "";
+              }}
+            />
+            <button className="button" disabled={busy} type="button" onClick={() => fileInputRef.current?.click()}>
+              <FileUp size={18} />
+              Enviar do aparelho
+            </button>
+            <button className="button primary" disabled={busy} type="button" onClick={onLocate}>
+              Localizar no grupo
+            </button>
+          </div>
         </div>
         <div className="review-grid">
           <article className={romaneio.status.loaded ? "review-item ok" : "review-item"}>
@@ -2643,7 +2666,10 @@ export default function App() {
   const [snapshot, setSnapshot] = useState<BotSnapshot>(emptySnapshot);
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState<PendingConfirmation>();
-  const [activeTab, setActiveTab] = useState<AppTab>("home");
+  const [activeTab, setActiveTab] = useState<AppTab>(() => {
+    const requested = new URLSearchParams(window.location.search).get("tab");
+    return ["home", "groups", "image", "test", "settings"].includes(requested || "") ? requested as AppTab : "home";
+  });
   const [groupEditor, setGroupEditor] = useState<GroupEditor>();
   const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelToken()));
   const [userEmail, setUserEmail] = useState(getPanelUserEmail());
@@ -2662,6 +2688,7 @@ export default function App() {
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
   const [incidentClock, setIncidentClock] = useState(Date.now());
+  const [notificationStatus, setNotificationStatus] = useState("");
   const connectionSectionRef = useRef<HTMLElement | null>(null);
 
   function showActionToast(message: string, tone?: ActionToast["tone"]) {
@@ -2910,7 +2937,7 @@ export default function App() {
   }
 
   function isImageOperationLog(message: string) {
-    return /OCR|imagem|foto|romaneio|rota\(s\)|rotas encontradas|Ranking de rotas|Cliente confirmou|gaiola/i.test(message);
+    return /OCR|IA|imagem|foto|romaneio|rota\(s\)|rotas encontradas|Ranking de rotas|Cliente confirmou|gaiola/i.test(message);
   }
 
   function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual") {
@@ -3189,6 +3216,31 @@ export default function App() {
     }
   }
 
+  async function handleUploadRomaneio(file: File) {
+    if (!/\.xlsx$/i.test(file.name)) {
+      setRomaneioError("Selecione um arquivo de romaneio no formato .xlsx.");
+      return;
+    }
+    setBusy(true);
+    setRomaneioError("");
+    setRomaneioLocateResult({ found: false, message: "", candidates: [] });
+    try {
+      const nextRomaneio = await uploadRomaneio(file);
+      setRomaneio(nextRomaneio);
+      setRomaneioSettingsDraft(nextRomaneio.settings);
+      setRomaneioLocateResult({
+        found: true,
+        message: `Romaneio enviado do aparelho: ${file.name}`,
+        candidates: []
+      });
+      showActionToast(`${nextRomaneio.status.totalRoutes} rota(s) carregada(s).`);
+    } catch (error) {
+      setRomaneioError(error instanceof Error ? error.message : "Não consegui enviar o romaneio.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleConfirmRomaneio(candidate: RomaneioCandidate) {
     setBusy(true);
     setRomaneioError("");
@@ -3243,6 +3295,20 @@ export default function App() {
       reason: incidentReason.trim()
     }));
     setIncidentReason("");
+  }
+
+  async function handleEnableNotifications() {
+    setBusy(true);
+    setNotificationStatus("");
+    try {
+      await enableWebPushNotifications();
+      setNotificationStatus("Alertas ativados neste dispositivo.");
+      showActionToast("Alertas em segundo plano ativados.");
+    } catch (error) {
+      setNotificationStatus(error instanceof Error ? error.message : "Não consegui ativar os alertas.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function snoozePendingClientIncident() {
@@ -3457,6 +3523,7 @@ export default function App() {
             busy={busy}
             onSettingsChange={setRomaneioSettingsDraft}
             onLocate={handleLocateRomaneio}
+            onUpload={handleUploadRomaneio}
             onConfirmCandidate={handleConfirmRomaneio}
             onSaveSettings={handleSaveRomaneioSettings}
             error={romaneioError}
@@ -3542,6 +3609,8 @@ export default function App() {
             onClearLogs={confirmClearLogs}
             onFactoryReset={confirmFactoryReset}
             onSaveGeneralSettings={saveGeneralSettings}
+            onEnableNotifications={handleEnableNotifications}
+            notificationStatus={notificationStatus}
             onLogout={() => {
               logout();
             }}

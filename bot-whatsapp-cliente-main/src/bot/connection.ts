@@ -478,9 +478,18 @@ export class BotService extends EventEmitter {
   }
 
   validateRoute(routeId: string, validatedBy: string) {
-    const changed = this.routeStore.validate(routeId, validatedBy);
+    const changed = this.routeStore.validate(routeId, validatedBy, { source: "admin_manual" });
     if (changed) this.emitSnapshot();
     return changed;
+  }
+
+  validateMatureLeaderReactions(now = Date.now()) {
+    const routes = this.routeStore.validateMatureLeaderReactions(now);
+    for (const route of routes) {
+      this.logger.success(`Rota validada automaticamente: a reação do líder ${route.validationLeaderName || "identificado"} permaneceu ativa por 1 hora.`);
+    }
+    if (routes.length) this.emitSnapshot();
+    return routes;
   }
 
   rejectRoute(routeId: string, rejectedBy: string, reason?: string) {
@@ -1944,7 +1953,7 @@ export class BotService extends EventEmitter {
       this.handleDeletedMessageNotice(msg);
 
       if (this.monitoringMode === "target" && config.targetDispatchMode === "ocr" && msg.message.imageMessage) {
-        this.logger.info("Imagem recebida no grupo alvo. Iniciando análise OCR e cruzamento com romaneio.");
+        this.logger.info("Imagem recebida no grupo alvo. Iniciando análise da IA e cruzamento com o romaneio.");
         this.scheduleRouteImageProcessing(msg, activeGroup.jid);
       }
 
@@ -2034,6 +2043,19 @@ export class BotService extends EventEmitter {
 
     const messageId = String(msg?.key?.id || Date.now());
     const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
+    const analysisStartedAtMs = Date.now();
+    const analysisStartedAt = new Date(analysisStartedAtMs).toISOString();
+    const groupName = this.groups.find((group) => group.id === groupJid)?.name || config.grupoAlvoNome || groupJid;
+    const analysisContext = () => {
+      const analysisFinishedAtMs = Date.now();
+      return {
+        groupJid,
+        groupName,
+        analysisStartedAt,
+        analysisFinishedAt: new Date(analysisFinishedAtMs).toISOString(),
+        analysisDurationMs: Math.max(0, analysisFinishedAtMs - analysisStartedAtMs)
+      };
+    };
 
     try {
       this.ocrRouteSelection = {
@@ -2060,7 +2082,7 @@ export class BotService extends EventEmitter {
         maxReadings: 1
       });
       if (sequence !== this.latestRouteImageSequence) {
-        this.logger.info("OCR descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
+        this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;
       }
       const detectedRoutes = findAllGaiolaCodesFromOcr(ocr);
@@ -2069,16 +2091,17 @@ export class BotService extends EventEmitter {
         this.emit("image-analysis", {
           id: `${this.clientEmail}:${messageId}`,
           messageId,
-          result: "unreadable"
+          result: "unreadable",
+          ...analysisContext()
         });
         const wanted = this.describeConfiguredOcrRoutes(config);
-        this.logger.info(`OCR (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou bairro na coluna correta com gaiola segura na mesma linha. Procurando: ${wanted}.`);
+        this.logger.info(`IA visual (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou bairro na coluna correta com gaiola segura na mesma linha. Procurando: ${wanted}.`);
         const recognizedLines = ocr.variants
           ?.flatMap((variant) => variant.lines.map((line) => line.text.trim()).filter(Boolean))
           .filter((line, index, all) => all.indexOf(line) === index)
           .slice(0, 60)
           .join(" | ") || ocr.text.replace(/\s*\r?\n\s*/g, " | ").trim();
-        this.logger.info(`OCR texto reconhecido: ${recognizedLines.slice(0, 3000) || "(vazio)"}`);
+        this.logger.info(`IA - texto reconhecido: ${recognizedLines.slice(0, 3000) || "(vazio)"}`);
         this.ocrRouteSelection = {
           status: "error",
           options: [],
@@ -2092,7 +2115,7 @@ export class BotService extends EventEmitter {
 
       const dispatchKey = `${groupJid}:${normalizarTexto(detected.route)}:${detected.code}`;
       if (this.lastOcrDispatchKey === dispatchKey) {
-        this.logger.info(`OCR recebeu rota repetida: ${detected.route} ${detected.code}. Atualizando opções no painel.`);
+        this.logger.info(`A IA recebeu rota repetida: ${detected.route} ${detected.code}. Atualizando opções no painel.`);
       }
 
       this.lastOcrDispatchKey = dispatchKey;
@@ -2115,7 +2138,8 @@ export class BotService extends EventEmitter {
         route: detected.route,
         bairro: detected.bairro,
         gaiola: detected.code,
-        confidence: detected.confidence
+        confidence: detected.confidence,
+        ...analysisContext()
       });
 
       const options = detectedRoutes
@@ -2134,7 +2158,7 @@ export class BotService extends EventEmitter {
           options: [],
           message: "Imagem analisada, mas não encontrei opções no romaneio. Confira se o romaneio correto foi confirmado."
         };
-        this.logger.warning(`[ROMANEIO] OCR detectou ${detected.route} ${detected.code}, mas não há opções de romaneio para aprovação.`);
+        this.logger.warning(`[ROMANEIO] A IA detectou ${detected.route} ${detected.code}, mas não há opções de romaneio para aprovação.`);
         this.emitSnapshot();
         return;
       }
@@ -2176,16 +2200,17 @@ export class BotService extends EventEmitter {
       this.emit("image-analysis", {
         id: `${this.clientEmail}:${messageId}`,
         messageId,
-        result: "failed"
+        result: "failed",
+        ...analysisContext()
       });
       this.ocrRouteSelection = {
         status: "error",
         options: [],
         processedAt: new Date().toISOString(),
-        message: `OCR da imagem falhou: ${this.getErrorMessage(error)}`
+        message: `Análise da IA falhou: ${this.getErrorMessage(error)}`
       };
       this.emitSnapshot();
-      this.logger.warning(`OCR da imagem falhou: ${this.getErrorMessage(error)}`);
+      this.logger.warning(`Análise da IA falhou: ${this.getErrorMessage(error)}`);
     } finally {
       try {
         fs.rmSync(imagePath, { force: true });
@@ -2295,7 +2320,7 @@ export class BotService extends EventEmitter {
         });
       return matched.length ? matched : fallback();
     } catch (error) {
-      this.logger.warning(`[ROMANEIO] Falha ao cruzar OCR com romaneio: ${this.getErrorMessage(error)}`);
+      this.logger.warning(`[ROMANEIO] Falha ao cruzar a análise da IA com o romaneio: ${this.getErrorMessage(error)}`);
       return fallback();
     }
   }
@@ -2518,7 +2543,7 @@ export class BotService extends EventEmitter {
           action === "remove"
             ? `Reação removida ${routeReaction.isAdmin ? `pelo líder ${routeReaction.leaderName || senderPhone}` : `por ${senderPhone || "remetente desconhecido"}`}. Mantive o evento para auditoria.`
             : routeReaction.isAdmin
-            ? `Reação do líder ${routeReaction.leaderName || senderPhone} foi encontrada. Aguardando validação manual do admin.`
+            ? `Reação do líder ${routeReaction.leaderName || senderPhone} foi encontrada. O admin pode decidir agora; se permanecer ativa por 1 hora, a rota será validada automaticamente.`
             : `Reação recebida em rota enviada (${senderPhone || "remetente desconhecido"}). IDs: ${senderIdentifiers.join(" / ") || "nenhum"}`
         );
         if (action === "remove" && routeReaction.isAdmin) {

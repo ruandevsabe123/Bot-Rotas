@@ -22,12 +22,13 @@ export function LogsPanel({ logs }: Props) {
       <div className="timeline-list">
         {logs.length ? (
           logs.map((log) => {
-            const kind = getTimelineKind(log.message);
+            const message = log.message.replace(/\bOCR\b/g, "IA");
+            const kind = getTimelineKind(message);
             return (
               <div className={`timeline-row timeline-${kind} log-${log.level}`} key={log.id}>
                 <span className="timeline-dot" />
                 <time>{new Date(log.timestamp).toLocaleTimeString("pt-BR")}</time>
-                <p>{log.message}</p>
+                <p>{message}</p>
               </div>
             );
           })

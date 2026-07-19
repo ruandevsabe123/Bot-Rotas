@@ -208,6 +208,11 @@ export type ImageUsageEntry = {
   bairro?: string;
   gaiola?: string;
   confidence?: number;
+  groupJid?: string;
+  groupName?: string;
+  analysisStartedAt?: string;
+  analysisFinishedAt?: string;
+  analysisDurationMs?: number;
   routeDispatchId?: string;
   note?: string;
   createdAt: string;
@@ -488,6 +493,9 @@ export type RouteDispatch = {
   rejectedAt?: string;
   rejectedBy?: string;
   decisionReason?: string;
+  decisionSource?: "admin_manual" | "leader_reaction_1h";
+  validationReactionAt?: string;
+  validationLeaderName?: string;
   reactions: RouteReaction[];
   reactionsHistory?: RouteReactionHistoryEvent[];
   lastReactionState?: RouteReactionFinalState;

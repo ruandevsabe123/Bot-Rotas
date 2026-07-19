@@ -10,6 +10,7 @@ import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderSto
 import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
 import { ImageUsageStore } from "./imageUsageStore";
+import { PushNotificationStore } from "./pushNotificationStore";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
@@ -17,6 +18,7 @@ const port = Number(process.env.PORT || 3000);
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
+const LEADER_REACTION_VALIDATION_INTERVAL_MS = 60_000;
 const DAILY_SESSION_RESET_HOUR = Number(process.env.DAILY_SESSION_RESET_HOUR || 0);
 const DAILY_SESSION_RESET_MINUTE = Number(process.env.DAILY_SESSION_RESET_MINUTE || 0);
 
@@ -134,6 +136,11 @@ const panelUsers = mergeStoredUsers(parsePanelUsers(
   process.env.PANEL_USERS,
   configuredAdminEmails
 ), panelUserStore.all(), configuredAdminEmails);
+const pushNotificationStore = new PushNotificationStore(
+  path.join(dataDir, "push_notifications.json"),
+  { publicKey: process.env.WEB_PUSH_PUBLIC_KEY, privateKey: process.env.WEB_PUSH_PRIVATE_KEY },
+  process.env.WEB_PUSH_SUBJECT || "mailto:admin@botrotas.local"
+);
 const panelSessionSecret = process.env.PANEL_SESSION_SECRET || crypto.randomBytes(32).toString("base64url");
 const keepAliveUrl =
   process.env.KEEP_ALIVE_URL ||
@@ -163,6 +170,8 @@ const bots = new Map<string, BotService>();
 const clients = new Set<Client>();
 const adminClients = new Set<http.ServerResponse>();
 const lastSnapshotState = new Map<string, { qrCode: string; logId: string }>();
+const lastCriticalBotState = new Map<string, { status: string; monitoringEnabled: boolean; analysisKey: string; incidentId: string }>();
+let lastAdminPendingRouteIds: Set<string> | undefined;
 
 function getUserStorageKey(email: string) {
   return email.toLowerCase().replace(/[^a-z0-9._-]+/g, "_");
@@ -247,6 +256,7 @@ function getBotForEmail(email: string) {
   });
 
   nextBot.on("snapshot", () => {
+    handleCriticalBotNotifications(normalizedEmail, nextBot.getSnapshot());
     broadcastSnapshot(normalizedEmail);
     broadcastAdminSnapshot();
     logSnapshot(normalizedEmail);
@@ -557,6 +567,16 @@ function bulkDecideAdminRoutes(routeIds: string[], adminEmail: string, decision:
   return changed;
 }
 
+function findRouteForImageUsage(entry: { id: string; routeDispatchId?: string }) {
+  for (const email of getClientEmails()) {
+    const route = getBotForEmail(email).getRoutes().find((item) =>
+      item.id === entry.routeDispatchId || item.ocr?.analysisId === entry.id
+    );
+    if (route) return route;
+  }
+  return undefined;
+}
+
 function getAdminSupportMessagesSnapshot(): AdminSupportMessagesSnapshot {
   const messages = supportMessageStore.all().map((message) => ({
     ...message,
@@ -574,12 +594,17 @@ function getAdminLogsSnapshot(): AdminLogEntry[] {
     .flatMap((email) =>
       getBotForEmail(email).getSnapshot().logs.map((log) => ({
         ...log,
+        message: presentAiTerminology(log.message),
         clientEmail: email,
         clientColor: colorByEmail.get(email) || defaultUserColor(email)
       }))
     )
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 1000);
+}
+
+function presentAiTerminology(message: string) {
+  return String(message || "").replace(/\bOCR\b/g, "IA");
 }
 
 function getAdminMonitorSnapshot(): AdminMonitorSnapshot {
@@ -594,7 +619,12 @@ function getAdminMonitorSnapshot(): AdminMonitorSnapshot {
 }
 
 function getClientSnapshot(email: string) {
-  return { ...getBotForEmail(email).getSnapshot(), imageUsage: imageUsageStore.clientSnapshot(email) };
+  const snapshot = getBotForEmail(email).getSnapshot();
+  return {
+    ...snapshot,
+    logs: snapshot.logs.map((log) => ({ ...log, message: presentAiTerminology(log.message) })),
+    imageUsage: imageUsageStore.clientSnapshot(email)
+  };
 }
 
 function broadcastLeadersToBots() {
@@ -636,11 +666,69 @@ function clearAdminMaintenanceData(target: string, clientEmail?: string) {
 }
 
 function broadcastAdminSnapshot() {
+  handleCriticalAdminNotifications();
   if (!adminClients.size) return;
   const payload = `data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`;
   for (const client of adminClients) {
     client.write(payload);
   }
+}
+
+function sendClientPush(email: string, notification: Parameters<PushNotificationStore["sendToEmails"]>[1]) {
+  void pushNotificationStore.sendToEmails([email], notification).catch((error) => console.error("Falha ao enviar notificação ao cliente:", error));
+}
+
+function sendAdminPush(notification: Parameters<PushNotificationStore["sendToRole"]>[1]) {
+  void pushNotificationStore.sendToRole("admin", notification).catch((error) => console.error("Falha ao enviar notificação ao admin:", error));
+}
+
+function handleCriticalBotNotifications(email: string, snapshot: ReturnType<BotService["getSnapshot"]>) {
+  const selection = snapshot.ocrRouteSelection;
+  const analysisKey = selection?.processedAt ? `${selection.status}:${selection.processedAt}` : "";
+  const incident = (snapshot.routeDispatches || []).find((route) => route.clientIncident?.required && !route.clientIncident.answeredAt);
+  const incidentId = incident?.id || "";
+  const current = { status: snapshot.status, monitoringEnabled: Boolean(snapshot.monitoringEnabled), analysisKey, incidentId };
+  const previous = lastCriticalBotState.get(email);
+  lastCriticalBotState.set(email, current);
+  if (!previous) return;
+
+  if (snapshot.status === "waiting_qr" && previous.status !== "waiting_qr") {
+    sendClientPush(email, { title: "WhatsApp precisa ser conectado", body: "Abra o painel e leia o QR Code para o bot voltar a funcionar.", tag: `qr:${email}`, url: "/?tab=settings", requireInteraction: true });
+  }
+  if ((snapshot.status === "error" || snapshot.status === "disconnected") && previous.monitoringEnabled && previous.status !== snapshot.status) {
+    const notification = { title: "Bot interrompido", body: `O WhatsApp de ${email} parou durante o monitoramento. Abra o painel para reconectar.`, tag: `bot-offline:${email}`, url: "/?tab=settings", requireInteraction: true };
+    sendClientPush(email, notification);
+    sendAdminPush(notification);
+  }
+  if (analysisKey && analysisKey !== previous.analysisKey && selection?.status === "ready" && snapshot.config.ocrManualRouteSelection) {
+    sendClientPush(email, { title: "Análise da IA concluída", body: "A IA cruzou a imagem com o romaneio. Escolha a rota no painel.", tag: `ia-ready:${analysisKey}`, url: "/?tab=image", requireInteraction: true });
+  }
+  if (analysisKey && analysisKey !== previous.analysisKey && selection?.status === "error") {
+    const notification = { title: "IA precisa de atenção", body: selection.message || "A IA não conseguiu confirmar uma rota segura na imagem.", tag: `ia-error:${analysisKey}`, url: "/?tab=image", requireInteraction: true };
+    sendClientPush(email, notification);
+    sendAdminPush({ ...notification, body: `${email}: ${notification.body}` });
+  }
+  if (incidentId && incidentId !== previous.incidentId) {
+    sendClientPush(email, { title: "Ação obrigatória no painel", body: incident?.clientIncident?.message || "Explique o incidente para liberar o bot.", tag: `incident:${incidentId}`, url: "/", requireInteraction: true });
+  }
+}
+
+function handleCriticalAdminNotifications() {
+  const pendingRoutes = getAdminRoutesSnapshot().pendingReactionRoutes;
+  const currentIds = new Set(pendingRoutes.map((route) => route.id));
+  if (lastAdminPendingRouteIds) {
+    for (const route of pendingRoutes) {
+      if (lastAdminPendingRouteIds.has(route.id)) continue;
+      sendAdminPush({
+        title: "Rota aguardando validação",
+        body: `${route.clientEmail}: ${route.ocr?.bairro || route.ocr?.route || route.messages[0] || route.groupName}`,
+        tag: `validation:${route.id}`,
+        url: "/?admin=validations",
+        requireInteraction: true
+      });
+    }
+  }
+  lastAdminPendingRouteIds = currentIds;
 }
 
 function broadcastSnapshot(email: string) {
@@ -864,6 +952,40 @@ function startKeepAlive() {
   }, KEEP_ALIVE_INTERVAL_MS);
 }
 
+function processMatureLeaderReactionValidations() {
+  let changed = false;
+  for (const email of getClientEmails()) {
+    const bot = getBotForEmail(email);
+    const validatedRoutes = bot.validateMatureLeaderReactions();
+    for (const route of validatedRoutes) {
+      const usageEntry = route.ocr?.analysisId ? imageUsageStore.get(route.ocr.analysisId) : undefined;
+      if (usageEntry?.decision !== "excluded") {
+        imageUsageStore.decideForRoute(
+          route.ocr?.analysisId,
+          route.id,
+          "billable",
+          "Validação automática por reação do líder (1h)"
+        );
+      }
+      const source = route.ocr ? "Imagem IA" : route.trigger === "manual" ? "Envio manual pelo painel" : "Rota configurada automática";
+      sendClientPush(email, {
+        title: "Rota validada pelo líder",
+        body: `${source}: a reação permaneceu ativa por 1 hora e a rota foi validada.`,
+        tag: `leader-validation:${route.id}`,
+        url: "/?tab=image"
+      });
+      changed = true;
+    }
+  }
+  if (changed) broadcastAdminSnapshot();
+}
+
+function startLeaderReactionAutoValidation() {
+  const timer = setInterval(processMatureLeaderReactionValidations, LEADER_REACTION_VALIDATION_INTERVAL_MS);
+  timer.unref();
+  setTimeout(processMatureLeaderReactionValidations, 2_000).unref();
+}
+
 function getNextDailyResetDelay() {
   const now = new Date();
   const next = new Date(now);
@@ -905,6 +1027,13 @@ const server = http.createServer(async (request, response) => {
         email: String(body.email || ""),
         message: String(body.message || ""),
         userAgent: String(request.headers["user-agent"] || "")
+      });
+      sendAdminPush({
+        title: "Nova mensagem de suporte",
+        body: `${message.email}: ${message.message.slice(0, 180)}`,
+        tag: `support:${message.id}`,
+        url: "/?admin=support",
+        requireInteraction: true
       });
       broadcastAdminSnapshot();
       sendJson(response, 200, { ok: true, message });
@@ -1016,6 +1145,34 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "GET" && url.pathname === "/api/push/config") {
+      sendJson(response, 200, { publicKey: pushNotificationStore.publicKey() });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/push/subscribe") {
+      const body = await readJsonBody<{ subscription?: { endpoint?: string; expirationTime?: number | null; keys?: { p256dh?: string; auth?: string } } }>(request);
+      try {
+        const subscription = body.subscription;
+        pushNotificationStore.upsert(authorizedEmail, getUserRole(authorizedEmail), {
+          endpoint: String(subscription?.endpoint || ""),
+          expirationTime: subscription?.expirationTime ?? null,
+          keys: { p256dh: String(subscription?.keys?.p256dh || ""), auth: String(subscription?.keys?.auth || "") }
+        });
+        sendJson(response, 200, { ok: true });
+      } catch (error) {
+        sendJson(response, 400, { error: error instanceof Error ? error.message : "Não foi possível ativar notificações." });
+      }
+      return;
+    }
+
+    if (request.method === "DELETE" && url.pathname === "/api/push/subscribe") {
+      const body = await readJsonBody<{ endpoint?: string }>(request);
+      pushNotificationStore.remove(String(body.endpoint || ""), authorizedEmail);
+      sendJson(response, 200, { ok: true });
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/api/admin/routes") {
       if (!requireAdmin(authorizedEmail, response)) return;
       sendJson(response, 200, getAdminRoutesSnapshot());
@@ -1037,6 +1194,10 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, 404, { error: "Análise não encontrada ou decisão inválida." });
         return;
       }
+      const decidedEntry = imageUsageStore.get(id);
+      const linkedRoute = decidedEntry ? findRouteForImageUsage(decidedEntry) : undefined;
+      if (linkedRoute && decision === "billable") validateAdminRoute(linkedRoute.id, authorizedEmail);
+      if (linkedRoute && decision === "excluded") rejectAdminRoute(linkedRoute.id, authorizedEmail, body.note || "Análise de imagem excluída manualmente pelo admin.");
       broadcastAdminSnapshot();
       const entry = imageUsageStore.snapshot().entries.find((item) => item.id === id);
       if (entry) broadcastSnapshot(entry.clientEmail);
@@ -1334,6 +1495,7 @@ server.listen(port, "0.0.0.0", () => {
     console.log("Aviso: defina PANEL_USERS e PANEL_ADMIN_EMAILS no Render para liberar e proteger o painel publico.");
   }
   startKeepAlive();
+  startLeaderReactionAutoValidation();
   startDailySessionReset();
 });
 

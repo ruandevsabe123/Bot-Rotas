@@ -101,6 +101,24 @@ export async function getPanelMe() {
   return user;
 }
 
+export function getPushConfig() {
+  return fetchJson<{ publicKey: string }>("/api/push/config");
+}
+
+export function savePushSubscription(subscription: PushSubscriptionJSON) {
+  return fetchJson<{ ok: boolean }>("/api/push/subscribe", {
+    method: "POST",
+    body: JSON.stringify({ subscription })
+  });
+}
+
+export function removePushSubscription(endpoint: string) {
+  return fetchJson<{ ok: boolean }>("/api/push/subscribe", {
+    method: "DELETE",
+    body: JSON.stringify({ endpoint })
+  });
+}
+
 export function getAdminRoutes() {
   return fetchJson<AdminRoutesSnapshot>("/api/admin/routes");
 }
@@ -374,7 +392,7 @@ function createWebApi(): DesktopApi {
           startPolling();
         };
         // Alguns proxies mantêm o SSE aberto, mas deixam de entregar eventos.
-        // A consulta leve garante que análises OCR prontas sempre cheguem ao painel.
+        // A consulta leve garante que análises da IA prontas sempre cheguem ao painel.
         startPolling();
         return () => {
           source.close();

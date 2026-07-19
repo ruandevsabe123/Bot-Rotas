@@ -1,4 +1,4 @@
-import { HelpCircle, LogOut, MessageCircle, RotateCcw, Trash2 } from "lucide-react";
+import { Bell, HelpCircle, LogOut, MessageCircle, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { BotConfig } from "../../../shared/types";
 import { sendSupportMessage } from "../api";
@@ -11,10 +11,12 @@ type Props = {
   onClearLogs: () => void;
   onFactoryReset: () => void;
   onSaveGeneralSettings?: (settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number }) => void;
+  onEnableNotifications?: () => void | Promise<void>;
+  notificationStatus?: string;
   onLogout?: () => void;
 };
 
-export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onSaveGeneralSettings, onLogout }: Props) {
+export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onSaveGeneralSettings, onEnableNotifications, notificationStatus, onLogout }: Props) {
   const [supportMessage, setSupportMessage] = useState("");
   const [supportStatus, setSupportStatus] = useState("");
 
@@ -78,6 +80,19 @@ export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onCl
           <p>Grupo alvo: {config.grupoAlvoNome || config.grupoAlvoJid || "não configurado"}</p>
         </div>
         <span className={monitoringEnabled ? "mini-badge ok" : "mini-badge"}>{monitoringEnabled ? "Ativo" : "Aguardando"}</span>
+      </article>
+
+      <article className="panel option-panel">
+        <div>
+          <p className="panel-label">Alertas importantes</p>
+          <h2>Notificações em segundo plano</h2>
+          <p>Receba avisos quando a IA exigir uma decisão, o WhatsApp desconectar ou o bot precisar de atenção.</p>
+          {notificationStatus ? <span className="settings-inline-status">{notificationStatus}</span> : null}
+        </div>
+        <button className="button primary" disabled={busy || !onEnableNotifications} type="button" onClick={onEnableNotifications}>
+          <Bell size={18} />
+          Ativar alertas
+        </button>
       </article>
 
       <article className="panel option-panel warm-mode-panel">

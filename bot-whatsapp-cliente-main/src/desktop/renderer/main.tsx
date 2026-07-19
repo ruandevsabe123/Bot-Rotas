@@ -8,7 +8,7 @@ createRoot(document.getElementById("root") as HTMLElement).render(
   </React.StrictMode>
 );
 
-if ("serviceWorker" in navigator && window.location.protocol === "https:") {
+if ("serviceWorker" in navigator && (window.location.protocol === "https:" || ["localhost", "127.0.0.1"].includes(window.location.hostname))) {
   window.addEventListener("load", () => {
     let refreshing = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => {
