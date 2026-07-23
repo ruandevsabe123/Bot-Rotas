@@ -1,0 +1,26 @@
+services:
+  bot-race:
+    build: .
+    restart: unless-stopped
+    init: true
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATA_DIR: /data
+      PANEL_USERS: ${PANEL_USERS}
+      PANEL_ADMIN_EMAILS: ${PANEL_ADMIN_EMAILS}
+      PANEL_SESSION_SECRET: ${PANEL_SESSION_SECRET}
+      ADMIN_PHONE_NUMBERS: ${ADMIN_PHONE_NUMBERS:-}
+      LEADER_CONTACTS: ${LEADER_CONTACTS:-}
+    volumes:
+      - bot_race_data:/data
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2G
+
+volumes:
+  bot_race_data:

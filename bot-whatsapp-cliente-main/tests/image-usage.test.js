@@ -71,7 +71,7 @@ function createPendingRoute(store, id = "rota-lider") {
   });
 }
 
-test("valida automaticamente uma única vez após reação do líder permanecer por uma hora", () => {
+test("reação permanece pendente até decisão manual do admin", () => {
   const store = new RouteStore(tempFile("routes-auto.json"));
   createPendingRoute(store);
   const now = Date.parse("2026-07-18T12:00:00.000Z");
@@ -85,16 +85,13 @@ test("valida automaticamente uma única vez após reação do líder permanecer 
     leaderName: "Líder Teste"
   }, "add");
 
-  assert.equal(store.validateMatureLeaderReactions(now - 2 * 60_000).length, 0);
-  const validated = store.validateMatureLeaderReactions(now);
-  assert.equal(validated.length, 1);
-  assert.equal(validated[0].decisionStatus, "validated");
-  assert.equal(validated[0].decisionSource, "leader_reaction_1h");
-  assert.equal(validated[0].validationLeaderName, "Líder Teste");
-  assert.equal(store.validateMatureLeaderReactions(now + 60_000).length, 0);
+  assert.equal(store.all()[0].decisionStatus, "pending");
+  assert.equal(store.validate("rota-lider", "admin@teste.com"), true);
+  assert.equal(store.all()[0].decisionStatus, "validated");
+  assert.equal(store.all()[0].decisionSource, "admin_manual");
 });
 
-test("decisão manual continua podendo substituir a validação automática", () => {
+test("admin pode rejeitar manualmente uma rota reagida", () => {
   const store = new RouteStore(tempFile("routes-override.json"));
   createPendingRoute(store, "rota-override");
   const now = Date.parse("2026-07-18T12:00:00.000Z");
@@ -107,7 +104,6 @@ test("decisão manual continua podendo substituir a validação automática", ()
     isAdmin: true,
     leaderName: "Líder Teste"
   }, "add");
-  store.validateMatureLeaderReactions(now);
   assert.equal(store.reject("rota-override", "admin@teste.com", "Teste do cliente"), true);
 
   const route = store.all()[0];
@@ -116,7 +112,7 @@ test("decisão manual continua podendo substituir a validação automática", ()
   assert.equal(route.validationLeaderName, undefined);
 });
 
-test("não valida automaticamente quando o líder remove a reação", () => {
+test("remoção de reação também permanece pendente para análise manual", () => {
   const store = new RouteStore(tempFile("routes-remove.json"));
   createPendingRoute(store, "rota-removida");
   const now = Date.parse("2026-07-18T12:00:00.000Z");
@@ -130,7 +126,6 @@ test("não valida automaticamente quando o líder remove a reação", () => {
   store.recordReactionEvent("mensagem-1", { ...base, id: "mensagem-1:lider:add", timestamp: new Date(now - 70 * 60_000).toISOString() }, "add");
   store.recordReactionEvent("mensagem-1", { ...base, id: "mensagem-1:lider:remove", timestamp: new Date(now - 10 * 60_000).toISOString(), emoji: "" }, "remove");
 
-  assert.equal(store.validateMatureLeaderReactions(now).length, 0);
   assert.equal(store.all()[0].decisionStatus, "pending");
 });
 

@@ -1,15 +1,23 @@
-FROM node:20-bookworm
+FROM node:20-bookworm AS build
+
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build && npm prune --omit=dev
+
+FROM node:20-bookworm-slim AS runtime
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-por \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-COPY package*.json ./
-RUN npm install --include=dev
-
-COPY . .
-RUN npm run build
-
+ENV NODE_ENV=production DATA_DIR=/data PORT=3000
+COPY --from=build /app/package*.json ./
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+RUN mkdir -p /data && chown -R node:node /app /data
+USER node
+EXPOSE 3000
 CMD ["node", "dist/server.js"]

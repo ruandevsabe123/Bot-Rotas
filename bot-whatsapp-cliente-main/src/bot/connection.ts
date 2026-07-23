@@ -90,12 +90,14 @@ const SOCKET_CONNECT_TIMEOUT_MS = 15000;
 const SOCKET_QUERY_TIMEOUT_MS = 15000;
 const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
-const TARGET_PARALLEL_STAGGER_MS = 0;
+// A primeira rota ganha acesso exclusivo ao socket; a segunda sai logo depois.
+const TARGET_PARALLEL_STAGGER_MS = 18;
 const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
 const PREPARED_RELAY_TTL_MS = 25000;
-const CRITICAL_PREPARED_RELAY_TTL_MS = 5000;
+// Maior que o keep-alive crítico (5s), evitando reconstrução no exato evento de abertura.
+const CRITICAL_PREPARED_RELAY_TTL_MS = 12000;
 const NOT_ACCEPTABLE_ALERT_THRESHOLD = 3;
 const NOT_ACCEPTABLE_RETRY_DELAYS_MS = [25, 55, 90, 140, 220, 340, 520, 800, 1200, 1800, 2600, 3800];
 const GENERIC_RETRY_DELAYS_MS = [80, 180, 360, 700, 1100];
@@ -180,6 +182,7 @@ export class BotService extends EventEmitter {
   private lastOcrInsight?: RouteOcrInsight;
   private ocrRouteSelection: OcrRouteSelectionState = { status: "idle", options: [] };
   private processingImageIds = new Set<string>();
+  private ocrAnalysisDurationsMs: number[] = [];
   private latestRouteImageSequence = 0;
   private warmupMessagesSent = 0;
   private warmupCompleted = false;
@@ -216,6 +219,7 @@ export class BotService extends EventEmitter {
   private leaderContacts = new Map<string, string>();
   private activeRouteByCycle = new Map<number, string>();
   private routeMessageIdsByCycle = new Map<number, string[]>();
+  private outboundRaceTracking = new Map<string, { cycleId: number; timeline: RouteDispatchTimeline; relayCalledAt: number; routeId?: string }>();
   private dispatchQueueIdByCycle = new Map<number, string>();
   private pendingCredsSave?: NodeJS.Timeout;
   private saveCredsNow?: () => Promise<void> | void;
@@ -298,7 +302,8 @@ export class BotService extends EventEmitter {
         p95FirstAckMs: telemetry.p95FirstAckMs,
         notAcceptableCount: telemetry.notAcceptableCount,
         lastNotAcceptableAt: telemetry.lastNotAcceptableAt,
-        criticalWarmMode: this.isCriticalWarmWindow()
+        criticalWarmMode: this.isCriticalWarmWindow(),
+        raceHealth: this.getRaceHealth(telemetry.p95FirstAckMs)
       },
       routeDispatches: this.getRoutes(),
       statusEvents: this.statusEvents,
@@ -496,15 +501,6 @@ export class BotService extends EventEmitter {
     const changed = this.routeStore.validate(routeId, validatedBy, { source: "admin_manual" });
     if (changed) this.emitSnapshot();
     return changed;
-  }
-
-  validateMatureLeaderReactions(now = Date.now()) {
-    const routes = this.routeStore.validateMatureLeaderReactions(now);
-    for (const route of routes) {
-      this.logger.success(`Rota validada automaticamente: a reação do líder ${route.validationLeaderName || "identificado"} permaneceu ativa por 1 hora.`);
-    }
-    if (routes.length) this.emitSnapshot();
-    return routes;
   }
 
   rejectRoute(routeId: string, rejectedBy: string, reason?: string) {
@@ -1375,7 +1371,7 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean }) {
+  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; ocrManualRouteSelection?: boolean }) {
     const currentConfig = this.configStore.load();
     const changingMode = Boolean(settings.nuclearMode) !== currentConfig.nuclearMode;
     if (this.monitoringEnabled && changingMode) {
@@ -1387,8 +1383,6 @@ export class BotService extends EventEmitter {
     const nextSettings: Partial<BotConfig> = { nuclearMode: Boolean(settings.nuclearMode) };
     if (settings.fastMode !== undefined) nextSettings.fastMode = Boolean(settings.fastMode);
     if (settings.minSendDelayMs !== undefined) nextSettings.minSendDelayMs = settings.minSendDelayMs;
-    if (settings.alwaysWarmMode !== undefined) nextSettings.alwaysWarmMode = Boolean(settings.alwaysWarmMode);
-    if (settings.keepAliveIntervalMs !== undefined) nextSettings.keepAliveIntervalMs = settings.keepAliveIntervalMs;
     if (settings.ocrManualRouteSelection !== undefined) nextSettings.ocrManualRouteSelection = Boolean(settings.ocrManualRouteSelection);
     const config = this.configStore.save(nextSettings);
     this.refreshRuntimeSettings(config);
@@ -1591,11 +1585,12 @@ export class BotService extends EventEmitter {
       connectTimeoutMs: SOCKET_CONNECT_TIMEOUT_MS,
       defaultQueryTimeoutMs: SOCKET_QUERY_TIMEOUT_MS,
       keepAliveIntervalMs: SOCKET_KEEP_ALIVE_INTERVAL_MS,
-      emitOwnEvents: false,
+      emitOwnEvents: true,
       fireInitQueries: true,
       printQRInTerminal: false,
       markOnlineOnConnect: true,
-      syncFullHistory: true,
+      // Histórico completo consome CPU e I/O sem ajudar o disparo em tempo real.
+      syncFullHistory: false,
       browser: Browsers?.ubuntu?.("Bot Rota Rapida") || ["Ubuntu", "Chrome", "1.0.0"],
       shouldIgnoreJid: (jid: string) => this.shouldIgnoreSocketJid(jid),
       cachedGroupMetadata: async (jid: string) => this.groupMetadataCache.get(jid)
@@ -1609,6 +1604,7 @@ export class BotService extends EventEmitter {
       this.handleGroupsUpdate(updates, connectionId)
     );
     this.sock.ev.on("messages.upsert", ({ messages }: any) => {
+      this.recordOutboundGroupEcho(messages || []);
       this.cacheRomaneioDocumentCandidates(messages, connectionId);
       void this.handleMessages(messages, connectionId);
     });
@@ -2101,6 +2097,7 @@ export class BotService extends EventEmitter {
         status: "analyzing",
         options: [],
         processedAt: new Date().toISOString(),
+        estimatedDurationSeconds: this.estimateOcrAnalysisSeconds(),
         message: "Analisando imagem..."
       };
       this.pendingOcrMessages = [];
@@ -2254,6 +2251,9 @@ export class BotService extends EventEmitter {
       this.emitSnapshot();
       this.logger.warning(`Análise da IA falhou: ${this.getErrorMessage(error)}`);
     } finally {
+      if (sequence === this.latestRouteImageSequence) {
+        this.ocrAnalysisDurationsMs = [...this.ocrAnalysisDurationsMs, Date.now() - analysisStartedAtMs].slice(-10);
+      }
       try {
         fs.rmSync(imagePath, { force: true });
       } catch {
@@ -2613,13 +2613,25 @@ export class BotService extends EventEmitter {
     const looksLikeDelete = type === "0" || type.includes("revoke") || type.includes("delete");
     if (!looksLikeDelete) return;
     if (this.routeStore.recordDeletedMessage(deletedMessageId)) {
-      this.routeStore.requireClientIncident(deletedMessageId, {
-        kind: "message_deleted",
-        message: "Uma mensagem enviada pelo bot foi apagada no WhatsApp. Explique o que aconteceu para liberar o bot."
-      });
-      this.logger.warning("Mensagem enviada pelo bot foi apagada. Bot bloqueado até o cliente explicar o ocorrido.");
+      this.logger.warning("Mensagem enviada pelo bot foi apagada. Evento registrado para auditoria, sem bloquear o cliente.");
       this.emitSnapshot();
     }
+  }
+
+  private getRaceHealth(p95FirstAckMs: number): BotPerformanceMetrics["raceHealth"] {
+    if (this.status !== "connected" || !this.currentUserInTargetGroup) return "critical";
+    if (!p95FirstAckMs) return "unknown";
+    if (p95FirstAckMs <= 250) return "excellent";
+    if (p95FirstAckMs <= 700) return "good";
+    if (p95FirstAckMs <= 1200) return "poor";
+    return "critical";
+  }
+
+  private estimateOcrAnalysisSeconds() {
+    if (!this.ocrAnalysisDurationsMs.length) return 30;
+    const sorted = [...this.ocrAnalysisDurationsMs].sort((a, b) => a - b);
+    const p75Index = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.75));
+    return Math.max(5, Math.ceil(sorted[p75Index] / 1000) + 2);
   }
 
   private async getReactionSenderIdentifiers(msg: any, reaction: any) {
@@ -2848,6 +2860,7 @@ export class BotService extends EventEmitter {
         : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline);
     this.enqueueDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
     const routeId = this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger, timeline);
+    this.attachRaceTrackingRoute(cycleId, routeId);
     this.markQueuedDispatchSending(cycleId, routeId);
 
     const trackedSendCycle = sendCycle.finally(() => {
@@ -3082,6 +3095,7 @@ export class BotService extends EventEmitter {
             timeline.firstRelayCallMs = Math.max(0, calledAt - sendStartedAt);
           }
           this.addTimelineEvent(timeline, `Relay ${messageNumber} chamado`, calledAt, "info", String(fullMessage?.key?.id || ""));
+          this.trackOutboundRaceMessage(String(fullMessage?.key?.id || ""), cycleId, timeline, calledAt);
           await this.relayPreparedMessage(sock, jid, fullMessage);
           return String(fullMessage?.key?.id || "");
         })();
@@ -3328,6 +3342,37 @@ export class BotService extends EventEmitter {
     return fullMessage;
   }
 
+  private trackOutboundRaceMessage(messageId: string, cycleId: number, timeline: RouteDispatchTimeline, relayCalledAt: number) {
+    if (!messageId) return;
+    this.outboundRaceTracking.set(messageId, { cycleId, timeline, relayCalledAt, routeId: this.activeRouteByCycle.get(cycleId) });
+    setTimeout(() => this.outboundRaceTracking.delete(messageId), 60_000);
+  }
+
+  private attachRaceTrackingRoute(cycleId: number, routeId: string) {
+    for (const tracking of this.outboundRaceTracking.values()) {
+      if (tracking.cycleId === cycleId) tracking.routeId = routeId;
+    }
+  }
+
+  private recordOutboundGroupEcho(messages: any[]) {
+    for (const message of messages) {
+      const messageId = String(message?.key?.id || "");
+      const tracking = this.outboundRaceTracking.get(messageId);
+      if (!tracking) continue;
+      const receivedAt = Date.now();
+      const timeline = tracking.timeline;
+      if (!timeline.firstGroupEchoAt) {
+        timeline.firstGroupEchoAt = new Date(receivedAt).toISOString();
+        timeline.firstGroupEchoMs = Math.max(0, receivedAt - new Date(timeline.sendStartedAt).getTime());
+        this.performanceMetrics.lastFirstGroupEchoMs = timeline.firstGroupEchoMs;
+        this.addTimelineEvent(timeline, "Mensagem retornou pelo WhatsApp", receivedAt, "success", `${receivedAt - tracking.relayCalledAt}ms após o relay`);
+        if (tracking.routeId) this.routeStore.update(tracking.routeId, { dispatchTimeline: timeline });
+        this.emitSnapshot();
+      }
+      this.outboundRaceTracking.delete(messageId);
+    }
+  }
+
   private buildRelayTextMessage(sock: any, jid: string, mensagem: string) {
     const messageId = generateMessageIDV2(sock.user?.id);
     return generateWAMessageFromContent(
@@ -3518,7 +3563,6 @@ export class BotService extends EventEmitter {
   private startWarmKeepAlive() {
     this.clearWarmKeepAliveTimer();
     const config = this.configStore.load();
-    if (!config.alwaysWarmMode) return;
 
     const intervalMs = this.getWarmKeepAliveIntervalMs(config);
     this.warmKeepAliveIntervalMs = intervalMs;
@@ -3531,7 +3575,7 @@ export class BotService extends EventEmitter {
 
   private async runWarmKeepAlive(reason: "timer" | "armado" = "timer") {
     const config = this.configStore.load();
-    if (!config.alwaysWarmMode || !this.monitoringEnabled || this.status !== "connected" || !this.sock) return false;
+    if (!this.monitoringEnabled || this.status !== "connected" || !this.sock) return false;
     if (this.criticalDispatchInProgress || this.activeSendCycle) return false;
     const nextInterval = this.getWarmKeepAliveIntervalMs(config);
     if (this.warmKeepAliveIntervalMs && nextInterval !== this.warmKeepAliveIntervalMs) {
@@ -3558,14 +3602,10 @@ export class BotService extends EventEmitter {
       this.lastKeepAliveAt = new Date().toISOString();
       this.lastKeepAliveDurationMs = Date.now() - startedAt;
       this.keepAliveCount += 1;
-      if (reason === "timer") {
-        this.logger.info(`Modo sempre quente: cache do ${activeGroup.label} renovado em ${this.lastKeepAliveDurationMs}ms.`);
-      }
       this.emitSnapshot();
       return true;
     } catch (error) {
       this.lastKeepAliveDurationMs = Date.now() - startedAt;
-      this.logger.warning(`Modo sempre quente falhou: ${this.getErrorMessage(error)}`);
       return false;
     }
   }
@@ -3604,11 +3644,17 @@ export class BotService extends EventEmitter {
     if (this.criticalDispatchInProgress || this.activeSendCycle) return;
 
     try {
+      this.performanceMetrics.eventLoopLagMs = await this.measureEventLoopLag();
       await this.prewarmConnection();
     } catch (error) {
       this.logger.warning(`Health check falhou: ${this.getErrorMessage(error)}. Reiniciando conexão.`);
       await this.restart();
     }
+  }
+
+  private measureEventLoopLag() {
+    const startedAt = Date.now();
+    return new Promise<number>((resolve) => setImmediate(() => resolve(Math.max(0, Date.now() - startedAt))));
   }
 
   private async prewarmConnection(message?: string) {

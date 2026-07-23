@@ -3,6 +3,8 @@ services:
     name: bot-whatsapp-painel
     env: docker
     plan: starter
+    healthCheckPath: /api/ping
+    maxShutdownDelaySeconds: 60
     envVars:
       - key: NODE_ENV
         value: production
@@ -16,6 +18,10 @@ services:
         sync: false
       - key: KEEP_ALIVE_URL
         sync: false
+      - key: KEEP_ALIVE_WHEN_MONITORING
+        value: "false"
+      - key: DAILY_SESSION_RESET_ENABLED
+        value: "false"
       - key: BOT_PHONE_NUMBER
         sync: false
     disk:

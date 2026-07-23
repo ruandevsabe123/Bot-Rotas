@@ -68,6 +68,20 @@ function createWindow() {
   mainWindow.on("closed", () => {
     mainWindow = undefined;
   });
+
+  const repaintAndRefresh = () => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+    mainWindow.webContents.invalidate();
+    mainWindow.webContents.send("bot:snapshot", bot.getSnapshot());
+  };
+  mainWindow.on("restore", repaintAndRefresh);
+  mainWindow.on("show", repaintAndRefresh);
+  mainWindow.on("focus", repaintAndRefresh);
+  mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    if (details.reason !== "clean-exit" && mainWindow && !mainWindow.isDestroyed()) {
+      void mainWindow.webContents.reload();
+    }
+  });
 }
 
 function registerIpc() {

@@ -10,13 +10,12 @@ type Props = {
   userEmail?: string;
   onClearLogs: () => void;
   onFactoryReset: () => void;
-  onSaveGeneralSettings?: (settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number }) => void;
   onEnableNotifications?: () => void | Promise<void>;
   notificationStatus?: string;
   onLogout?: () => void;
 };
 
-export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onSaveGeneralSettings, onEnableNotifications, notificationStatus, onLogout }: Props) {
+export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onEnableNotifications, notificationStatus, onLogout }: Props) {
   const [supportMessage, setSupportMessage] = useState("");
   const [supportStatus, setSupportStatus] = useState("");
 
@@ -93,37 +92,6 @@ export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onCl
           <Bell size={18} />
           Ativar alertas
         </button>
-      </article>
-
-      <article className="panel option-panel warm-mode-panel">
-        <div>
-          <p className="panel-label">Performance</p>
-          <h2>Modo sempre quente</h2>
-          <p>Mantém o grupo e o plano de disparo renovados em silêncio para reduzir a primeira mensagem depois de muito tempo parado.</p>
-        </div>
-        <label className="toggle-row">
-          <input
-            checked={config.alwaysWarmMode}
-            disabled={busy || !onSaveGeneralSettings}
-            type="checkbox"
-            onChange={(event) => onSaveGeneralSettings?.({ alwaysWarmMode: event.target.checked })}
-          />
-          {config.alwaysWarmMode ? "Ligado" : "Desligado"}
-        </label>
-        <label className="keepalive-select">
-          Intervalo
-          <select
-            disabled={busy || !onSaveGeneralSettings}
-            value={config.keepAliveIntervalMs}
-            onChange={(event) => onSaveGeneralSettings?.({ keepAliveIntervalMs: Number(event.target.value) })}
-          >
-            <option value={60000}>1 min</option>
-            <option value={180000}>3 min</option>
-            <option value={300000}>5 min</option>
-            <option value={480000}>8 min</option>
-            <option value={600000}>10 min</option>
-          </select>
-        </label>
       </article>
 
       <article className="panel option-panel">

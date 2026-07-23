@@ -66,7 +66,7 @@ type AdminCommandCenterProps = {
   onLogout: () => void;
 };
 
-type AdminPage = "today" | "dashboard" | "clients" | "validations" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
+type AdminPage = "today" | "dashboard" | "clients" | "validations" | "reactions" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
 type DatePreset = "today" | "7d" | "30d" | "all";
 type DecisionFilter = "all" | "pending" | "validated" | "rejected" | "leader" | "removed";
 type ModeFilter = "all" | "target" | "test" | "manual" | "automatic" | "ocr" | "warmup" | "simulation";
@@ -158,7 +158,7 @@ function routeDecision(route: RouteDispatch) {
 function routeDecisionLabel(route: RouteDispatch) {
   if (routeDecision(route) === "pending") return "Pendente";
   if (routeDecision(route) === "rejected") return "Excluída pelo admin";
-  return route.decisionSource === "leader_reaction_1h" ? "Validada pelo líder após 1h" : "Validada pelo admin";
+  return route.decisionSource === "leader_reaction_1h" ? "Validação automática antiga" : "Validada pelo admin";
 }
 
 function triggerLabel(route: RouteDispatch) {
@@ -400,7 +400,7 @@ function RouteSidePanel({
             <dt>Recência</dt><dd>{routeAgeState(route) === "recent" ? "Recente (menos de 10 minutos)" : "Passada (mais de 10 minutos)"}</dd>
             <dt>Atualizada</dt><dd>{formatDate(route.updatedAt)}</dd>
             <dt>Motivo do admin</dt><dd>{route.decisionReason || "Sem motivo registrado"}</dd>
-            <dt>Tipo da validação</dt><dd>{route.decisionSource === "leader_reaction_1h" ? "Automática após 1h de reação do líder" : routeDecision(route) === "pending" ? "Aguardando decisão" : "Decisão manual do admin"}</dd>
+            <dt>Tipo da validação</dt><dd>{route.decisionSource === "leader_reaction_1h" ? "Registro legado da automação desativada" : routeDecision(route) === "pending" ? "Aguardando decisão manual" : "Decisão manual do admin"}</dd>
             {route.validationLeaderName ? <><dt>Líder responsável</dt><dd>{route.validationLeaderName}</dd></> : null}
             {route.validationReactionAt ? <><dt>Reação iniciada</dt><dd>{formatDate(route.validationReactionAt)}</dd></> : null}
           </dl>
@@ -603,7 +603,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [page, setPage] = useState<AdminPage>(() => {
     const requested = new URLSearchParams(window.location.search).get("admin");
-    return ["today", "dashboard", "clients", "validations", "usage", "history", "logs", "support", "reports", "maintenance", "settings"].includes(requested || "")
+    return ["today", "dashboard", "clients", "validations", "reactions", "usage", "history", "logs", "support", "reports", "maintenance", "settings"].includes(requested || "")
       ? requested as AdminPage
       : "dashboard";
   });
@@ -738,9 +738,11 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   );
 
   const realValidationRoutes = visibleRoutes.filter(isRealValidationRoute);
-  const validationReviewRoutes = visibleRoutes.filter(needsRealReview);
-  const validationPendingRoutes = realValidationRoutes.filter((route) => routeDecision(route) === "pending");
-  const validationReactionRoutes = validationPendingRoutes.filter(hasAnyReaction);
+  const validationReviewRoutes = visibleRoutes.filter((route) => needsRealReview(route) && !route.ocr);
+  const validationPendingRoutes = realValidationRoutes.filter((route) => routeDecision(route) === "pending" && !route.ocr);
+  const reactedImageRoutes = visibleRoutes.filter((route) => Boolean(route.ocr) && hasAnyReaction(route));
+  const pendingReactedImageRoutes = reactedImageRoutes.filter((route) => routeDecision(route) === "pending");
+  const decidedReactedImageRoutes = reactedImageRoutes.filter((route) => routeDecision(route) !== "pending");
   const validationLeaderRoutes = realValidationRoutes.filter(hasLeaderReaction);
   const validatedRealRoutes = realValidationRoutes.filter((route) => routeDecision(route) === "validated");
   const nonValidationRoutes = visibleRoutes.filter((route) => !isRealValidationRoute(route));
@@ -767,6 +769,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     ...support.messages.filter((message) => !message.read).slice(0, 8).map((message) => ({ id: `support-${message.id}`, tone: "red" as const, title: "Suporte não lido", detail: `${message.email} - ${message.message}` }))
   ].slice(0, 18);
   const importantNotifications = [
+    ...(pendingReactedImageRoutes.length ? [{ id: "reactions", title: "Imagens reagidas para decidir", detail: `${pendingReactedImageRoutes.length} análise(s) precisam da sua decisão.`, target: "reactions" as AdminPage }] : []),
     ...(validationReviewRoutes.length ? [{ id: "validations", title: "Rotas aguardando validação", detail: `${validationReviewRoutes.length} rota(s) precisam da sua decisão.`, target: "validations" as AdminPage }] : []),
     ...(imageUsage.totals.pending ? [{ id: "usage", title: "Análises aguardando cobrança", detail: `${imageUsage.totals.pending} análise(s) ainda precisam ser classificadas.`, target: "usage" as AdminPage }] : []),
     ...(support.unread ? [{ id: "support", title: "Mensagens de suporte", detail: `${support.unread} mensagem(ns) ainda não foram lidas.`, target: "support" as AdminPage }] : []),
@@ -991,11 +994,13 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   }
 
   async function decideSelected(decision: "validate" | "reject") {
-    const allowedIds = page === "validations"
+    const allowedIds = page === "reactions"
+      ? selectedRoutes.filter((routeId) => pendingReactedImageRoutes.some((route) => route.id === routeId))
+      : page === "validations"
       ? selectedRoutes.filter((routeId) => realValidationRoutes.some((route) => route.id === routeId))
       : selectedRoutes;
     if (!allowedIds.length) {
-      showToast("Selecione rotas reais do grupo de motoristas.");
+      showToast(page === "reactions" ? "Selecione análises reagidas que ainda estejam pendentes." : "Selecione rotas reais do grupo de motoristas.");
       return;
     }
     setBusy(true);
@@ -1140,6 +1145,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
     { id: "dashboard", label: "Dashboard", Icon: Gauge },
     { id: "clients", label: "Clientes", Icon: Users, badge: onlineClients },
     { id: "validations", label: "Validações", Icon: ShieldCheck, badge: validationReviewRoutes.length },
+    { id: "reactions", label: "Reações IA", Icon: MessageSquareText, badge: pendingReactedImageRoutes.length },
     { id: "usage", label: "Análises", Icon: BrainCircuit, badge: imageUsage.totals.pending },
     { id: "history", label: "Histórico", Icon: History },
     { id: "logs", label: "Logs", Icon: Activity, badge: visibleLogs.filter((log) => log.level === "error").length },
@@ -1161,7 +1167,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
         </div>
         <nav>
           {pages.map(({ id, label, Icon, badge }) => (
-            <button className={page === id ? "active" : ""} key={id} type="button" onClick={() => { setPage(id); if (id === "validations") setDecisionFilter("all"); }}>
+            <button className={page === id ? "active" : ""} key={id} type="button" onClick={() => { setPage(id); if (id === "validations" || id === "reactions") setDecisionFilter("all"); }}>
               <Icon size={19} />
               <span>{label}</span>
               {badge ? <b>{badge}</b> : null}
@@ -1314,7 +1320,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             <div className="adminx-metrics">
               <MetricCard Icon={Wifi} tone="green" title="Clientes online" value={onlineClients} detail={`${connectedBots} bots conectados`} />
               <MetricCard Icon={Bot} tone="blue" title="Monitoramentos" value={activeBots} detail="ativos agora" />
-              <MetricCard Icon={ShieldCheck} tone="yellow" title="Para examinar" value={validationReviewRoutes.length} detail={`${validationReactionRoutes.length} com reação`} />
+              <MetricCard Icon={ShieldCheck} tone="yellow" title="Para examinar" value={validationReviewRoutes.length} detail={`${pendingReactedImageRoutes.length} imagem(ns) reagida(s) em fila própria`} />
               <MetricCard Icon={Inbox} tone="red" title="Suporte" value={support.unread} detail="não lidas" />
               <MetricCard Icon={CheckCircle2} tone="green" title="Taxa validação" value={`${validationRate}%`} detail={`${validatedCount}/${visibleRoutes.length}`} />
               <MetricCard Icon={MessageSquareText} tone="yellow" title="Reações removidas" value={removedReactionRoutes.length} detail="auditáveis" />
@@ -1400,7 +1406,6 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             <RouteFilters decisionFilter={decisionFilter} modeFilter={modeFilter} onDecision={setDecisionFilter} onMode={setModeFilter} />
             <div className="adminx-metrics">
               <MetricCard Icon={ShieldCheck} tone="yellow" title="Para examinar" value={validationReviewRoutes.length} detail={REAL_VALIDATION_GROUP} />
-              <MetricCard Icon={MessageSquareText} tone="blue" title="Com reação" value={validationReactionRoutes.length} detail="automática após 1h ativa" />
               <MetricCard Icon={Clock3} tone="yellow" title="Pendentes reais" value={validationPendingRoutes.length} detail="aguardando decisão" />
             </div>
             <div className="adminx-page-actions">
@@ -1415,6 +1420,31 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
                   <StatusPill tone="yellow">{validationReviewRoutes.length} rota(s)</StatusPill>
                 </div>
                 <RouteTable routes={validationReviewRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+              </article>
+            </section>
+          </section>
+        ) : null}
+
+        {page === "reactions" ? (
+          <section className="adminx-page">
+            <div className="adminx-metrics">
+              <MetricCard Icon={MessageSquareText} tone="yellow" title="Para decidir" value={pendingReactedImageRoutes.length} detail="somente imagens reagidas" />
+              <MetricCard Icon={CheckCircle2} tone="green" title="Já decididas" value={decidedReactedImageRoutes.length} detail="histórico manual" />
+              <MetricCard Icon={BrainCircuit} tone="blue" title="Total reagidas" value={reactedImageRoutes.length} detail="análises de imagem" />
+            </div>
+            <div className="adminx-page-actions">
+              <StatusPill tone="yellow">{selectedRoutes.filter((id) => pendingReactedImageRoutes.some((route) => route.id === id)).length} pendente(s) selecionada(s)</StatusPill>
+              <button className="button primary" disabled={!selectedRoutes.some((id) => pendingReactedImageRoutes.some((route) => route.id === id)) || busy} type="button" onClick={() => decideSelected("validate")}>Validar selecionadas</button>
+              <button className="button danger" disabled={!selectedRoutes.some((id) => pendingReactedImageRoutes.some((route) => route.id === id)) || busy} type="button" onClick={() => decideSelected("reject")}>Rejeitar selecionadas</button>
+            </div>
+            <section className="adminx-validation-grid">
+              <article className="adminx-panel adminx-panel-wide">
+                <div className="adminx-panel-head">
+                  <div><p>Decisão exclusivamente manual</p><h2>Análises de imagem que receberam reação</h2></div>
+                  <StatusPill tone={pendingReactedImageRoutes.length ? "yellow" : "green"}>{pendingReactedImageRoutes.length ? `${pendingReactedImageRoutes.length} pendente(s)` : "Fila limpa"}</StatusPill>
+                </div>
+                <RouteTable routes={reactedImageRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id], "Rejeitar análise reagida")} />
+                {!reactedImageRoutes.length ? <p className="adminx-empty-text">Nenhuma análise de imagem reagida neste período.</p> : null}
               </article>
             </section>
           </section>
@@ -1644,7 +1674,7 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
 
       <nav className="adminx-bottom-nav">
         {pages.map(({ id, label, Icon, badge }) => (
-          <button className={page === id ? "active" : ""} key={id} type="button" onClick={() => { setPage(id); if (id === "validations") setDecisionFilter("all"); }}>
+          <button className={page === id ? "active" : ""} key={id} type="button" onClick={() => { setPage(id); if (id === "validations" || id === "reactions") setDecisionFilter("all"); }}>
             {badge ? <b>{badge}</b> : null}
             <Icon size={21} />
             <span>{label}</span>
