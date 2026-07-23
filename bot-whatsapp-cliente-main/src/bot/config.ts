@@ -120,8 +120,9 @@ export class ConfigStore {
       testMessageIntervalMs: this.clampNumber(input.testMessageIntervalMs, 0, 10000, DEFAULT_CONFIG.testMessageIntervalMs),
       fastMode: typeof input.fastMode === "boolean" ? input.fastMode : DEFAULT_CONFIG.fastMode,
       minSendDelayMs: this.clampNumber(input.minSendDelayMs, 0, 5000, DEFAULT_CONFIG.minSendDelayMs),
-      alwaysWarmMode: typeof input.alwaysWarmMode === "boolean" ? input.alwaysWarmMode : DEFAULT_CONFIG.alwaysWarmMode,
-      keepAliveIntervalMs: this.clampNumber(input.keepAliveIntervalMs, 60000, 900000, DEFAULT_CONFIG.keepAliveIntervalMs),
+      // O aquecimento é parte obrigatória do motor de corrida, não uma preferência do cliente.
+      alwaysWarmMode: true,
+      keepAliveIntervalMs: DEFAULT_CONFIG.keepAliveIntervalMs,
       ocrManualRouteSelection: typeof input.ocrManualRouteSelection === "boolean" ? input.ocrManualRouteSelection : DEFAULT_CONFIG.ocrManualRouteSelection,
       // support legacy `codigosMensagens` if present
       codigosMensagensAlvo: Array.isArray(input.codigosMensagensAlvo)

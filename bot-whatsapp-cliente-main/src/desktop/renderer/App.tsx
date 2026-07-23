@@ -574,12 +574,14 @@ function CockpitPanel({
 
 function PerformanceStrip({ snapshot }: { snapshot: BotSnapshot }) {
   const metrics = snapshot.performanceMetrics || emptySnapshot.performanceMetrics!;
+  const healthLabel = metrics.raceHealth === "excellent" ? "excelente" : metrics.raceHealth === "good" ? "boa" : metrics.raceHealth === "poor" ? "atenção" : metrics.raceHealth === "critical" ? "crítica" : "sem teste";
+  const healthTone = metrics.raceHealth === "excellent" || metrics.raceHealth === "good" ? "green" : metrics.raceHealth === "unknown" ? "blue" : "yellow";
   return (
     <section className="performance-strip">
-      <AdminMetric Icon={Zap} tone="yellow" title="Latência" value={`${metrics.lastDispatchLatencyMs}ms`} detail={`média ${metrics.averageDispatchLatencyMs}ms`} />
+      <AdminMetric Icon={Zap} tone={healthTone} title="Saúde da corrida" value={healthLabel} detail={`loop ${metrics.eventLoopLagMs || 0}ms`} />
       <AdminMetric Icon={Gauge} tone="green" title="ACK P95" value={`${metrics.p95FirstAckMs || 0}ms`} detail={`relay ${metrics.p95FirstRelayMs || 0}ms`} />
-      <AdminMetric Icon={Activity} tone={(metrics.notAcceptableCount || 0) ? "yellow" : "blue"} title="not-acceptable" value={metrics.notAcceptableCount || 0} detail={metrics.lastNotAcceptableAt ? formatShortDate(metrics.lastNotAcceptableAt) : "sem alerta"} />
-      <AdminMetric Icon={Wifi} tone={metrics.criticalWarmMode ? "green" : snapshot.config.alwaysWarmMode ? "blue" : "yellow"} title="Sempre quente" value={metrics.criticalWarmMode ? "crítico" : snapshot.config.alwaysWarmMode ? "ativo" : "off"} detail={metrics.lastKeepAliveAt ? `keep ${metrics.lastKeepAliveDurationMs || 0}ms` : `${formatDuration(metrics.armedIdleMs || 0)} parado`} />
+      <AdminMetric Icon={Activity} tone={(metrics.notAcceptableCount || 0) ? "yellow" : "blue"} title="Retorno do grupo" value={metrics.lastFirstGroupEchoMs === undefined ? "—" : `${metrics.lastFirstGroupEchoMs}ms`} detail={(metrics.notAcceptableCount || 0) ? `${metrics.notAcceptableCount} recusas` : "sem recusa"} />
+      <AdminMetric Icon={Wifi} tone={snapshot.status === "connected" ? "green" : "yellow"} title="Conexão" value={snapshot.status === "connected" ? "online" : "atenção"} detail={snapshot.monitoringEnabled ? `armado há ${formatDuration(metrics.armedIdleMs || 0)}` : "aguardando operação"} />
     </section>
   );
 }
@@ -2575,7 +2577,8 @@ function OcrRouteApprovalPanel({
   if (selection.status === "analyzing") {
     const startedAt = Date.parse(selection.processedAt || "") || analysisClock;
     const elapsedSeconds = Math.max(0, Math.floor((analysisClock - startedAt) / 1000));
-    const timer = `${String(Math.floor(elapsedSeconds / 60)).padStart(2, "0")}:${String(elapsedSeconds % 60).padStart(2, "0")}`;
+    const remainingSeconds = Math.max(0, (selection.estimatedDurationSeconds || 30) - elapsedSeconds);
+    const timer = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
     return (
       <section className="quick-panel ocr-approval-panel">
         <div className="panel-heading">
@@ -2583,7 +2586,7 @@ function OcrRouteApprovalPanel({
             <p className="panel-label">Bot imagem</p>
             <h2>Analisando imagem...</h2>
             <strong className="ocr-analysis-timer" aria-live="polite">{timer}</strong>
-            <p className="approval-message">Tempo real da operação. As rotas aparecerão automaticamente ao terminar.</p>
+            <p className="approval-message">Tempo estimado restante. As rotas aparecerão automaticamente ao terminar.</p>
           </div>
           <span className="mini-badge">VISÃO</span>
         </div>
@@ -2783,6 +2786,22 @@ export default function App() {
     return () => {
       mounted = false;
       unsubscribe();
+    };
+  }, [authenticated, userRole]);
+
+  useEffect(() => {
+    if (!authenticated || userRole === "admin") return;
+    const refreshAfterBackground = () => {
+      if (document.visibilityState !== "visible") return;
+      void botApi.getSnapshot().then(setSnapshot).catch(() => undefined);
+    };
+    document.addEventListener("visibilitychange", refreshAfterBackground);
+    window.addEventListener("focus", refreshAfterBackground);
+    window.addEventListener("pageshow", refreshAfterBackground);
+    return () => {
+      document.removeEventListener("visibilitychange", refreshAfterBackground);
+      window.removeEventListener("focus", refreshAfterBackground);
+      window.removeEventListener("pageshow", refreshAfterBackground);
     };
   }, [authenticated, userRole]);
 
@@ -3184,11 +3203,9 @@ export default function App() {
     });
   }
 
-  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean }) {
+  function saveGeneralSettings(settings: { nuclearMode?: boolean; ocrManualRouteSelection?: boolean }) {
     return runAction(() => botApi.saveGeneralSettings({
       nuclearMode: settings.nuclearMode ?? snapshot.config.nuclearMode,
-      alwaysWarmMode: settings.alwaysWarmMode ?? snapshot.config.alwaysWarmMode,
-      keepAliveIntervalMs: settings.keepAliveIntervalMs ?? snapshot.config.keepAliveIntervalMs,
       ocrManualRouteSelection: settings.ocrManualRouteSelection ?? snapshot.config.ocrManualRouteSelection
     }));
   }
@@ -3620,7 +3637,6 @@ export default function App() {
             userEmail={userEmail}
             onClearLogs={confirmClearLogs}
             onFactoryReset={confirmFactoryReset}
-            onSaveGeneralSettings={saveGeneralSettings}
             onEnableNotifications={handleEnableNotifications}
             notificationStatus={notificationStatus}
             onLogout={() => {

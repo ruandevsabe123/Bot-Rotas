@@ -21,6 +21,7 @@ const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
 const LEADER_REACTION_VALIDATION_INTERVAL_MS = 60_000;
 const DAILY_SESSION_RESET_HOUR = Number(process.env.DAILY_SESSION_RESET_HOUR || 0);
 const DAILY_SESSION_RESET_MINUTE = Number(process.env.DAILY_SESSION_RESET_MINUTE || 0);
+const DAILY_SESSION_RESET_ENABLED = process.env.DAILY_SESSION_RESET_ENABLED === "true";
 
 function ensureWritableDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
@@ -860,8 +861,6 @@ async function handleAction(bot: BotService, action: string, body: any) {
     case "save-general-settings":
       bot.setGeneralSettings({
         nuclearMode: Boolean(body.nuclearMode),
-        alwaysWarmMode: body.alwaysWarmMode,
-        keepAliveIntervalMs: body.keepAliveIntervalMs,
         ocrManualRouteSelection: body.ocrManualRouteSelection
       });
       break;
@@ -999,14 +998,22 @@ function getNextDailyResetDelay() {
 }
 
 function startDailySessionReset() {
+  if (!DAILY_SESSION_RESET_ENABLED) {
+    console.log("Reset diário de conexões desativado; sessões permanecerão aquecidas.");
+    return;
+  }
+
   const scheduleNext = () => {
     const delay = getNextDailyResetDelay();
     const nextRun = new Date(Date.now() + delay).toLocaleString("pt-BR", { timeZone: "America/Belem" });
     console.log(`Reset diário de segurança agendado para: ${nextRun}`);
 
     setTimeout(async () => {
-      console.log("Reset diário de segurança: parando conexões e monitoramentos ativos. Auth do WhatsApp preservado.");
-      await Promise.all(Array.from(bots.values()).map((bot) => bot.shutdownAndClearSession().catch(() => undefined)));
+      console.log("Reset diário: renovando conexões e restaurando monitoramentos ativos.");
+      await Promise.all(Array.from(bots.values()).map(async (bot) => {
+        if (bot.getSnapshot().status === "disconnected") return;
+        await bot.restart().catch(() => undefined);
+      }));
       scheduleNext();
     }, delay);
   };

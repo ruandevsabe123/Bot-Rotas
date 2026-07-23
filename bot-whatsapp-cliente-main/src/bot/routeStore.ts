@@ -450,7 +450,8 @@ export class RouteStore {
         : undefined,
       clientIncident: input.clientIncident && typeof input.clientIncident === "object"
         ? {
-            required: Boolean(input.clientIncident.required),
+            // Deleted messages stay auditable, but they no longer block the client.
+            required: input.clientIncident.kind === "message_deleted" ? false : Boolean(input.clientIncident.required),
             kind: input.clientIncident.kind === "message_deleted" ? "message_deleted" : "leader_reaction_removed",
             createdAt: typeof input.clientIncident.createdAt === "string" ? input.clientIncident.createdAt : new Date().toISOString(),
             message: typeof input.clientIncident.message === "string" ? input.clientIncident.message : "",

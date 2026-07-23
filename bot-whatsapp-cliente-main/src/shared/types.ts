@@ -92,6 +92,9 @@ export type BotPerformanceMetrics = {
   notAcceptableCount?: number;
   lastNotAcceptableAt?: string;
   criticalWarmMode?: boolean;
+  lastFirstGroupEchoMs?: number;
+  eventLoopLagMs?: number;
+  raceHealth?: "excellent" | "good" | "poor" | "critical" | "unknown";
 };
 
 export type RouteDispatchTimelineEvent = {
@@ -108,10 +111,12 @@ export type RouteDispatchTimeline = {
   sendStartedAt: string;
   firstRelayCalledAt?: string;
   firstAckAt?: string;
+  firstGroupEchoAt?: string;
   finishedAt?: string;
   detectionDelayMs: number;
   firstRelayCallMs?: number;
   firstAckMs?: number;
+  firstGroupEchoMs?: number;
   ackWaitMs?: number;
   totalDurationMs?: number;
   timeoutUsed: boolean;
@@ -165,6 +170,7 @@ export type OcrRouteSelectionState = {
   source?: string;
   line?: string;
   processedAt?: string;
+  estimatedDurationSeconds?: number;
   imagePreviewUrl?: string;
   options: OcrRouteOption[];
   selectedOptionIds?: string[];
