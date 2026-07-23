@@ -80,61 +80,6 @@ export class RouteStore {
     return changed;
   }
 
-  validateMatureLeaderReactions(now = Date.now(), minimumAgeMs = 60 * 60 * 1000) {
-    const validated: RouteDispatch[] = [];
-    const nowIso = new Date(now).toISOString();
-    this.routes = this.getRoutes().map((route) => {
-      if ((route.decisionStatus || (route.validated ? "validated" : "pending")) !== "pending") return route;
-      if (route.mode !== "target" || ["warmup", "simulation", "target-simulation"].includes(route.trigger || "")) return route;
-      if (route.clientIncident?.required && !route.clientIncident.answeredAt) return route;
-      const reaction = this.findActiveLeaderReaction(route);
-      if (!reaction) return route;
-      const reactedAt = new Date(reaction.timestamp).getTime();
-      if (!Number.isFinite(reactedAt) || now - reactedAt < minimumAgeMs) return route;
-      const next: RouteDispatch = {
-        ...route,
-        validated: true,
-        decisionStatus: "validated",
-        validatedAt: nowIso,
-        validatedBy: `Automático - líder ${reaction.leaderName || reaction.senderPhone || "identificado"}`,
-        decisionSource: "leader_reaction_1h",
-        decisionReason: "Reação do líder permaneceu ativa por pelo menos 1 hora.",
-        validationReactionAt: reaction.timestamp,
-        validationLeaderName: reaction.leaderName,
-        updatedAt: nowIso
-      };
-      validated.push(next);
-      return next;
-    });
-    if (validated.length) this.scheduleSave(0);
-    return validated;
-  }
-
-  private findActiveLeaderReaction(route: RouteDispatch) {
-    const seen = new Set<string>();
-    for (const event of route.reactionsHistory || []) {
-      const messageId = event.id.split(":")[0] || event.id;
-      const sender = event.senderPhone || event.senderJid;
-      const key = `${messageId}:${sender}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (event.action === "add" && event.isAdmin) return event;
-    }
-    if (route.lastReactionState?.status === "active" && route.lastReactionState.isAdmin && route.lastReactionState.updatedAt) {
-      return {
-        id: `legacy:${route.id}`,
-        timestamp: route.lastReactionState.updatedAt,
-        action: "add" as const,
-        emoji: route.lastReactionState.emoji || "",
-        senderJid: "",
-        senderPhone: route.lastReactionState.senderPhone || "",
-        isAdmin: true,
-        leaderName: route.lastReactionState.leaderName
-      };
-    }
-    return undefined;
-  }
-
   reject(id: string, rejectedBy: string, reason?: string) {
     let changed = false;
     const now = new Date().toISOString();

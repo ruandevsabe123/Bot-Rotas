@@ -18,7 +18,6 @@ const port = Number(process.env.PORT || 3000);
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
-const LEADER_REACTION_VALIDATION_INTERVAL_MS = 60_000;
 const DAILY_SESSION_RESET_HOUR = Number(process.env.DAILY_SESSION_RESET_HOUR || 0);
 const DAILY_SESSION_RESET_MINUTE = Number(process.env.DAILY_SESSION_RESET_MINUTE || 0);
 const DAILY_SESSION_RESET_ENABLED = process.env.DAILY_SESSION_RESET_ENABLED === "true";
@@ -512,7 +511,16 @@ function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
     .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const pendingReactionRoutes = allRoutes
-    .filter((route) => (route.decisionStatus || (route.validated ? "validated" : "pending")) === "pending" && route.reactions.length)
+    .filter((route) => {
+      const pending = (route.decisionStatus || (route.validated ? "validated" : "pending")) === "pending";
+      const reacted = Boolean(
+        route.reactions.length ||
+        route.reactionsHistory?.length ||
+        route.lastReactionState?.status === "active" ||
+        route.lastReactionState?.status === "removed"
+      );
+      return pending && Boolean(route.ocr) && reacted;
+    })
     .sort((a, b) => {
       const aLast = a.reactions[0]?.timestamp || a.updatedAt;
       const bLast = b.reactions[0]?.timestamp || b.updatedAt;
@@ -726,7 +734,7 @@ function handleCriticalAdminNotifications() {
         title: "Rota aguardando validação",
         body: `${route.clientEmail}: ${route.ocr?.bairro || route.ocr?.route || route.messages[0] || route.groupName}`,
         tag: `validation:${route.id}`,
-        url: "/?admin=validations",
+        url: "/?admin=reactions",
         requireInteraction: true
       });
     }
@@ -951,40 +959,6 @@ function startKeepAlive() {
         console.log(`Keep-alive falhou: ${error instanceof Error ? error.message : String(error)}`);
       });
   }, KEEP_ALIVE_INTERVAL_MS);
-}
-
-function processMatureLeaderReactionValidations() {
-  let changed = false;
-  for (const email of getClientEmails()) {
-    const bot = getBotForEmail(email);
-    const validatedRoutes = bot.validateMatureLeaderReactions();
-    for (const route of validatedRoutes) {
-      const usageEntry = route.ocr?.analysisId ? imageUsageStore.get(route.ocr.analysisId) : undefined;
-      if (usageEntry?.decision !== "excluded") {
-        imageUsageStore.decideForRoute(
-          route.ocr?.analysisId,
-          route.id,
-          "billable",
-          "Validação automática por reação do líder (1h)"
-        );
-      }
-      const source = route.ocr ? "Imagem IA" : route.trigger === "manual" ? "Envio manual pelo painel" : "Rota configurada automática";
-      sendClientPush(email, {
-        title: "Rota validada pelo líder",
-        body: `${source}: a reação permaneceu ativa por 1 hora e a rota foi validada.`,
-        tag: `leader-validation:${route.id}`,
-        url: "/?tab=image"
-      });
-      changed = true;
-    }
-  }
-  if (changed) broadcastAdminSnapshot();
-}
-
-function startLeaderReactionAutoValidation() {
-  const timer = setInterval(processMatureLeaderReactionValidations, LEADER_REACTION_VALIDATION_INTERVAL_MS);
-  timer.unref();
-  setTimeout(processMatureLeaderReactionValidations, 2_000).unref();
 }
 
 function getNextDailyResetDelay() {
@@ -1504,7 +1478,6 @@ server.listen(port, "0.0.0.0", () => {
     console.log("Aviso: defina PANEL_USERS e PANEL_ADMIN_EMAILS no Render para liberar e proteger o painel publico.");
   }
   startKeepAlive();
-  startLeaderReactionAutoValidation();
   startDailySessionReset();
 });
 

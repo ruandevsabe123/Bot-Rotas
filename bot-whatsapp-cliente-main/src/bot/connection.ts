@@ -503,15 +503,6 @@ export class BotService extends EventEmitter {
     return changed;
   }
 
-  validateMatureLeaderReactions(now = Date.now()) {
-    const routes = this.routeStore.validateMatureLeaderReactions(now);
-    for (const route of routes) {
-      this.logger.success(`Rota validada automaticamente: a reação do líder ${route.validationLeaderName || "identificado"} permaneceu ativa por 1 hora.`);
-    }
-    if (routes.length) this.emitSnapshot();
-    return routes;
-  }
-
   rejectRoute(routeId: string, rejectedBy: string, reason?: string) {
     const changed = this.routeStore.reject(routeId, rejectedBy, reason);
     if (changed) this.emitSnapshot();
