@@ -6,8 +6,8 @@ const test = require("node:test");
 
 const { ConfigStore, DEFAULT_CONFIG } = require("../dist/bot/config.js");
 
-test("mantém o aquecimento obrigatório mesmo se uma configuração antiga tentar desligá-lo", () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bot-forced-warm-"));
+test("preserva a escolha e limita o intervalo de aquecimento do cliente", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bot-optional-warm-"));
   const file = path.join(dir, "config.json");
   fs.writeFileSync(file, JSON.stringify({
     ...DEFAULT_CONFIG,
@@ -17,10 +17,10 @@ test("mantém o aquecimento obrigatório mesmo se uma configuração antiga tent
 
   const store = new ConfigStore(file);
   const loaded = store.load();
-  assert.equal(loaded.alwaysWarmMode, true);
-  assert.equal(loaded.keepAliveIntervalMs, DEFAULT_CONFIG.keepAliveIntervalMs);
+  assert.equal(loaded.alwaysWarmMode, false);
+  assert.equal(loaded.keepAliveIntervalMs, 600000);
 
-  const saved = store.save({ alwaysWarmMode: false, keepAliveIntervalMs: 900000 });
+  const saved = store.save({ alwaysWarmMode: true, keepAliveIntervalMs: 60000 });
   assert.equal(saved.alwaysWarmMode, true);
-  assert.equal(saved.keepAliveIntervalMs, DEFAULT_CONFIG.keepAliveIntervalMs);
+  assert.equal(saved.keepAliveIntervalMs, 60000);
 });

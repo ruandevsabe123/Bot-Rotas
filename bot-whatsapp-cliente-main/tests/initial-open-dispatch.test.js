@@ -41,6 +41,95 @@ test("dispara imediatamente ao armar se o grupo já estiver aberto", () => {
   }
 });
 
+test("primeira mensagem não espera a adaptação aplicada à segunda", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const calls = [];
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 7;
+    bot.adaptiveOpeningSettleMs = 60;
+    bot.sock = {
+      relayMessage: async (_jid, _message, options) => {
+        calls.push({ id: options.messageId, at: Date.now() });
+      }
+    };
+    bot.preparedRelayMessages = [
+      { key: { id: "first" }, message: { conversation: "Cliente A-1" } },
+      { key: { id: "second" }, message: { conversation: "Cliente A-2" } }
+    ];
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const startedAt = Date.now();
+    const dispatch = bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1", "Cliente A-2"],
+      7,
+      startedAt,
+      startedAt,
+      "automatic"
+    );
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].id, "first");
+
+    await dispatch;
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].id, "second");
+    assert.ok(calls[1].at - calls[0].at >= 60);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("disparo reconstrói envelope com ID e timestamp novos", async () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.preparedTargetJid = "motoristas@g.us";
+    bot.preparedMessages = ["Cliente A-1"];
+    bot.preparedNuclearMode = false;
+    let rebuilds = 0;
+    bot.rebuildPreparedRelayMessages = () => {
+      rebuilds += 1;
+      bot.preparedRelayMessages = [{ key: { id: "fresh" }, message: { conversation: "Cliente A-1" } }];
+    };
+    bot.sendAggressiveTargetSequence = async () => undefined;
+    bot.enqueueDispatch = () => undefined;
+    bot.registerRouteDispatch = () => "route-fresh";
+    bot.markQueuedDispatchSending = () => undefined;
+
+    assert.equal(bot.enviarMensagensRapidas(1, "automatic", Date.now(), "group_update"), true);
+    assert.equal(rebuilds, 1);
+    await bot.activeSendCycle;
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("403 no pré-aquecimento não derruba o processo", async () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.prewarmConnection = async () => {
+      const error = new Error("forbidden");
+      error.data = 403;
+      throw error;
+    };
+    bot.emitSnapshot = () => undefined;
+
+    assert.equal(await bot.prewarmConnectionSafely("teste"), false);
+    assert.equal(bot.groupState, "unknown");
+    assert.equal(bot.currentUserInTargetGroup, false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("grupo aberto aguarda a leitura segura quando o modo é imagem", () => {
   const { bot, directory } = createBot();
   try {

@@ -3203,9 +3203,11 @@ export default function App() {
     });
   }
 
-  function saveGeneralSettings(settings: { nuclearMode?: boolean; ocrManualRouteSelection?: boolean }) {
+  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean }) {
     return runAction(() => botApi.saveGeneralSettings({
       nuclearMode: settings.nuclearMode ?? snapshot.config.nuclearMode,
+      alwaysWarmMode: settings.alwaysWarmMode ?? snapshot.config.alwaysWarmMode,
+      keepAliveIntervalMs: settings.keepAliveIntervalMs ?? snapshot.config.keepAliveIntervalMs,
       ocrManualRouteSelection: settings.ocrManualRouteSelection ?? snapshot.config.ocrManualRouteSelection
     }));
   }
@@ -3639,6 +3641,7 @@ export default function App() {
             onFactoryReset={confirmFactoryReset}
             onEnableNotifications={handleEnableNotifications}
             notificationStatus={notificationStatus}
+            onSaveGeneralSettings={saveGeneralSettings}
             onLogout={() => {
               logout();
             }}

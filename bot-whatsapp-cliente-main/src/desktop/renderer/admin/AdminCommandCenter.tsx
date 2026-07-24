@@ -1436,12 +1436,40 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
               <StatusPill tone="yellow">{selectedRoutes.filter((id) => pendingReactedImageRoutes.some((route) => route.id === id)).length} pendente(s) selecionada(s)</StatusPill>
               <button className="button primary" disabled={!selectedRoutes.some((id) => pendingReactedImageRoutes.some((route) => route.id === id)) || busy} type="button" onClick={() => decideSelected("validate")}>Validar selecionadas</button>
               <button className="button danger" disabled={!selectedRoutes.some((id) => pendingReactedImageRoutes.some((route) => route.id === id)) || busy} type="button" onClick={() => decideSelected("reject")}>Rejeitar selecionadas</button>
+              <button className="button danger" disabled={!pendingReactedImageRoutes.length || busy} type="button" onClick={() => requestReject(pendingReactedImageRoutes.map((route) => route.id), "Rejeitar todas as análises pendentes")}>Rejeitar todas</button>
             </div>
             <section className="adminx-validation-grid">
               <article className="adminx-panel adminx-panel-wide">
                 <div className="adminx-panel-head">
                   <div><p>Decisão exclusivamente manual</p><h2>Análises de imagem que receberam reação</h2></div>
                   <StatusPill tone={pendingReactedImageRoutes.length ? "yellow" : "green"}>{pendingReactedImageRoutes.length ? `${pendingReactedImageRoutes.length} pendente(s)` : "Fila limpa"}</StatusPill>
+                </div>
+                <div className="adminx-analysis-list">
+                  {pendingReactedImageRoutes.map((route) => {
+                    const usageEntry = imageUsage.entries.find((entry) => entry.id === route.ocr?.analysisId || entry.routeDispatchId === route.id);
+                    return (
+                      <article className="adminx-analysis-row status-pending" key={`reaction-price-${route.id}`}>
+                        <div className="adminx-analysis-signal"><CircleDollarSign size={20} /></div>
+                        <div className="adminx-analysis-copy">
+                          <strong>{route.ocr?.route || route.ocr?.bairro || route.messages[0] || "Análise reagida"}</strong>
+                          <small>{route.clientEmail} · {route.ocr?.code || "sem gaiola"} · {formatShort(route.createdAt)}</small>
+                        </div>
+                        <label className="adminx-analysis-value">
+                          <span>R$</span>
+                          <input
+                            disabled={!usageEntry || busy}
+                            inputMode="decimal"
+                            value={usageEntry ? usageAmounts[usageEntry.id] || "0,00" : "0,00"}
+                            onChange={(event) => usageEntry && setUsageAmounts((current) => ({ ...current, [usageEntry.id]: event.target.value }))}
+                          />
+                        </label>
+                        <div className="adminx-analysis-actions">
+                          <button className="button primary" disabled={!usageEntry || busy} type="button" onClick={() => usageEntry && updateImageUsage(usageEntry.id, "billable")}>Validar com valor</button>
+                          <button className="button danger" disabled={busy} type="button" onClick={() => requestReject([route.id], "Rejeitar análise reagida")}>Rejeitar</button>
+                        </div>
+                      </article>
+                    );
+                  })}
                 </div>
                 <RouteTable routes={reactedImageRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id], "Rejeitar análise reagida")} />
                 {!reactedImageRoutes.length ? <p className="adminx-empty-text">Nenhuma análise de imagem reagida neste período.</p> : null}

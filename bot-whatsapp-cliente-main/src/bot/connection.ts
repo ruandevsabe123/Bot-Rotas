@@ -95,9 +95,7 @@ const TARGET_PARALLEL_STAGGER_MS = 18;
 const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
-const PREPARED_RELAY_TTL_MS = 25000;
 // Maior que o keep-alive crítico (5s), evitando reconstrução no exato evento de abertura.
-const CRITICAL_PREPARED_RELAY_TTL_MS = 12000;
 const NOT_ACCEPTABLE_ALERT_THRESHOLD = 3;
 const NOT_ACCEPTABLE_RETRY_DELAYS_MS = [25, 55, 90, 140, 220, 340, 520, 800, 1200, 1800, 2600, 3800];
 const GENERIC_RETRY_DELAYS_MS = [80, 180, 360, 700, 1100];
@@ -484,7 +482,9 @@ export class BotService extends EventEmitter {
     if (this.pendingCredsSave) return;
     this.pendingCredsSave = setTimeout(() => {
       this.pendingCredsSave = undefined;
-      void this.flushCreds();
+      void this.flushCreds().catch((error) => {
+        this.logger.warning(`Falha ao salvar credenciais do WhatsApp: ${this.getErrorMessage(error)}`);
+      });
     }, 300);
   }
 
@@ -1371,7 +1371,7 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; ocrManualRouteSelection?: boolean }) {
+  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean }) {
     const currentConfig = this.configStore.load();
     const changingMode = Boolean(settings.nuclearMode) !== currentConfig.nuclearMode;
     if (this.monitoringEnabled && changingMode) {
@@ -1383,6 +1383,8 @@ export class BotService extends EventEmitter {
     const nextSettings: Partial<BotConfig> = { nuclearMode: Boolean(settings.nuclearMode) };
     if (settings.fastMode !== undefined) nextSettings.fastMode = Boolean(settings.fastMode);
     if (settings.minSendDelayMs !== undefined) nextSettings.minSendDelayMs = settings.minSendDelayMs;
+    if (settings.alwaysWarmMode !== undefined) nextSettings.alwaysWarmMode = Boolean(settings.alwaysWarmMode);
+    if (settings.keepAliveIntervalMs !== undefined) nextSettings.keepAliveIntervalMs = settings.keepAliveIntervalMs;
     if (settings.ocrManualRouteSelection !== undefined) nextSettings.ocrManualRouteSelection = Boolean(settings.ocrManualRouteSelection);
     const config = this.configStore.save(nextSettings);
     this.refreshRuntimeSettings(config);
@@ -1606,7 +1608,9 @@ export class BotService extends EventEmitter {
     this.sock.ev.on("messages.upsert", ({ messages }: any) => {
       this.recordOutboundGroupEcho(messages || []);
       this.cacheRomaneioDocumentCandidates(messages, connectionId);
-      void this.handleMessages(messages, connectionId);
+      void this.handleMessages(messages, connectionId).catch((error) => {
+        this.logger.warning(`Evento de mensagem ignorado após erro: ${this.getErrorMessage(error)}`);
+      });
     });
     this.sock.ev.on("messaging-history.set", ({ messages }: any) => {
       this.cacheRomaneioDocumentCandidates(messages || [], connectionId);
@@ -1641,7 +1645,7 @@ export class BotService extends EventEmitter {
         this.reportPendingDispatchesAfterBoot();
         await this.loadGroups();
         await this.resolveConfiguredGroup();
-        void this.prewarmConnection("Pré-aquecendo sessão após conexão...");
+        void this.prewarmConnectionSafely("Pré-aquecendo sessão após conexão...");
         if (this.monitoringEnabled) {
           await this.captureInitialGroupState();
           this.startHealthCheck();
@@ -2839,7 +2843,10 @@ export class BotService extends EventEmitter {
       return false;
     }
 
-    this.ensurePreparedRelayMessages(this.preparedTargetJid, mensagens);
+    // Texto e destino ficam preparados, mas o envelope do WhatsApp precisa nascer
+    // agora. Reutilizar ID/timestamp antigos pode ser aceito pelo socket sem a
+    // mensagem aparecer no grupo.
+    this.rebuildPreparedRelayMessages(this.preparedTargetJid, mensagens);
     const sendStartedAt = Date.now();
     const timeline = this.createDispatchTimeline(
       eventDetectedAt,
@@ -2882,8 +2889,7 @@ export class BotService extends EventEmitter {
     const signature = this.getRelaySignature(jid, mensagens);
     if (
       this.preparedRelaySignature === signature &&
-      this.preparedRelayMessages.length === mensagens.length &&
-      !this.isPreparedRelayStale()
+      this.preparedRelayMessages.length === mensagens.length
     ) {
       return;
     }
@@ -2904,14 +2910,6 @@ export class BotService extends EventEmitter {
 
   private getRelaySignature(jid: string, mensagens: string[]) {
     return `${jid}::${mensagens.join("\u001f")}`;
-  }
-
-  private isPreparedRelayStale() {
-    return !this.preparedRelayBuiltAt || Date.now() - this.preparedRelayBuiltAt >= this.getPreparedRelayTtlMs();
-  }
-
-  private getPreparedRelayTtlMs() {
-    return this.isCriticalWarmWindow() ? CRITICAL_PREPARED_RELAY_TTL_MS : PREPARED_RELAY_TTL_MS;
   }
 
   private registerRouteDispatch(
@@ -3070,11 +3068,6 @@ export class BotService extends EventEmitter {
         return;
       }
 
-      if (trigger === "automatic" && this.monitoringMode === "target" && this.adaptiveOpeningSettleMs > 0) {
-        this.addTimelineEvent(timeline, "Micro-espera adaptativa", Date.now(), "info", `${this.adaptiveOpeningSettleMs}ms`);
-        await this.delay(this.adaptiveOpeningSettleMs);
-      }
-
       const relayMessages = this.preparedRelayMessages && this.preparedRelayMessages.length
         ? this.preparedRelayMessages
         : mensagens.map((m) => this.buildRelayTextMessage(sock, jid, m));
@@ -3087,7 +3080,13 @@ export class BotService extends EventEmitter {
             throw new Error("Ciclo cancelado pelo painel ou por nova abertura.");
           }
           const baseStaggerMs = trigger === "manual" ? MANUAL_ROUTE_SELECTION_STAGGER_MS : TARGET_PARALLEL_STAGGER_MS;
-          const staggerMs = index === 0 ? 0 : baseStaggerMs * index;
+          // A primeira mensagem decide a corrida e nunca deve esperar. Se o WhatsApp
+          // já recusou rajadas, a adaptação protege apenas as mensagens seguintes.
+          const adaptiveStaggerMs =
+            index > 0 && trigger === "automatic" && this.monitoringMode === "target"
+              ? this.adaptiveOpeningSettleMs
+              : 0;
+          const staggerMs = index === 0 ? 0 : baseStaggerMs * index + adaptiveStaggerMs;
           if (staggerMs > 0) await this.delay(staggerMs);
           const calledAt = Date.now();
           if (!timeline.firstRelayCalledAt) {
@@ -3178,7 +3177,7 @@ export class BotService extends EventEmitter {
         }
         this.appendRouteMessageId(input.cycleId, typeof result.value === "string" ? result.value : undefined);
         this.addTimelineEvent(input.timeline, `Mensagem ${messageNumber} confirmada`, ackAt, "success");
-        this.logger.success(`Mensagem alvo ${messageNumber} confirmada pelo WhatsApp.`);
+        this.logger.info(`Mensagem alvo ${messageNumber} aceita pelo servidor do WhatsApp. Aguardando retorno no grupo.`);
         return;
       }
 
@@ -3192,7 +3191,7 @@ export class BotService extends EventEmitter {
     input.timeline.totalDurationMs = Math.max(0, finishedAt - input.sendStartedAt);
 
     if (confirmed === input.total) {
-      this.logger.success(`Disparo modo corrida confirmado em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
+      this.logger.info(`Disparo modo corrida aceito pelo servidor em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
     } else {
       this.logger.warning(`Disparo modo corrida terminou com atenção em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
     }
@@ -3345,7 +3344,8 @@ export class BotService extends EventEmitter {
   private trackOutboundRaceMessage(messageId: string, cycleId: number, timeline: RouteDispatchTimeline, relayCalledAt: number) {
     if (!messageId) return;
     this.outboundRaceTracking.set(messageId, { cycleId, timeline, relayCalledAt, routeId: this.activeRouteByCycle.get(cycleId) });
-    setTimeout(() => this.outboundRaceTracking.delete(messageId), 60_000);
+    const cleanupTimer = setTimeout(() => this.outboundRaceTracking.delete(messageId), 60_000);
+    cleanupTimer.unref?.();
   }
 
   private attachRaceTrackingRoute(cycleId: number, routeId: string) {
@@ -3366,6 +3366,7 @@ export class BotService extends EventEmitter {
         timeline.firstGroupEchoMs = Math.max(0, receivedAt - new Date(timeline.sendStartedAt).getTime());
         this.performanceMetrics.lastFirstGroupEchoMs = timeline.firstGroupEchoMs;
         this.addTimelineEvent(timeline, "Mensagem retornou pelo WhatsApp", receivedAt, "success", `${receivedAt - tracking.relayCalledAt}ms após o relay`);
+        this.logger.success(`Entrega confirmada no grupo pelo retorno do WhatsApp em ${receivedAt - tracking.relayCalledAt}ms.`);
         if (tracking.routeId) this.routeStore.update(tracking.routeId, { dispatchTimeline: timeline });
         this.emitSnapshot();
       }
@@ -3563,6 +3564,7 @@ export class BotService extends EventEmitter {
   private startWarmKeepAlive() {
     this.clearWarmKeepAliveTimer();
     const config = this.configStore.load();
+    if (!config.alwaysWarmMode) return;
 
     const intervalMs = this.getWarmKeepAliveIntervalMs(config);
     this.warmKeepAliveIntervalMs = intervalMs;
@@ -3575,7 +3577,7 @@ export class BotService extends EventEmitter {
 
   private async runWarmKeepAlive(reason: "timer" | "armado" = "timer") {
     const config = this.configStore.load();
-    if (!this.monitoringEnabled || this.status !== "connected" || !this.sock) return false;
+    if (!config.alwaysWarmMode || !this.monitoringEnabled || this.status !== "connected" || !this.sock) return false;
     if (this.criticalDispatchInProgress || this.activeSendCycle) return false;
     const nextInterval = this.getWarmKeepAliveIntervalMs(config);
     if (this.warmKeepAliveIntervalMs && nextInterval !== this.warmKeepAliveIntervalMs) {
@@ -3691,6 +3693,24 @@ export class BotService extends EventEmitter {
     this.prepareSendPlan();
     await this.prewarmActiveChat(activeGroup.jid);
     return true;
+  }
+
+  private async prewarmConnectionSafely(message?: string) {
+    try {
+      return await this.prewarmConnection(message);
+    } catch (error) {
+      const config = this.configStore.load();
+      const activeGroup = this.getActiveMonitoringGroup(config);
+      if (activeGroup.jid) this.groupMetadataCache.delete(activeGroup.jid);
+      this.currentUserInTargetGroup = false;
+      this.groupState = "unknown";
+      this.logger.warning(
+        `Pré-aquecimento ignorado sem derrubar o servidor: ${this.getErrorMessage(error)}. ` +
+        "O WhatsApp será reconectado automaticamente se necessário."
+      );
+      this.emitSnapshot();
+      return false;
+    }
   }
 
   private async prewarmActiveChat(jid: string) {
