@@ -13,6 +13,7 @@ import { readRouteImageOcrWithoutBlockingSocket } from "./ocrIsolated";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
+import { DEFAULT_LEADER_CONTACTS } from "./leaderDefaults";
 import { RomaneioStore } from "../services/romaneio/romaneioStore";
 import { isPreferredImageCity, PREFERRED_IMAGE_CITY, rankImageRouteOptions } from "../services/romaneio/rankImageRoutes";
 import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, OcrRouteOption, OcrRouteSelectionState, RomaneioCandidate, RomaneioLocateResult, RomaneioRankedRoute, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
@@ -61,7 +62,7 @@ function loadBaileys(): Promise<void> {
   return baileysLoadPromise;
 }
 
-type BotServiceOptions = {
+export type BotServiceOptions = {
   authDir?: string;
   configPath?: string;
   routeStorePath?: string;
@@ -117,20 +118,7 @@ const CRITICAL_WINDOWS = [
   { start: "04:20", end: "08:00" },
   { start: "10:20", end: "14:00" }
 ];
-export const DEFAULT_LEADER_CONTACTS: LeaderContact[] = [
-  { name: "Gabriel Melo - Analista de Transporte", phone: "5511940670165" },
-  { name: "André Bomfim", phone: "5521998970947" },
-  { name: "Júlia Moura - Analista de Transporte", phone: "5522992143214" },
-  { name: "Gabriel Melo", phone: "5522996189621" },
-  { name: "Amanda - Analista De Transporte", phone: "5522997387295" },
-  { name: "Flávia De Azevedo Barreto", phone: "5522998597005" },
-  { name: "Henrique Nunes", phone: "5522999230394" },
-  { name: "André Bomfim - Analista de Transporte", phone: "5511913591907" },
-  { name: "Renato Balbino", phone: "5511945113460" },
-  { name: "flávia barreto", phone: "5511992561962" },
-  { name: "Thalles Lunga", phone: "5521967843028" },
-  { name: "Renato Balbino", phone: "5522998677384" }
-];
+export { DEFAULT_LEADER_CONTACTS } from "./leaderDefaults";
 
 function triggerLabelForEvent(trigger: RouteDispatch["trigger"]) {
   if (trigger === "manual") return "Disparo manual";

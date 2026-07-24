@@ -86,6 +86,8 @@ export type BotPerformanceMetrics = {
   keepAliveCount?: number;
   lastGroupCryptoWarmDurationMs?: number;
   warmedGroupDeviceCount?: number;
+  workerProcessId?: number;
+  workerRestartCount?: number;
   telemetryCount?: number;
   averageFirstRelayMs?: number;
   p95FirstRelayMs?: number;
