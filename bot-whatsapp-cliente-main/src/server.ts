@@ -6,6 +6,7 @@ import crypto from "crypto";
 import QRCode from "qrcode";
 import qrcodeTerminal from "qrcode-terminal";
 import { BotService, DEFAULT_LEADER_CONTACTS } from "./bot/connection";
+import { shutdownIsolatedOcrWorker } from "./bot/ocrIsolated";
 import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderStore";
 import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
@@ -172,6 +173,30 @@ const adminClients = new Set<http.ServerResponse>();
 const lastSnapshotState = new Map<string, { qrCode: string; logId: string }>();
 const lastCriticalBotState = new Map<string, { status: string; monitoringEnabled: boolean; analysisKey: string; incidentId: string }>();
 let lastAdminPendingRouteIds: Set<string> | undefined;
+const pendingSnapshotBots = new Map<string, BotService>();
+let snapshotFanoutScheduled = false;
+
+function scheduleSnapshotFanout(email: string, bot: BotService) {
+  pendingSnapshotBots.set(email, bot);
+  if (snapshotFanoutScheduled) return;
+
+  snapshotFanoutScheduled = true;
+  setImmediate(() => {
+    snapshotFanoutScheduled = false;
+    const pending = Array.from(pendingSnapshotBots.entries());
+    pendingSnapshotBots.clear();
+    if (!pending.length) return;
+
+    for (const [pendingEmail, pendingBot] of pending) {
+      handleCriticalBotNotifications(pendingEmail, pendingBot.getSnapshot());
+      broadcastSnapshot(pendingEmail);
+      logSnapshot(pendingEmail);
+    }
+    // O painel administrativo agrega todos os clientes. Atualize uma vez por
+    // ciclo, mesmo quando vários sockets emitirem snapshots juntos.
+    broadcastAdminSnapshot();
+  });
+}
 
 function getUserStorageKey(email: string) {
   return email.toLowerCase().replace(/[^a-z0-9._-]+/g, "_");
@@ -254,19 +279,24 @@ function getBotForEmail(email: string) {
     clientEmail: normalizedEmail,
     adminPhoneNumbers,
     leaderContacts: leaderStore.all(),
-    autoClearInvalidSession: true
+    autoClearInvalidSession: true,
+    deferSnapshotPayload: true
   });
 
   nextBot.on("snapshot", () => {
-    handleCriticalBotNotifications(normalizedEmail, nextBot.getSnapshot());
-    broadcastSnapshot(normalizedEmail);
-    broadcastAdminSnapshot();
-    logSnapshot(normalizedEmail);
+    scheduleSnapshotFanout(normalizedEmail, nextBot);
   });
   nextBot.on("image-analysis", (analysis) => {
-    imageUsageStore.record({ ...analysis, clientEmail: normalizedEmail });
-    broadcastSnapshot(normalizedEmail);
-    broadcastAdminSnapshot();
+    // Persistência e atualização dos painéis não podem bloquear a continuação
+    // da análise até o relay automático.
+    setImmediate(() => {
+      try {
+        imageUsageStore.record({ ...analysis, clientEmail: normalizedEmail });
+        scheduleSnapshotFanout(normalizedEmail, nextBot);
+      } catch (error) {
+        console.error(`Falha ao registrar consumo de imagem de ${normalizedEmail}:`, error);
+      }
+    });
   });
 
   bots.set(normalizedEmail, nextBot);
@@ -1486,6 +1516,7 @@ server.listen(port, "0.0.0.0", () => {
 async function shutdown() {
   console.log("Encerrando bots...");
   await Promise.all(Array.from(bots.values()).map((item) => item.stop().catch(() => undefined)));
+  shutdownIsolatedOcrWorker();
   server.close(() => process.exit(0));
 }
 

@@ -118,9 +118,12 @@ function readSingleRouteImageOcr(imagePath: string, label: string, psm = 6) {
 
 function readRouteImageOcrWithBinary(imagePath: string, label: string, psm: number) {
   return new Promise<RouteOcrResult>((resolve, reject) => {
+    const tesseractArgs = [imagePath, "stdout", "-l", "por", "--oem", "1", "--psm", String(psm), "tsv"];
+    const command = process.platform === "win32" ? "tesseract" : "nice";
+    const commandArgs = process.platform === "win32" ? tesseractArgs : ["-n", "5", "tesseract", ...tesseractArgs];
     execFile(
-      "tesseract",
-      [imagePath, "stdout", "-l", "por", "--oem", "1", "--psm", String(psm), "tsv"],
+      command,
+      commandArgs,
       { timeout: 15000, maxBuffer: 1024 * 1024 * 4 },
       (error, stdout, stderr) => {
         if (error) {
