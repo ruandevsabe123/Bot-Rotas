@@ -112,6 +112,24 @@ test("disparo reconstrói envelope com ID e timestamp novos", async () => {
   }
 });
 
+test("403 no pré-aquecimento não derruba o processo", async () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.prewarmConnection = async () => {
+      const error = new Error("forbidden");
+      error.data = 403;
+      throw error;
+    };
+    bot.emitSnapshot = () => undefined;
+
+    assert.equal(await bot.prewarmConnectionSafely("teste"), false);
+    assert.equal(bot.groupState, "unknown");
+    assert.equal(bot.currentUserInTargetGroup, false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("grupo aberto aguarda a leitura segura quando o modo é imagem", () => {
   const { bot, directory } = createBot();
   try {

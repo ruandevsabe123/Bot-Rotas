@@ -482,7 +482,9 @@ export class BotService extends EventEmitter {
     if (this.pendingCredsSave) return;
     this.pendingCredsSave = setTimeout(() => {
       this.pendingCredsSave = undefined;
-      void this.flushCreds();
+      void this.flushCreds().catch((error) => {
+        this.logger.warning(`Falha ao salvar credenciais do WhatsApp: ${this.getErrorMessage(error)}`);
+      });
     }, 300);
   }
 
@@ -1606,7 +1608,9 @@ export class BotService extends EventEmitter {
     this.sock.ev.on("messages.upsert", ({ messages }: any) => {
       this.recordOutboundGroupEcho(messages || []);
       this.cacheRomaneioDocumentCandidates(messages, connectionId);
-      void this.handleMessages(messages, connectionId);
+      void this.handleMessages(messages, connectionId).catch((error) => {
+        this.logger.warning(`Evento de mensagem ignorado após erro: ${this.getErrorMessage(error)}`);
+      });
     });
     this.sock.ev.on("messaging-history.set", ({ messages }: any) => {
       this.cacheRomaneioDocumentCandidates(messages || [], connectionId);
@@ -1641,7 +1645,7 @@ export class BotService extends EventEmitter {
         this.reportPendingDispatchesAfterBoot();
         await this.loadGroups();
         await this.resolveConfiguredGroup();
-        void this.prewarmConnection("Pré-aquecendo sessão após conexão...");
+        void this.prewarmConnectionSafely("Pré-aquecendo sessão após conexão...");
         if (this.monitoringEnabled) {
           await this.captureInitialGroupState();
           this.startHealthCheck();
@@ -3689,6 +3693,24 @@ export class BotService extends EventEmitter {
     this.prepareSendPlan();
     await this.prewarmActiveChat(activeGroup.jid);
     return true;
+  }
+
+  private async prewarmConnectionSafely(message?: string) {
+    try {
+      return await this.prewarmConnection(message);
+    } catch (error) {
+      const config = this.configStore.load();
+      const activeGroup = this.getActiveMonitoringGroup(config);
+      if (activeGroup.jid) this.groupMetadataCache.delete(activeGroup.jid);
+      this.currentUserInTargetGroup = false;
+      this.groupState = "unknown";
+      this.logger.warning(
+        `Pré-aquecimento ignorado sem derrubar o servidor: ${this.getErrorMessage(error)}. ` +
+        "O WhatsApp será reconectado automaticamente se necessário."
+      );
+      this.emitSnapshot();
+      return false;
+    }
   }
 
   private async prewarmActiveChat(jid: string) {
