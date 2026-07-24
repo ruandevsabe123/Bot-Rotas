@@ -869,6 +869,8 @@ async function handleAction(bot: BotService, action: string, body: any) {
     case "save-general-settings":
       bot.setGeneralSettings({
         nuclearMode: Boolean(body.nuclearMode),
+        alwaysWarmMode: body.alwaysWarmMode,
+        keepAliveIntervalMs: body.keepAliveIntervalMs,
         ocrManualRouteSelection: body.ocrManualRouteSelection
       });
       break;

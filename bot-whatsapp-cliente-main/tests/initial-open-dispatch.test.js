@@ -41,6 +41,70 @@ test("dispara imediatamente ao armar se o grupo já estiver aberto", () => {
   }
 });
 
+test("primeira mensagem não espera a adaptação aplicada à segunda", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const calls = [];
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 7;
+    bot.adaptiveOpeningSettleMs = 60;
+    bot.sock = {
+      relayMessage: async (_jid, _message, options) => {
+        calls.push({ id: options.messageId, at: Date.now() });
+      }
+    };
+    bot.preparedRelayMessages = [
+      { key: { id: "first" }, message: { conversation: "Cliente A-1" } },
+      { key: { id: "second" }, message: { conversation: "Cliente A-2" } }
+    ];
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const startedAt = Date.now();
+    const dispatch = bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1", "Cliente A-2"],
+      7,
+      startedAt,
+      startedAt,
+      "automatic"
+    );
+
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].id, "first");
+
+    await dispatch;
+    assert.equal(calls.length, 2);
+    assert.equal(calls[1].id, "second");
+    assert.ok(calls[1].at - calls[0].at >= 60);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("pacote preparado não é reconstruído apenas por ficar parado", () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.sock = {};
+    bot.preparedRelaySignature = "motoristas@g.us::Cliente A-1";
+    bot.preparedRelayMessages = [{ key: { id: "ready" }, message: { conversation: "Cliente A-1" } }];
+    bot.preparedRelayBuiltAt = Date.now() - 60 * 60 * 1000;
+    let rebuilds = 0;
+    bot.rebuildPreparedRelayMessages = () => {
+      rebuilds += 1;
+    };
+
+    bot.ensurePreparedRelayMessages("motoristas@g.us", ["Cliente A-1"]);
+    assert.equal(rebuilds, 0);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("grupo aberto aguarda a leitura segura quando o modo é imagem", () => {
   const { bot, directory } = createBot();
   try {

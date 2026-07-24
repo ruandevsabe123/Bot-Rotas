@@ -12,10 +12,11 @@ type Props = {
   onFactoryReset: () => void;
   onEnableNotifications?: () => void | Promise<void>;
   notificationStatus?: string;
+  onSaveGeneralSettings?: (settings: { alwaysWarmMode?: boolean; keepAliveIntervalMs?: number }) => unknown;
   onLogout?: () => void;
 };
 
-export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onEnableNotifications, notificationStatus, onLogout }: Props) {
+export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onEnableNotifications, notificationStatus, onSaveGeneralSettings, onLogout }: Props) {
   const [supportMessage, setSupportMessage] = useState("");
   const [supportStatus, setSupportStatus] = useState("");
 
@@ -79,6 +80,36 @@ export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onCl
           <p>Grupo alvo: {config.grupoAlvoNome || config.grupoAlvoJid || "não configurado"}</p>
         </div>
         <span className={monitoringEnabled ? "mini-badge ok" : "mini-badge"}>{monitoringEnabled ? "Ativo" : "Aguardando"}</span>
+      </article>
+
+      <article className="panel option-panel">
+        <div>
+          <p className="panel-label">Desempenho opcional</p>
+          <h2>Manter conexão aquecida</h2>
+          <p>A velocidade principal funciona mesmo desligada. Esta opção apenas reforça a conexão durante longos períodos de espera.</p>
+          <label className="field-label">
+            Intervalo
+            <select
+              disabled={busy || !config.alwaysWarmMode || !onSaveGeneralSettings}
+              value={config.keepAliveIntervalMs}
+              onChange={(event) => void onSaveGeneralSettings?.({ keepAliveIntervalMs: Number(event.target.value) })}
+            >
+              <option value={60000}>1 minuto</option>
+              <option value={180000}>3 minutos</option>
+              <option value={300000}>5 minutos</option>
+              <option value={480000}>8 minutos</option>
+              <option value={600000}>10 minutos</option>
+            </select>
+          </label>
+        </div>
+        <button
+          className={config.alwaysWarmMode ? "button primary" : "button"}
+          disabled={busy || !onSaveGeneralSettings}
+          type="button"
+          onClick={() => void onSaveGeneralSettings?.({ alwaysWarmMode: !config.alwaysWarmMode })}
+        >
+          {config.alwaysWarmMode ? "Ligado" : "Desligado"}
+        </button>
       </article>
 
       <article className="panel option-panel">
