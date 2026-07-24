@@ -86,20 +86,27 @@ test("primeira mensagem não espera a adaptação aplicada à segunda", async ()
   }
 });
 
-test("pacote preparado não é reconstruído apenas por ficar parado", () => {
+test("disparo reconstrói envelope com ID e timestamp novos", async () => {
   const { bot, directory } = createBot();
   try {
-    bot.sock = {};
-    bot.preparedRelaySignature = "motoristas@g.us::Cliente A-1";
-    bot.preparedRelayMessages = [{ key: { id: "ready" }, message: { conversation: "Cliente A-1" } }];
-    bot.preparedRelayBuiltAt = Date.now() - 60 * 60 * 1000;
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.preparedTargetJid = "motoristas@g.us";
+    bot.preparedMessages = ["Cliente A-1"];
+    bot.preparedNuclearMode = false;
     let rebuilds = 0;
     bot.rebuildPreparedRelayMessages = () => {
       rebuilds += 1;
+      bot.preparedRelayMessages = [{ key: { id: "fresh" }, message: { conversation: "Cliente A-1" } }];
     };
+    bot.sendAggressiveTargetSequence = async () => undefined;
+    bot.enqueueDispatch = () => undefined;
+    bot.registerRouteDispatch = () => "route-fresh";
+    bot.markQueuedDispatchSending = () => undefined;
 
-    bot.ensurePreparedRelayMessages("motoristas@g.us", ["Cliente A-1"]);
-    assert.equal(rebuilds, 0);
+    assert.equal(bot.enviarMensagensRapidas(1, "automatic", Date.now(), "group_update"), true);
+    assert.equal(rebuilds, 1);
+    await bot.activeSendCycle;
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

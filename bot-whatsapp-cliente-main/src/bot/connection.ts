@@ -2839,7 +2839,10 @@ export class BotService extends EventEmitter {
       return false;
     }
 
-    this.ensurePreparedRelayMessages(this.preparedTargetJid, mensagens);
+    // Texto e destino ficam preparados, mas o envelope do WhatsApp precisa nascer
+    // agora. Reutilizar ID/timestamp antigos pode ser aceito pelo socket sem a
+    // mensagem aparecer no grupo.
+    this.rebuildPreparedRelayMessages(this.preparedTargetJid, mensagens);
     const sendStartedAt = Date.now();
     const timeline = this.createDispatchTimeline(
       eventDetectedAt,
@@ -3170,7 +3173,7 @@ export class BotService extends EventEmitter {
         }
         this.appendRouteMessageId(input.cycleId, typeof result.value === "string" ? result.value : undefined);
         this.addTimelineEvent(input.timeline, `Mensagem ${messageNumber} confirmada`, ackAt, "success");
-        this.logger.success(`Mensagem alvo ${messageNumber} confirmada pelo WhatsApp.`);
+        this.logger.info(`Mensagem alvo ${messageNumber} aceita pelo servidor do WhatsApp. Aguardando retorno no grupo.`);
         return;
       }
 
@@ -3184,7 +3187,7 @@ export class BotService extends EventEmitter {
     input.timeline.totalDurationMs = Math.max(0, finishedAt - input.sendStartedAt);
 
     if (confirmed === input.total) {
-      this.logger.success(`Disparo modo corrida confirmado em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
+      this.logger.info(`Disparo modo corrida aceito pelo servidor em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
     } else {
       this.logger.warning(`Disparo modo corrida terminou com atenção em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
     }
@@ -3359,6 +3362,7 @@ export class BotService extends EventEmitter {
         timeline.firstGroupEchoMs = Math.max(0, receivedAt - new Date(timeline.sendStartedAt).getTime());
         this.performanceMetrics.lastFirstGroupEchoMs = timeline.firstGroupEchoMs;
         this.addTimelineEvent(timeline, "Mensagem retornou pelo WhatsApp", receivedAt, "success", `${receivedAt - tracking.relayCalledAt}ms após o relay`);
+        this.logger.success(`Entrega confirmada no grupo pelo retorno do WhatsApp em ${receivedAt - tracking.relayCalledAt}ms.`);
         if (tracking.routeId) this.routeStore.update(tracking.routeId, { dispatchTimeline: timeline });
         this.emitSnapshot();
       }
