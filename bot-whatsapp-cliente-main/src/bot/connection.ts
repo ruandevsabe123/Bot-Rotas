@@ -1607,14 +1607,17 @@ export class BotService extends EventEmitter {
       this.handleConnectionUpdate(update, connectionId)
     );
     this.sock.ev.on("groups.update", (updates: any[]) =>
-      this.handleGroupsUpdate(updates, connectionId)
+      this.handleGroupsUpdate(updates, connectionId, Date.now())
     );
     this.sock.ev.on("messages.upsert", ({ messages }: any) => {
-      this.recordOutboundGroupEcho(messages || []);
+      const eventReceivedAt = Date.now();
       // Detecte abertura e inicie o relay antes de procurar documentos auxiliares.
-      void this.handleMessages(messages, connectionId).catch((error) => {
+      void this.handleMessages(messages, connectionId, eventReceivedAt).catch((error) => {
         this.logger.warning(`Evento de mensagem ignorado após erro: ${this.getErrorMessage(error)}`);
       });
+      // Retornos de disparos anteriores são telemetria; uma abertura nova ganha
+      // prioridade quando o WhatsApp agrupa ambos no mesmo lote.
+      this.recordOutboundGroupEcho(messages || []);
       setImmediate(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
     });
     this.sock.ev.on("messaging-history.set", ({ messages }: any) => {
@@ -1927,7 +1930,7 @@ export class BotService extends EventEmitter {
     }, backoffMs);
   }
 
-  private handleGroupsUpdate(updates: any[], connectionId: number) {
+  private handleGroupsUpdate(updates: any[], connectionId: number, eventReceivedAt = Date.now()) {
     if (connectionId !== this.activeConnectionId) return;
     if (!this.monitoringEnabled) return;
 
@@ -1967,13 +1970,13 @@ export class BotService extends EventEmitter {
 
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
-        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now(), "group_update");
+        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", eventReceivedAt, "group_update");
         this.logger.info(`⚡ ${activeGroup.label} ABRIU! Disparo acionado.`);
         return;
       }
     }
   }
-  private async handleMessages(messages: any[], connectionId: number) {
+  private async handleMessages(messages: any[], connectionId: number, eventReceivedAt = Date.now()) {
     if (connectionId !== this.activeConnectionId) return;
     if (!this.monitoringEnabled) {
       this.scheduleReactionProcessing(messages);
@@ -1992,8 +1995,6 @@ export class BotService extends EventEmitter {
       if (!msg?.message || !msg.key?.remoteJid) continue;
       if (msg.key.remoteJid !== activeGroup.jid) continue;
 
-      this.handleDeletedMessageNotice(msg);
-
       if (this.monitoringMode === "target" && this.preparedTargetDispatchMode === "ocr" && msg.message.imageMessage) {
         this.logger.info("Imagem recebida no grupo alvo. Iniciando análise da IA e cruzamento com o romaneio.");
         this.scheduleRouteImageProcessing(msg, activeGroup.jid);
@@ -2006,7 +2007,10 @@ export class BotService extends EventEmitter {
         msg.message.videoMessage?.caption ||
         "";
 
-      if (!texto) continue;
+      if (!texto) {
+        this.handleDeletedMessageNotice(msg);
+        continue;
+      }
 
       const textoNormalizado = normalizarTexto(texto);
 
@@ -2031,11 +2035,13 @@ export class BotService extends EventEmitter {
 
         const cycleId = ++this.sendCycleId;
         this.grupoJaFechouDepoisDoInicio = false;
-        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", Date.now(), "opening_message");
+        this.enviarMensagensRapidas(cycleId, this.monitoringMode === "test" ? "warmup" : "automatic", eventReceivedAt, "opening_message");
         this.logger.info("Palavra de abertura detectada. Rajada instantânea acionada.");
         this.scheduleReactionProcessing(messages);
         return;
       }
+
+      this.handleDeletedMessageNotice(msg);
     }
 
     this.scheduleReactionProcessing(messages);
