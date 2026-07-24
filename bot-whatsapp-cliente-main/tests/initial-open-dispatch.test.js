@@ -156,6 +156,30 @@ test("servidor pode adiar snapshot pesado e emitir apenas sinal leve", () => {
   }
 });
 
+test("evento oficial mede latência desde a entrada no callback do Baileys", () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.activeConnectionId = 3;
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.preparedTargetJid = "motoristas@g.us";
+    bot.preparedTargetDispatchMode = "manual";
+    bot.grupoJaFechouDepoisDoInicio = true;
+    const receivedAt = Date.now() - 25;
+    let called;
+    bot.enviarMensagensRapidas = (...args) => {
+      called = args;
+      return true;
+    };
+
+    bot.handleGroupsUpdate([{ id: "motoristas@g.us", announce: false }], 3, receivedAt);
+    assert.equal(called[2], receivedAt);
+    assert.equal(called[3], "group_update");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("grupo aberto aguarda a leitura segura quando o modo é imagem", () => {
   const { bot, directory } = createBot();
   try {
