@@ -130,6 +130,32 @@ test("403 no pré-aquecimento não derruba o processo", async () => {
   }
 });
 
+test("servidor pode adiar snapshot pesado e emitir apenas sinal leve", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bot-light-snapshot-"));
+  const bot = new BotService({
+    configPath: path.join(directory, "config.json"),
+    routeStorePath: path.join(directory, "routes.json"),
+    dispatchQueuePath: path.join(directory, "queue.json"),
+    telemetryPath: path.join(directory, "telemetry.json"),
+    logStorePath: path.join(directory, "logs.json"),
+    deferSnapshotPayload: true
+  });
+  try {
+    let payload = "not-called";
+    bot.on("snapshot", (next) => {
+      payload = next;
+    });
+    bot.getSnapshot = () => {
+      throw new Error("snapshot pesado não deveria ser montado neste ciclo");
+    };
+
+    bot.emitSnapshot();
+    assert.equal(payload, undefined);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("grupo aberto aguarda a leitura segura quando o modo é imagem", () => {
   const { bot, directory } = createBot();
   try {

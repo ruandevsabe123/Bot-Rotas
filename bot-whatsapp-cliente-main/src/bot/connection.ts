@@ -8,7 +8,8 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine, readRouteImageOcr } from "./ocr";
+import { extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine } from "./ocr";
+import { readRouteImageOcrWithoutBlockingSocket } from "./ocrIsolated";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
@@ -72,6 +73,7 @@ type BotServiceOptions = {
   terminalMode?: boolean;
   initialCodes?: string[];
   autoClearInvalidSession?: boolean;
+  deferSnapshotPayload?: boolean;
 };
 
 type MonitoringMode = "target" | "test";
@@ -238,10 +240,12 @@ export class BotService extends EventEmitter {
   private romaneioDocumentCandidates = new Map<string, { candidate: RomaneioCandidate; message: any }>();
   private processingRomaneioCandidateIds = new Set<string>();
   private latestAutomaticRomaneioTimestamp = 0;
+  private readonly deferSnapshotPayload: boolean;
 
   constructor(options: BotServiceOptions = {}) {
     super();
     this.authDir = options.authDir || path.resolve(process.cwd(), "auth_info");
+    this.deferSnapshotPayload = Boolean(options.deferSnapshotPayload);
     this.configStore = new ConfigStore(options.configPath);
     this.routeStore = new RouteStore(options.routeStorePath || path.resolve(process.cwd(), "route_history.json"));
     this.dispatchQueueStore = new DispatchQueueStore(options.dispatchQueuePath || path.resolve(process.cwd(), "dispatch_queue.json"));
@@ -1607,13 +1611,14 @@ export class BotService extends EventEmitter {
     );
     this.sock.ev.on("messages.upsert", ({ messages }: any) => {
       this.recordOutboundGroupEcho(messages || []);
-      this.cacheRomaneioDocumentCandidates(messages, connectionId);
+      // Detecte abertura e inicie o relay antes de procurar documentos auxiliares.
       void this.handleMessages(messages, connectionId).catch((error) => {
         this.logger.warning(`Evento de mensagem ignorado após erro: ${this.getErrorMessage(error)}`);
       });
+      setImmediate(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
     });
     this.sock.ev.on("messaging-history.set", ({ messages }: any) => {
-      this.cacheRomaneioDocumentCandidates(messages || [], connectionId);
+      setImmediate(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
     });
 
   }
@@ -2118,7 +2123,7 @@ export class BotService extends EventEmitter {
       );
 
       await fs.promises.writeFile(imagePath, buffer);
-      const ocr = await readRouteImageOcr(imagePath, { maxReadings: 6 });
+      const ocr = await readRouteImageOcrWithoutBlockingSocket(imagePath, { maxReadings: 6 });
       if (sequence !== this.latestRouteImageSequence) {
         this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;
@@ -4070,7 +4075,9 @@ export class BotService extends EventEmitter {
   }
 
   private emitSnapshot() {
-    this.emit("snapshot", this.getSnapshot());
+    // No servidor web, o fanout é agrupado e obter o snapshot aqui repetiria
+    // serialização pesada dezenas de vezes. No desktop, preserve o payload.
+    this.emit("snapshot", this.deferSnapshotPayload ? undefined : this.getSnapshot());
   }
 
   private clearReconnectTimer() {
