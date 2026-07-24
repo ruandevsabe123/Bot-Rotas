@@ -187,14 +187,25 @@ function scheduleSnapshotFanout(email: string, bot: BotService) {
     pendingSnapshotBots.clear();
     if (!pending.length) return;
 
-    for (const [pendingEmail, pendingBot] of pending) {
+    const ready = pending.filter(([, pendingBot]) => !pendingBot.isCriticalDispatchActive());
+    const delayed = pending.filter(([, pendingBot]) => pendingBot.isCriticalDispatchActive());
+    for (const [pendingEmail, pendingBot] of ready) {
       handleCriticalBotNotifications(pendingEmail, pendingBot.getSnapshot());
       broadcastSnapshot(pendingEmail);
       logSnapshot(pendingEmail);
     }
-    // O painel administrativo agrega todos os clientes. Atualize uma vez por
-    // ciclo, mesmo quando vários sockets emitirem snapshots juntos.
-    broadcastAdminSnapshot();
+    const anyCriticalDispatch = Array.from(bots.values()).some((bot) => bot.isCriticalDispatchActive());
+    if (ready.length && !anyCriticalDispatch) {
+      // O painel administrativo agrega todos os clientes. Atualize uma vez por
+      // ciclo, mesmo quando vários sockets emitirem snapshots juntos.
+      broadcastAdminSnapshot();
+    }
+    if (delayed.length) {
+      const retryTimer = setTimeout(() => {
+        for (const [pendingEmail, pendingBot] of delayed) scheduleSnapshotFanout(pendingEmail, pendingBot);
+      }, 75);
+      retryTimer.unref?.();
+    }
   });
 }
 

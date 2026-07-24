@@ -38,6 +38,7 @@ let generateMessageIDV2: any;
 let generateWAMessageFromContent: any;
 let downloadMediaMessage: any;
 let Browsers: any;
+let makeCacheableSignalKeyStore: any;
 let baileysLoadPromise: Promise<void> | undefined;
 
 function loadBaileys(): Promise<void> {
@@ -54,6 +55,7 @@ function loadBaileys(): Promise<void> {
     generateWAMessageFromContent = baileys.generateWAMessageFromContent;
     downloadMediaMessage = baileys.downloadMediaMessage;
     Browsers = baileys.Browsers;
+    makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
   })();
 
   return baileysLoadPromise;
@@ -85,7 +87,7 @@ const MAX_RECONNECT_DELAY_MS = 30000;
 const HEALTH_CHECK_INTERVAL_MS = 25000;
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
 const RACE_KEEP_ALIVE_INTERVAL_MS = 10000;
-const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 60000;
+const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000;
 const CRITICAL_KEEP_ALIVE_INTERVAL_MS = 5000;
 const SOCKET_KEEP_ALIVE_INTERVAL_MS = 10000;
 const SOCKET_CONNECT_TIMEOUT_MS = 15000;
@@ -235,6 +237,11 @@ export class BotService extends EventEmitter {
   private lastKeepAliveDurationMs = 0;
   private keepAliveCount = 0;
   private lastFullMetadataWarmAt = 0;
+  private lastGroupCryptoWarmAt = 0;
+  private lastGroupCryptoWarmDurationMs = 0;
+  private warmedGroupDeviceCount = 0;
+  private warmedGroupParticipantSignature = "";
+  private groupCryptoWarmInFlight?: Promise<boolean>;
   private adaptiveOpeningSettleMs = 0;
   private lastNotAcceptableAlertAt = 0;
   private romaneioDocumentCandidates = new Map<string, { candidate: RomaneioCandidate; message: any }>();
@@ -296,6 +303,8 @@ export class BotService extends EventEmitter {
         lastKeepAliveAt: this.lastKeepAliveAt,
         lastKeepAliveDurationMs: this.lastKeepAliveDurationMs,
         keepAliveCount: this.keepAliveCount,
+        lastGroupCryptoWarmDurationMs: this.lastGroupCryptoWarmDurationMs,
+        warmedGroupDeviceCount: this.warmedGroupDeviceCount,
         activeQueue: Math.max(this.performanceMetrics.activeQueue, this.dispatchQueueStore.pending().length),
         telemetryCount: telemetry.count,
         averageFirstRelayMs: telemetry.averageFirstRelayMs,
@@ -1583,11 +1592,15 @@ export class BotService extends EventEmitter {
     const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
     this.saveCredsNow = saveCreds;
     const version = await this.getWhatsAppVersion();
+    const socketLogger = P({ level: "silent" });
+    const auth = makeCacheableSignalKeyStore
+      ? { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, socketLogger) }
+      : state;
 
     this.sock = makeWASocket({
-      auth: state,
+      auth,
       version,
-      logger: P({ level: "silent" }),
+      logger: socketLogger,
       connectTimeoutMs: SOCKET_CONNECT_TIMEOUT_MS,
       defaultQueryTimeoutMs: SOCKET_QUERY_TIMEOUT_MS,
       keepAliveIntervalMs: SOCKET_KEEP_ALIVE_INTERVAL_MS,
@@ -1609,6 +1622,9 @@ export class BotService extends EventEmitter {
     this.sock.ev.on("groups.update", (updates: any[]) =>
       this.handleGroupsUpdate(updates, connectionId, Date.now())
     );
+    this.sock.ev.on("group-participants.update", (update: any) =>
+      this.handleGroupParticipantsUpdate(update, connectionId)
+    );
     this.sock.ev.on("messages.upsert", ({ messages }: any) => {
       const eventReceivedAt = Date.now();
       // Detecte abertura e inicie o relay antes de procurar documentos auxiliares.
@@ -1618,10 +1634,10 @@ export class BotService extends EventEmitter {
       // Retornos de disparos anteriores são telemetria; uma abertura nova ganha
       // prioridade quando o WhatsApp agrupa ambos no mesmo lote.
       this.recordOutboundGroupEcho(messages || []);
-      setImmediate(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
+      this.deferSecondarySocketTask(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
     });
     this.sock.ev.on("messaging-history.set", ({ messages }: any) => {
-      setImmediate(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
+      this.deferSecondarySocketTask(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
     });
 
   }
@@ -1653,12 +1669,14 @@ export class BotService extends EventEmitter {
         this.reportPendingDispatchesAfterBoot();
         await this.loadGroups();
         await this.resolveConfiguredGroup();
-        void this.prewarmConnectionSafely("Pré-aquecendo sessão após conexão...");
         if (this.monitoringEnabled) {
           await this.captureInitialGroupState();
           this.startHealthCheck();
+          this.startWarmKeepAlive();
           this.logger.success("Monitoramento restaurado após reconexão.");
           this.dispatchIfGroupAlreadyOpen("reconexão");
+        } else {
+          void this.prewarmConnectionSafely("Pré-aquecendo sessão após conexão...");
         }
         this.logger.info("Aguardando abertura do grupo.");
       } catch (error) {
@@ -1862,6 +1880,12 @@ export class BotService extends EventEmitter {
 
       const metadata = await this.refreshGroupMetadata(activeGroup.jid);
       if (!metadata) return;
+      this.lastFullMetadataWarmAt = Date.now();
+
+      await Promise.all([
+        this.prewarmActiveChat(activeGroup.jid),
+        this.prewarmGroupCrypto(metadata)
+      ]);
 
       const isGroupClosed = metadata.announce === true;
       this.groupState = isGroupClosed ? "closed" : "open";
@@ -1976,6 +2000,33 @@ export class BotService extends EventEmitter {
       }
     }
   }
+
+  private handleGroupParticipantsUpdate(update: any, connectionId: number) {
+    if (connectionId !== this.activeConnectionId) return;
+    const groupJid = String(update?.id || "");
+    if (!groupJid || groupJid !== this.preparedTargetJid) return;
+
+    this.groupMetadataCache.delete(groupJid);
+    this.warmedGroupParticipantSignature = "";
+    this.lastGroupCryptoWarmAt = 0;
+    this.warmedGroupDeviceCount = 0;
+
+    if (!this.monitoringEnabled || this.criticalDispatchInProgress || !this.sock) return;
+
+    this.deferSecondarySocketTask(() => {
+      void (async () => {
+        try {
+          const metadata = await this.refreshGroupMetadata(groupJid);
+          this.lastFullMetadataWarmAt = Date.now();
+          await this.prewarmGroupCrypto(metadata, true);
+          this.prepareSendPlan();
+        } catch (error) {
+          this.logger.warning(`Cache do grupo será refeito no próximo aquecimento: ${this.getErrorMessage(error)}.`);
+        }
+      })();
+    });
+  }
+
   private async handleMessages(messages: any[], connectionId: number, eventReceivedAt = Date.now()) {
     if (connectionId !== this.activeConnectionId) return;
     if (!this.monitoringEnabled) {
@@ -3083,6 +3134,10 @@ export class BotService extends EventEmitter {
         ? this.preparedRelayMessages
         : mensagens.map((m) => this.buildRelayTextMessage(sock, jid, m));
 
+      let releaseFirstMessageLane = () => undefined;
+      const firstMessageLane = new Promise<void>((resolve) => {
+        releaseFirstMessageLane = resolve;
+      });
       const jobs = relayMessages.map((fullMessage, index) => {
         const messageNumber = index + 1;
 
@@ -3090,6 +3145,7 @@ export class BotService extends EventEmitter {
           if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
             throw new Error("Ciclo cancelado pelo painel ou por nova abertura.");
           }
+          if (index > 0) await firstMessageLane;
           const baseStaggerMs = trigger === "manual" ? MANUAL_ROUTE_SELECTION_STAGGER_MS : TARGET_PARALLEL_STAGGER_MS;
           // A primeira mensagem decide a corrida e nunca deve esperar. Se o WhatsApp
           // já recusou rajadas, a adaptação protege apenas as mensagens seguintes.
@@ -3110,11 +3166,29 @@ export class BotService extends EventEmitter {
           return String(fullMessage?.key?.id || "");
         })();
 
-        const finalPromise = firstAttempt.catch((error) =>
-          this.retryTargetMessageAfterFailure(jid, mensagens[index], messageNumber, cycleId, error, timeline)
-        );
+        const finalPromise = firstAttempt
+          .catch((error) =>
+            this.retryTargetMessageAfterFailure(jid, mensagens[index], messageNumber, cycleId, error, timeline)
+          )
+          .then((messageId) => {
+            if (!messageId) return messageId;
+            const ackAt = Date.now();
+            if (!timeline.firstAckAt) {
+              timeline.firstAckAt = new Date(ackAt).toISOString();
+              timeline.firstAckMs = Math.max(0, ackAt - sendStartedAt);
+              timeline.ackWaitMs = Math.max(0, ackAt - new Date(timeline.firstRelayCalledAt || timeline.sendStartedAt).getTime());
+            }
+            this.appendRouteMessageId(cycleId, messageId);
+            this.addTimelineEvent(timeline, `Mensagem ${messageNumber} confirmada`, ackAt, "success");
+            this.logger.info(`Mensagem alvo ${messageNumber} aceita pelo servidor do WhatsApp. Aguardando retorno no grupo.`);
+            return messageId;
+          });
+        if (index === 0) void finalPromise.then(releaseFirstMessageLane, releaseFirstMessageLane);
 
-        const initialPromise = this.withTimeout(firstAttempt, TARGET_ACK_TIMEOUT_MS).then(
+        const timedInitialAttempt = index === 0
+          ? this.withTimeout(firstAttempt, TARGET_ACK_TIMEOUT_MS)
+          : firstMessageLane.then(() => this.withTimeout(firstAttempt, TARGET_ACK_TIMEOUT_MS));
+        const initialPromise = timedInitialAttempt.then(
           () => ({ status: "acked" as const, messageNumber }),
           (error) => {
             const message = this.getErrorMessage(error);
@@ -3180,15 +3254,6 @@ export class BotService extends EventEmitter {
       const messageNumber = index + 1;
       if (result.status === "fulfilled" && result.value) {
         confirmed += 1;
-        const ackAt = Date.now();
-        if (!input.timeline.firstAckAt) {
-          input.timeline.firstAckAt = new Date(ackAt).toISOString();
-          input.timeline.firstAckMs = Math.max(0, ackAt - input.sendStartedAt);
-          input.timeline.ackWaitMs = Math.max(0, ackAt - new Date(input.timeline.firstRelayCalledAt || input.timeline.sendStartedAt).getTime());
-        }
-        this.appendRouteMessageId(input.cycleId, typeof result.value === "string" ? result.value : undefined);
-        this.addTimelineEvent(input.timeline, `Mensagem ${messageNumber} confirmada`, ackAt, "success");
-        this.logger.info(`Mensagem alvo ${messageNumber} aceita pelo servidor do WhatsApp. Aguardando retorno no grupo.`);
         return;
       }
 
@@ -3601,15 +3666,20 @@ export class BotService extends EventEmitter {
       const activeGroup = this.getActiveMonitoringGroup(config);
       if (!activeGroup.jid) return false;
 
-      await this.prewarmActiveChat(activeGroup.jid);
+      let metadata = this.groupMetadataCache.get(activeGroup.jid);
       const shouldRefreshFullMetadata =
-        reason === "armado" ||
-        !this.groupMetadataCache.has(activeGroup.jid) ||
+        !metadata ||
         Date.now() - this.lastFullMetadataWarmAt >= FULL_METADATA_KEEP_ALIVE_INTERVAL_MS;
 
       if (shouldRefreshFullMetadata) {
-        await this.refreshGroupMetadata(activeGroup.jid);
+        metadata = await this.refreshGroupMetadata(activeGroup.jid);
         this.lastFullMetadataWarmAt = Date.now();
+      }
+      if (shouldRefreshFullMetadata) {
+        await Promise.all([
+          this.prewarmActiveChat(activeGroup.jid),
+          this.prewarmGroupCrypto(metadata)
+        ]);
       }
       this.prepareSendPlan();
       this.lastKeepAliveAt = new Date().toISOString();
@@ -3680,7 +3750,14 @@ export class BotService extends EventEmitter {
     if (message) this.logger.info(message);
 
     this.syncMessagesFromConfig();
-    const metadata = await this.refreshGroupMetadata(activeGroup.jid);
+    const cachedMetadata = this.groupMetadataCache.get(activeGroup.jid);
+    const shouldRefreshFullMetadata =
+      !cachedMetadata ||
+      Date.now() - this.lastFullMetadataWarmAt >= FULL_METADATA_KEEP_ALIVE_INTERVAL_MS;
+    const metadata = shouldRefreshFullMetadata
+      ? await this.refreshGroupMetadata(activeGroup.jid)
+      : cachedMetadata;
+    if (shouldRefreshFullMetadata) this.lastFullMetadataWarmAt = Date.now();
     if (metadata?.announce === true) {
       this.groupState = "closed";
     } else if (metadata?.announce === false) {
@@ -3702,7 +3779,12 @@ export class BotService extends EventEmitter {
 
     this.currentUserInTargetGroup = true;
     this.prepareSendPlan();
-    await this.prewarmActiveChat(activeGroup.jid);
+    if (shouldRefreshFullMetadata) {
+      await Promise.all([
+        this.prewarmActiveChat(activeGroup.jid),
+        this.prewarmGroupCrypto(metadata)
+      ]);
+    }
     return true;
   }
 
@@ -3738,6 +3820,64 @@ export class BotService extends EventEmitter {
       Promise.allSettled(jobs),
       this.delay(2500)
     ]).catch(() => undefined);
+  }
+
+  private deferSecondarySocketTask(task: () => void) {
+    if (this.criticalDispatchInProgress || (this.monitoringEnabled && this.monitoringMode === "target")) {
+      const timer = setTimeout(task, this.criticalDispatchInProgress ? 1500 : 150);
+      timer.unref?.();
+      return;
+    }
+    setImmediate(task);
+  }
+
+  isCriticalDispatchActive() {
+    return this.criticalDispatchInProgress;
+  }
+
+  private async prewarmGroupCrypto(metadata: any, force = false) {
+    if (!this.sock || !metadata?.id || !Array.isArray(metadata.participants)) return false;
+    if (typeof this.sock.getUSyncDevices !== "function" || typeof this.sock.assertSessions !== "function") return false;
+
+    const participantJids = metadata.participants
+      .map((participant: any) => String(participant?.id || ""))
+      .filter(Boolean)
+      .sort();
+    if (!participantJids.length) return false;
+
+    const signature = `${metadata.id}::${participantJids.join("|")}`;
+    const isFresh = signature === this.warmedGroupParticipantSignature &&
+      Date.now() - this.lastGroupCryptoWarmAt < 4 * 60 * 1000;
+    if (!force && isFresh) return true;
+    if (this.groupCryptoWarmInFlight) return this.groupCryptoWarmInFlight;
+
+    const startedAt = Date.now();
+    const warmPromise = (async () => {
+      try {
+        const devices = await this.sock.getUSyncDevices(participantJids, true, false);
+        const deviceJids = (devices || [])
+          .map((device: any) => String(device?.jid || ""))
+          .filter(Boolean);
+        if (deviceJids.length) await this.sock.assertSessions(deviceJids, false);
+        this.warmedGroupParticipantSignature = signature;
+        this.lastGroupCryptoWarmAt = Date.now();
+        this.lastGroupCryptoWarmDurationMs = this.lastGroupCryptoWarmAt - startedAt;
+        this.warmedGroupDeviceCount = deviceJids.length;
+        this.logger.info(`Criptografia do grupo pré-aquecida: ${participantJids.length} participante(s), ${deviceJids.length} dispositivo(s), ${this.lastGroupCryptoWarmDurationMs}ms.`);
+        return true;
+      } catch (error) {
+        this.lastGroupCryptoWarmDurationMs = Date.now() - startedAt;
+        this.logger.warning(`Pré-aquecimento criptográfico não concluído: ${this.getErrorMessage(error)}.`);
+        return false;
+      }
+    })();
+
+    this.groupCryptoWarmInFlight = warmPromise;
+    try {
+      return await warmPromise;
+    } finally {
+      if (this.groupCryptoWarmInFlight === warmPromise) this.groupCryptoWarmInFlight = undefined;
+    }
   }
 
   private getReadinessChecks(): BotReadinessCheck[] {
@@ -3882,6 +4022,7 @@ export class BotService extends EventEmitter {
     try {
       socket.ev?.removeAllListeners?.("connection.update");
       socket.ev?.removeAllListeners?.("groups.update");
+      socket.ev?.removeAllListeners?.("group-participants.update");
       socket.ev?.removeAllListeners?.("messages.upsert");
       socket.ev?.removeAllListeners?.("messaging-history.set");
       socket.end?.(undefined);
