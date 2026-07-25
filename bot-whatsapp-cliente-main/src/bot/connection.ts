@@ -89,9 +89,10 @@ const HEALTH_CHECK_INTERVAL_MS = 25000;
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
 const RACE_KEEP_ALIVE_INTERVAL_MS = 10000;
 const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000;
-const CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS = 90 * 1000;
+const CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
+const SENDER_KEY_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
 const ACTIVE_CHAT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
-const INTERNAL_WARM_READY_MAX_AGE_MS = 2 * 60 * 1000;
+const INTERNAL_WARM_READY_MAX_AGE_MS = 90 * 1000;
 const INITIAL_INTERNAL_WARM_WAIT_MS = 2200;
 const CRITICAL_KEEP_ALIVE_INTERVAL_MS = 5000;
 const SOCKET_KEEP_ALIVE_INTERVAL_MS = 10000;
@@ -251,6 +252,8 @@ export class BotService extends EventEmitter {
   private lastGroupCryptoWarmDurationMs = 0;
   private warmedGroupDeviceCount = 0;
   private warmedGroupParticipantSignature = "";
+  private lastSenderKeyWarmAt = 0;
+  private lastSenderKeyWarmDurationMs = 0;
   private groupCryptoWarmInFlight?: Promise<boolean>;
   private adaptiveOpeningSettleMs = 0;
   private lastNotAcceptableAlertAt = 0;
@@ -321,6 +324,7 @@ export class BotService extends EventEmitter {
         internalWarmAgeMs: this.getInternalWarmAgeMs(),
         lastGroupCryptoWarmDurationMs: this.lastGroupCryptoWarmDurationMs,
         warmedGroupDeviceCount: this.warmedGroupDeviceCount,
+        lastSenderKeyWarmDurationMs: this.lastSenderKeyWarmDurationMs,
         activeQueue: Math.max(this.performanceMetrics.activeQueue, this.dispatchQueueStore.pending().length),
         telemetryCount: telemetry.count,
         averageFirstRelayMs: telemetry.averageFirstRelayMs,
@@ -2113,6 +2117,7 @@ export class BotService extends EventEmitter {
     this.warmedGroupParticipantSignature = "";
     this.lastGroupCryptoWarmAt = 0;
     this.warmedGroupDeviceCount = 0;
+    this.lastSenderKeyWarmAt = 0;
     this.invalidateInternalWarmState();
 
     if (!this.monitoringEnabled || this.criticalDispatchInProgress || !this.sock) return;
@@ -2218,8 +2223,7 @@ export class BotService extends EventEmitter {
   }
 
   private scheduleRouteImageProcessing(msg: any, groupJid: string) {
-    const config = this.configStore.load();
-    if (config.targetDispatchMode !== "ocr" || !downloadMediaMessage) return;
+    if (this.preparedTargetDispatchMode !== "ocr" || !downloadMediaMessage) return;
 
     const messageId = String(msg?.key?.id || "");
     if (!messageId || this.processingImageIds.has(messageId)) return;
@@ -3090,10 +3094,10 @@ export class BotService extends EventEmitter {
       return false;
     }
 
-    // Texto e destino ficam preparados, mas o envelope do WhatsApp precisa nascer
-    // agora. Reutilizar ID/timestamp antigos pode ser aceito pelo socket sem a
-    // mensagem aparecer no grupo.
-    this.rebuildPreparedRelayMessages(this.preparedTargetJid, mensagens);
+    // O envelope precisa nascer agora para ter ID/timestamp novos. Somente a
+    // primeira mensagem entra no caminho crítico; as demais são construídas
+    // depois que a primeira chamada já alcançou o socket.
+    this.rebuildPreparedRelayMessages(this.preparedTargetJid, mensagens, true);
     const sendStartedAt = Date.now();
     const timeline = this.createDispatchTimeline(
       eventDetectedAt,
@@ -3148,14 +3152,15 @@ export class BotService extends EventEmitter {
     this.rebuildPreparedRelayMessages(jid, mensagens);
   }
 
-  private rebuildPreparedRelayMessages(jid: string, mensagens: string[]) {
+  private rebuildPreparedRelayMessages(jid: string, mensagens: string[], firstOnly = false) {
     if (!this.sock || !jid) {
       this.preparedRelayMessages = [];
       this.preparedRelaySignature = "";
       this.preparedRelayBuiltAt = 0;
       return;
     }
-    this.preparedRelayMessages = mensagens.map((mensagem) => this.buildRelayTextMessage(this.sock, jid, mensagem));
+    const messagesToBuild = firstOnly ? mensagens.slice(0, 1) : mensagens;
+    this.preparedRelayMessages = messagesToBuild.map((mensagem) => this.buildRelayTextMessage(this.sock, jid, mensagem));
     this.preparedRelaySignature = this.getRelaySignature(jid, mensagens);
     this.preparedRelayBuiltAt = Date.now();
   }
@@ -3320,16 +3325,15 @@ export class BotService extends EventEmitter {
         return;
       }
 
-      const relayMessages = this.preparedRelayMessages && this.preparedRelayMessages.length
-        ? this.preparedRelayMessages
-        : mensagens.map((m) => this.buildRelayTextMessage(sock, jid, m));
-
       let releaseFirstMessageLane = () => undefined;
       const firstMessageLane = new Promise<void>((resolve) => {
         releaseFirstMessageLane = resolve;
       });
-      const jobs = relayMessages.map((fullMessage, index) => {
+      const jobs = mensagens.map((mensagem, index) => {
         const messageNumber = index + 1;
+        const fullMessage =
+          this.preparedRelayMessages[index] ||
+          this.buildRelayTextMessage(sock, jid, mensagem);
 
         const firstAttempt = (async () => {
           if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
@@ -3931,6 +3935,9 @@ export class BotService extends EventEmitter {
       const shouldWarmCrypto =
         forceFullWarm ||
         Date.now() - this.lastGroupCryptoWarmAt >= CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS;
+      const shouldWarmSenderKey =
+        forceFullWarm ||
+        Date.now() - this.lastSenderKeyWarmAt >= SENDER_KEY_KEEP_ALIVE_INTERVAL_MS;
       const cryptoSupported =
         typeof this.sock.getUSyncDevices === "function" &&
         typeof this.sock.assertSessions === "function";
@@ -3940,6 +3947,9 @@ export class BotService extends EventEmitter {
           this.lastGroupCryptoWarmAt > 0 &&
           Date.now() - this.lastGroupCryptoWarmAt < CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS
         );
+      let senderKeyReady =
+        this.lastSenderKeyWarmAt > 0 &&
+        Date.now() - this.lastSenderKeyWarmAt < SENDER_KEY_KEEP_ALIVE_INTERVAL_MS;
       const warmJobs: Promise<unknown>[] = [];
       if (shouldWarmActiveChat) {
         warmJobs.push(this.prewarmActiveChat(activeGroup.jid).then(() => {
@@ -3951,9 +3961,14 @@ export class BotService extends EventEmitter {
           cryptoReady = ready;
         }));
       }
+      if (shouldWarmSenderKey) {
+        warmJobs.push(this.prewarmGroupSenderKeyMemory(activeGroup.jid).then((ready) => {
+          senderKeyReady = ready;
+        }));
+      }
       if (warmJobs.length) await Promise.all(warmJobs);
 
-      if (this.criticalDispatchInProgress || this.activeSendCycle || !cryptoReady) {
+      if (this.criticalDispatchInProgress || this.activeSendCycle || !cryptoReady || !senderKeyReady) {
         this.internalWarmState = "cold";
         this.emitSnapshot();
         return false;
@@ -4010,6 +4025,8 @@ export class BotService extends EventEmitter {
     this.lastGroupCryptoWarmAt = 0;
     this.lastGroupCryptoWarmDurationMs = 0;
     this.warmedGroupDeviceCount = 0;
+    this.lastSenderKeyWarmAt = 0;
+    this.lastSenderKeyWarmDurationMs = 0;
   }
 
   private isCriticalWarmWindow(date = new Date()) {
@@ -4197,6 +4214,27 @@ export class BotService extends EventEmitter {
       return await warmPromise;
     } finally {
       if (this.groupCryptoWarmInFlight === warmPromise) this.groupCryptoWarmInFlight = undefined;
+    }
+  }
+
+  private async prewarmGroupSenderKeyMemory(jid: string) {
+    const keys = this.sock?.authState?.keys;
+    if (!jid || typeof keys?.get !== "function") {
+      this.lastSenderKeyWarmAt = Date.now();
+      this.lastSenderKeyWarmDurationMs = 0;
+      return true;
+    }
+
+    const startedAt = Date.now();
+    try {
+      await keys.get("sender-key-memory", [jid]);
+      this.lastSenderKeyWarmAt = Date.now();
+      this.lastSenderKeyWarmDurationMs = this.lastSenderKeyWarmAt - startedAt;
+      return true;
+    } catch (error) {
+      this.lastSenderKeyWarmDurationMs = Date.now() - startedAt;
+      this.logger.warning(`Memória criptográfica do grupo não foi aquecida: ${this.getErrorMessage(error)}.`);
+      return false;
     }
   }
 

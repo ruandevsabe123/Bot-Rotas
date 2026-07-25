@@ -32,8 +32,18 @@ function createBot() {
 test("aquecimento obrigatório prepara sessões sem enviar mensagem real", async () => {
   const { bot, directory } = createBot();
   try {
-    const calls = { devices: 0, sessions: 0, relay: 0, presence: 0 };
+    const calls = { devices: 0, sessions: 0, senderKey: 0, relay: 0, presence: 0 };
     bot.sock = {
+      authState: {
+        keys: {
+          get: async (type, ids) => {
+            assert.equal(type, "sender-key-memory");
+            assert.deepEqual(ids, ["motoristas@g.us"]);
+            calls.senderKey += 1;
+            return {};
+          }
+        }
+      },
       getUSyncDevices: async (participants) => {
         calls.devices += 1;
         return participants.map((jid, index) => ({ jid: `${index}:${jid}` }));
@@ -64,11 +74,13 @@ test("aquecimento obrigatório prepara sessões sem enviar mensagem real", async
     assert.equal(await bot.runWarmKeepAlive("armado"), true);
     assert.equal(calls.devices, 1);
     assert.equal(calls.sessions, 1);
+    assert.equal(calls.senderKey, 1);
     assert.equal(calls.presence, 2);
     assert.equal(calls.relay, 0);
     assert.equal(bot.internalWarmState, "ready");
     assert.equal(bot.getCurrentInternalWarmState(), "ready");
     assert.equal(bot.warmedGroupDeviceCount, 2);
+    assert.ok(bot.lastSenderKeyWarmAt > 0);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

@@ -91,6 +91,7 @@ export type BotPerformanceMetrics = {
   lastDispatchWasWarm?: boolean;
   lastGroupCryptoWarmDurationMs?: number;
   warmedGroupDeviceCount?: number;
+  lastSenderKeyWarmDurationMs?: number;
   workerProcessId?: number;
   workerRestartCount?: number;
   telemetryCount?: number;

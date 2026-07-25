@@ -213,6 +213,53 @@ test("segunda mensagem só usa o socket depois do ACK da primeira", async () => 
   }
 });
 
+test("primeiro relay começa antes de construir o envelope da segunda mensagem", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const order = [];
+    let releaseFirst;
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 12;
+    bot.sock = {
+      relayMessage: async (_jid, _message, options) => {
+        order.push(`relay:${options.messageId}`);
+        if (options.messageId === "first") {
+          await new Promise((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      }
+    };
+    bot.preparedRelayMessages = [
+      { key: { id: "first" }, message: { conversation: "Cliente A-1" } }
+    ];
+    bot.buildRelayTextMessage = (_sock, _jid, message) => {
+      order.push(`build:${message}`);
+      return { key: { id: "second" }, message: { conversation: message } };
+    };
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const dispatch = bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1", "Cliente A-2"],
+      12
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(order, ["relay:first", "build:Cliente A-2"]);
+    releaseFirst();
+    await dispatch;
+    assert.deepEqual(order, ["relay:first", "build:Cliente A-2", "relay:second"]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("disparo reconstrói envelope com ID e timestamp novos", async () => {
   const { bot, directory } = createBot();
   try {

@@ -1,26 +1,26 @@
 import { AppRelease } from "./shared/types";
 
 const RELEASE_DETAILS = {
-  version: "1.4.0",
-  publishedAt: "2026-07-25T18:00:00.000Z",
-  title: "Primeiro disparo mais aquecido",
-  summary: "O bot agora mantém internamente o grupo e a sessão preparados para reduzir a demora da primeira mensagem.",
+  version: "1.5.0",
+  publishedAt: "2026-07-25T20:00:00.000Z",
+  title: "Primeira mensagem ainda mais rápida",
+  summary: "O caminho entre a abertura do grupo e o primeiro envio recebeu uma nova rodada de otimizações internas.",
   changes: [
     {
-      title: "Preparação automática ao armar",
-      description: "Ao iniciar ou reconectar, o bot prepara grupo, dispositivos e mensagens antes de ficar aguardando a abertura."
+      title: "Primeiro envio com prioridade máxima",
+      description: "O bot agora inicia a primeira mensagem antes de preparar o envelope da segunda."
     },
     {
-      title: "Sessões mantidas prontas",
-      description: "A preparação interna é renovada durante a espera para diminuir o impacto do primeiro disparo."
+      title: "Criptografia mantida em memória",
+      description: "As informações criptográficas usadas pelo grupo são carregadas antecipadamente e renovadas durante a espera."
     },
     {
-      title: "Sem mensagem de aquecimento",
-      description: "Todo o processo acontece internamente e não envia testes nem exige qualquer ação do cliente."
+      title: "Callback de imagem mais leve",
+      description: "A chegada da imagem não faz mais leitura de configuração em disco antes de tratar os eventos do grupo."
     },
     {
-      title: "Prontidão visível no painel",
-      description: "O painel e a telemetria agora mostram se o disparo começou com a preparação aquecida."
+      title: "Aquecimento continua silencioso",
+      description: "As novas preparações permanecem totalmente internas, sem mensagem de teste e sem ação do cliente."
     }
   ]
 } satisfies Omit<AppRelease, "id">;

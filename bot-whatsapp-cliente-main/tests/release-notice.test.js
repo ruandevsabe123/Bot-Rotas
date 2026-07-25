@@ -13,7 +13,7 @@ test("usa o commit do Render como identificador único do deploy", () => {
   });
 
   assert.equal(release.id, "abc123deploy");
-  assert.equal(release.version, "1.4.0");
+  assert.equal(release.version, "1.5.0");
   assert.ok(release.title);
   assert.ok(release.summary);
   assert.ok(release.changes.length >= 1);
