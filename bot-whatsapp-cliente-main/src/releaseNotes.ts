@@ -1,30 +1,26 @@
 import { AppRelease } from "./shared/types";
 
 const RELEASE_DETAILS = {
-  version: "1.1.0",
+  version: "1.2.0",
   publishedAt: "2026-07-25T12:00:00.000Z",
-  title: "Atualização da conexão e do painel",
-  summary: "Melhoramos a conexão do WhatsApp e deixamos as novidades de cada versão mais claras no painel.",
+  title: "Testes mais práticos no painel",
+  summary: "O administrador agora consegue conferir a experiência de um cliente de teste sem precisar sair e entrar em outra conta.",
   changes: [
     {
-      title: "Novidades no primeiro acesso",
-      description: "Depois de cada atualização, o painel mostrará uma única vez um resumo simples do que mudou."
+      title: "Modo cliente no painel admin",
+      description: "Selecione o cliente de teste ou use a conta de teste identificada pelo sistema para abrir o painel exatamente como ela vê."
     },
     {
-      title: "QR Code com mais tempo",
-      description: "Agora cada código permanece válido por 60 segundos, inclusive depois da primeira tentativa."
+      title: "Retorno rápido e seguro",
+      description: "Uma faixa no modo de teste permite voltar ao painel administrativo sem informar a senha novamente."
     },
     {
-      title: "Leitura mais fácil no iPhone",
-      description: "O código ficou maior, com contraste melhor e mostra na tela quanto tempo ainda falta."
+      title: "Avisos também para o administrador",
+      description: "As novidades de cada versão agora aparecem uma vez para o admin, além de continuarem disponíveis para cada cliente."
     },
     {
-      title: "Tentativas antigas descartadas",
-      description: "Códigos vencidos somem automaticamente e o botão de atualizar inicia uma tentativa realmente nova."
-    },
-    {
-      title: "Sessão mais protegida",
-      description: "A conexão agora salva os dados do WhatsApp antes de reiniciar, diminuindo desconexões e pedidos de QR repetidos."
+      title: "Proteção contra conta errada",
+      description: "O sistema não entra automaticamente em um cliente real: ele exige uma conta de teste reconhecida ou uma seleção feita no filtro."
     }
   ]
 } satisfies Omit<AppRelease, "id">;

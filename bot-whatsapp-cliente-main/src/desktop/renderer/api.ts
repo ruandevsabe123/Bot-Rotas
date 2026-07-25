@@ -102,6 +102,28 @@ export async function getPanelMe() {
   return user;
 }
 
+export async function enterClientMode(email: string) {
+  const response = await fetchJson<{ token: string; user: PanelUser }>("/api/admin/impersonate", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+  setPanelToken(response.token);
+  setPanelUserEmail(response.user.email);
+  setPanelUserRole(response.user.role);
+  return response.user;
+}
+
+export async function returnToAdminMode() {
+  const response = await fetchJson<{ token: string; user: PanelUser }>("/api/impersonation/return", {
+    method: "POST",
+    body: "{}"
+  });
+  setPanelToken(response.token);
+  setPanelUserEmail(response.user.email);
+  setPanelUserRole(response.user.role);
+  return response.user;
+}
+
 export function getReleaseNotice() {
   return fetchJson<ReleaseNotice>("/api/release");
 }

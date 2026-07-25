@@ -287,6 +287,7 @@ export type PanelUser = {
   role: PanelUserRole;
   blocked?: boolean;
   color?: string;
+  impersonatedBy?: string;
 };
 
 export type LeaderContact = {

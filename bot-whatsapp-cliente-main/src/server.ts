@@ -19,6 +19,7 @@ import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportM
 const port = Number(process.env.PORT || 3000);
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
+const IMPERSONATION_SESSION_TTL_MS = 1000 * 60 * 60 * 4;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
 const DAILY_SESSION_RESET_HOUR = Number(process.env.DAILY_SESSION_RESET_HOUR || 0);
 const DAILY_SESSION_RESET_MINUTE = Number(process.env.DAILY_SESSION_RESET_MINUTE || 0);
@@ -397,12 +398,22 @@ function signPayload(payload: string) {
   return crypto.createHmac("sha256", panelSessionSecret).update(payload).digest("base64url");
 }
 
-function createSessionToken(email: string) {
-  const payload = base64Url(JSON.stringify({ email, exp: Date.now() + SESSION_TTL_MS }));
+type PanelSessionClaims = {
+  email: string;
+  exp: number;
+  impersonatedBy?: string;
+};
+
+function createSessionToken(email: string, impersonatedBy?: string) {
+  const payload = base64Url(JSON.stringify({
+    email,
+    exp: Date.now() + (impersonatedBy ? IMPERSONATION_SESSION_TTL_MS : SESSION_TTL_MS),
+    impersonatedBy: impersonatedBy || undefined
+  }));
   return `${payload}.${signPayload(payload)}`;
 }
 
-function verifySessionToken(token: string): string | undefined {
+function verifySessionClaims(token: string): PanelSessionClaims | undefined {
   const [payload, signature] = token.split(".");
   if (!payload || !signature) return undefined;
   const expected = signPayload(payload);
@@ -412,10 +423,20 @@ function verifySessionToken(token: string): string | undefined {
     if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return undefined;
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     const email = String(parsed.email || "").toLowerCase();
-    return email && panelUsers.has(email) && Number(parsed.exp) > Date.now() ? email : undefined;
+    const impersonatedBy = String(parsed.impersonatedBy || "").trim().toLowerCase() || undefined;
+    if (!email || !panelUsers.has(email) || Number(parsed.exp) <= Date.now()) return undefined;
+    return { email, exp: Number(parsed.exp), impersonatedBy };
   } catch {
     return undefined;
   }
+}
+
+function verifySessionToken(token: string): string | undefined {
+  return verifySessionClaims(token)?.email;
+}
+
+function getSessionClaims(request: http.IncomingMessage) {
+  return verifySessionClaims(String(request.headers["x-panel-token"] || "").trim());
 }
 
 function getAuthorizedEmail(request: http.IncomingMessage) {
@@ -1164,11 +1185,29 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/me") {
+      const session = getSessionClaims(request);
       sendJson(response, 200, {
         email: authorizedEmail,
         role: getUserRole(authorizedEmail),
         blocked: panelUsers.get(authorizedEmail)?.blocked,
-        color: panelUsers.get(authorizedEmail)?.color
+        color: panelUsers.get(authorizedEmail)?.color,
+        impersonatedBy: session?.email === authorizedEmail ? session.impersonatedBy : undefined
+      });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/impersonation/return") {
+      const session = getSessionClaims(request);
+      const adminEmail = session?.impersonatedBy;
+      const admin = adminEmail ? panelUsers.get(adminEmail) : undefined;
+      if (!session || session.email !== authorizedEmail || !adminEmail || admin?.role !== "admin" || admin.blocked) {
+        sendJson(response, 403, { error: "Esta sessão não está no modo cliente de teste." });
+        return;
+      }
+      sendJson(response, 200, {
+        ok: true,
+        token: createSessionToken(adminEmail),
+        user: { email: adminEmail, role: admin.role, blocked: admin.blocked, color: admin.color }
       });
       return;
     }
@@ -1177,7 +1216,7 @@ const server = http.createServer(async (request, response) => {
       const user = panelUsers.get(authorizedEmail);
       sendJson(response, 200, {
         release: currentRelease,
-        shouldShow: user?.role === "client" && user.lastSeenReleaseId !== currentRelease.id
+        shouldShow: Boolean(user && user.lastSeenReleaseId !== currentRelease.id)
       });
       return;
     }
@@ -1281,6 +1320,33 @@ const server = http.createServer(async (request, response) => {
       await clearAdminMaintenanceData(String(body.target || ""), body.clientEmail);
       broadcastAdminSnapshot();
       sendJson(response, 200, getAdminMonitorSnapshot());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/admin/impersonate") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const body = await readJsonBody<{ email?: string }>(request);
+      const clientEmail = String(body.email || "").trim().toLowerCase();
+      const client = panelUsers.get(clientEmail);
+      if (!client || client.role !== "client") {
+        sendJson(response, 404, { error: "Usuário cliente não encontrado." });
+        return;
+      }
+      if (client.blocked) {
+        sendJson(response, 409, { error: "Desbloqueie o usuário de teste antes de entrar no modo cliente." });
+        return;
+      }
+      sendJson(response, 200, {
+        ok: true,
+        token: createSessionToken(clientEmail, authorizedEmail),
+        user: {
+          email: clientEmail,
+          role: client.role,
+          blocked: client.blocked,
+          color: client.color,
+          impersonatedBy: authorizedEmail
+        }
+      });
       return;
     }
 

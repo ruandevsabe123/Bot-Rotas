@@ -1,6 +1,6 @@
 {
   "name": "Bot-whatsapp-ParaPc-rotas",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Bot de WhatsApp com painel desktop",
   "main": "dist/desktop/main.js",
   "engines": {

@@ -67,6 +67,7 @@ import {
   botApi,
   clearAdminMaintenance,
   confirmRomaneio,
+  enterClientMode,
   getRomaneio,
   getAdminMonitor,
   getAdminUserDetail,
@@ -80,6 +81,7 @@ import {
   markSupportMessageRead,
   panelLogin,
   rejectAdminRoute,
+  returnToAdminMode,
   saveAdminUser,
   saveRomaneioSettings,
   sendSupportMessage,
@@ -2745,6 +2747,7 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelToken()));
   const [userEmail, setUserEmail] = useState(getPanelUserEmail());
   const [userRole, setUserRole] = useState<PanelUserRole>(getPanelUserRole());
+  const [impersonatedBy, setImpersonatedBy] = useState("");
   const [sessionChecked, setSessionChecked] = useState(Boolean(window.botApi || !getPanelToken()));
   const [loginError, setLoginError] = useState("");
   const [alertFlash, setAlertFlash] = useState(false);
@@ -2784,6 +2787,7 @@ export default function App() {
     setPanelPassword("");
     setUserEmail("");
     setUserRole("client");
+    setImpersonatedBy("");
     setAuthenticated(false);
     setSessionChecked(true);
     if (message) setLoginError(message);
@@ -2798,6 +2802,7 @@ export default function App() {
         if (!mounted) return;
         setUserEmail(user.email);
         setUserRole(user.role);
+        setImpersonatedBy(user.impersonatedBy || "");
         setSessionChecked(true);
         setLoginError("");
       })
@@ -2865,7 +2870,7 @@ export default function App() {
   }, [authenticated, userRole]);
 
   useEffect(() => {
-    if (!authenticated || userRole === "admin" || window.botApi) return;
+    if (!authenticated || window.botApi) return;
     let mounted = true;
     getReleaseNotice()
       .then((notice) => {
@@ -3430,6 +3435,37 @@ export default function App() {
     }
   }
 
+  async function handleEnterClientMode(email: string) {
+    const user = await enterClientMode(email);
+    setUserEmail(user.email);
+    setUserRole(user.role);
+    setImpersonatedBy(user.impersonatedBy || "");
+    setReleaseNotice(undefined);
+    setActiveTab("home");
+  }
+
+  async function handleReturnToAdminMode() {
+    setBusy(true);
+    try {
+      const user = await returnToAdminMode();
+      setUserEmail(user.email);
+      setUserRole(user.role);
+      setImpersonatedBy("");
+      setReleaseNotice(undefined);
+      setLoginError("");
+    } catch (error) {
+      setConfirmation({
+        title: "Não consegui voltar ao admin",
+        message: error instanceof Error ? error.message : "A sessão de teste não pôde ser encerrada.",
+        details: ["Saia da conta e entre novamente com o usuário administrador se o problema continuar."],
+        confirmLabel: "Fechar",
+        onConfirm: () => undefined
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function snoozePendingClientIncident() {
     if (!pendingClientIncident || !pendingIncidentSnoozeDelay) return;
     await runAction(() => botApi.snoozeRouteIncident({ routeId: pendingClientIncident.id }));
@@ -3448,6 +3484,7 @@ export default function App() {
       const user = await panelLogin(email, password);
       setUserEmail(user.email);
       setUserRole(user.role);
+      setImpersonatedBy("");
       setSessionChecked(true);
       setAuthenticated(true);
       setLoginError("");
@@ -3468,10 +3505,21 @@ export default function App() {
 
   if (userRole === "admin") {
     return (
-      <AdminCommandCenter
-        userEmail={userEmail}
-        onLogout={() => logout("Entre novamente para continuar.")}
-      />
+      <>
+        <AdminCommandCenter
+          userEmail={userEmail}
+          onLogout={() => logout("Entre novamente para continuar.")}
+          onEnterClientMode={handleEnterClientMode}
+        />
+        {releaseNotice ? (
+          <ReleaseDialog
+            release={releaseNotice}
+            busy={releaseAcknowledgeBusy}
+            error={releaseError}
+            onAcknowledge={() => void handleAcknowledgeRelease()}
+          />
+        ) : null}
+      </>
     );
   }
 
@@ -3482,6 +3530,18 @@ export default function App() {
           <p className="eyebrow">Central operacional</p>
           <h1>Bot Rotas</h1>
         </div>
+        {impersonatedBy ? (
+          <div className="client-mode-banner">
+            <span>
+              <small>Modo cliente de teste</small>
+              <strong>{userEmail}</strong>
+            </span>
+            <button className="button" disabled={busy} type="button" onClick={() => void handleReturnToAdminMode()}>
+              <LogOut size={17} />
+              Voltar ao admin
+            </button>
+          </div>
+        ) : null}
         <div className="group-pill">
           <span>{snapshot.monitoringMode === "test" ? "Teste ativo" : "Grupo alvo"}</span>
           <strong>{snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel}</strong>

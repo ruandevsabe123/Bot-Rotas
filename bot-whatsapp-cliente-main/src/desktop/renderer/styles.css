@@ -1458,6 +1458,42 @@ h2 {
   background: rgba(245, 197, 66, 0.07);
 }
 
+.client-mode-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 9px 10px 9px 13px;
+  border: 1px solid rgba(53, 208, 127, 0.34);
+  border-radius: 8px;
+  background: rgba(53, 208, 127, 0.09);
+}
+
+.client-mode-banner span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.client-mode-banner small {
+  color: #8fd9b3;
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.client-mode-banner strong {
+  overflow: hidden;
+  color: #f4f7f8;
+  font-size: 0.82rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.client-mode-banner .button {
+  flex: 0 0 auto;
+}
+
 .alert-row.tone-info {
   border-color: rgba(59, 156, 255, 0.24);
   background: rgba(59, 156, 255, 0.07);
@@ -4122,6 +4158,17 @@ h2 {
   gap: 10px;
 }
 
+.adminx-client-mode-button {
+  border-color: rgba(53, 208, 127, 0.3);
+  color: #d8f8e7;
+  background: rgba(53, 208, 127, 0.1);
+}
+
+.adminx-client-mode-button:hover:not(:disabled) {
+  border-color: rgba(53, 208, 127, 0.52);
+  background: rgba(53, 208, 127, 0.17);
+}
+
 .adminx-notification-center {
   position: relative;
 }
@@ -5758,6 +5805,10 @@ h2 {
     flex-direction: column;
   }
 
+  .client-mode-banner {
+    justify-content: space-between;
+  }
+
   .admin-console-header {
     align-items: stretch;
     flex-direction: column;
@@ -5875,6 +5926,16 @@ h2 {
 
   .group-pill {
     min-width: 0;
+  }
+
+  .client-mode-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .client-mode-banner .button {
+    justify-content: center;
+    width: 100%;
   }
 
   .command-hero,

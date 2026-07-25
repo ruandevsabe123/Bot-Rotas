@@ -14,6 +14,7 @@ import {
   Gauge,
   History,
   Inbox,
+  LogIn,
   LogOut,
   MessageSquareText,
   RefreshCw,
@@ -64,6 +65,7 @@ import { enableWebPushNotifications } from "../pushNotifications";
 type AdminCommandCenterProps = {
   userEmail: string;
   onLogout: () => void;
+  onEnterClientMode: (email: string) => void | Promise<void>;
 };
 
 type AdminPage = "today" | "dashboard" | "clients" | "validations" | "reactions" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
@@ -594,7 +596,7 @@ function ClientSidePanel({
   );
 }
 
-export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterProps) {
+export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: AdminCommandCenterProps) {
   const [routes, setRoutes] = useState<AdminRoutesSnapshot>(emptyRoutes);
   const [users, setUsers] = useState<AdminUsersSnapshot>(emptyUsers);
   const [support, setSupport] = useState<AdminSupportMessagesSnapshot>(emptySupport);
@@ -686,7 +688,26 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   }, [streamState]);
 
   const clients = useMemo(() => users.users.filter((user) => user.role === "client"), [users.users]);
+  const clientModeTarget = useMemo(() => {
+    const selectedClient = clientFilter === "all"
+      ? undefined
+      : clients.find((client) => client.email === clientFilter);
+    if (selectedClient) return selectedClient;
+    return clients.find((client) => /(^|[._+@-])(test|teste)([._+@-]|$)/i.test(client.email));
+  }, [clientFilter, clients]);
   const period = useMemo(() => dateRangeMs(datePreset), [datePreset]);
+
+  async function enterClientMode() {
+    if (!clientModeTarget) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onEnterClientMode(clientModeTarget.email);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui abrir o modo cliente.");
+      setBusy(false);
+    }
+  }
 
   const visibleRoutes = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -1204,6 +1225,16 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             <StatusPill tone={streamState === "live" ? "green" : streamState === "fallback" ? "yellow" : "blue"}>
               {streamState === "live" ? "SSE ao vivo" : streamState === "fallback" ? "Polling" : "Conectando"}
             </StatusPill>
+            <button
+              className="button adminx-client-mode-button"
+              disabled={busy || !clientModeTarget}
+              type="button"
+              title={clientModeTarget ? `Entrar como ${clientModeTarget.email}` : "Selecione um cliente de teste no filtro"}
+              onClick={() => void enterClientMode()}
+            >
+              <LogIn size={17} />
+              Modo cliente
+            </button>
             <div className="adminx-notification-center">
               <button
                 aria-expanded={notificationCenterOpen}
