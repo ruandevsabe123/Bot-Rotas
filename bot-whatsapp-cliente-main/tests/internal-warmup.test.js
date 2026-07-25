@@ -163,3 +163,30 @@ test("telemetria registra se o disparo começou aquecido ou frio", () => {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("profiler mede leituras e gravações de chaves durante o disparo", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const timeline = bot.createDispatchTimeline(Date.now(), Date.now(), "race", "group_update");
+    bot.activeSignalProfileTimeline = timeline;
+    const keys = bot.profileSignalKeyStore({
+      get: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 3));
+        return { id: { value: true } };
+      },
+      set: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 3));
+      }
+    });
+
+    await keys.get("session", ["id"]);
+    await keys.set({ session: { id: { value: true } } });
+
+    assert.equal(timeline.signalKeyReadOps, 1);
+    assert.equal(timeline.signalKeyWriteOps, 1);
+    assert.ok(timeline.signalKeyReadMs >= 1);
+    assert.ok(timeline.signalKeyWriteMs >= 1);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

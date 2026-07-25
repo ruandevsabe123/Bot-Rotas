@@ -419,6 +419,13 @@ function RouteSidePanel({
             <dl className="adminx-kv">
               <dt>Modo corrida</dt><dd>{route.dispatchTimeline.mode === "race" ? "ativo" : "normal"}</dd>
               <dt>Gatilho mais rápido</dt><dd>{openingSignalLabel(route.dispatchTimeline.openingSignal)}</dd>
+              <dt>Armazenamento da sessão</dt><dd>{route.dispatchTimeline.authBackend === "sqlite" ? "SQLite transacional" : "Arquivos legados"}</dd>
+              <dt>Preparação interna</dt><dd>{route.dispatchTimeline.internalWarmState === "ready" ? "Aquecida" : route.dispatchTimeline.internalWarmState || "Não registrada"}</dd>
+              <dt>Dispositivos aquecidos</dt><dd>{route.dispatchTimeline.warmedDeviceCount ?? "Não registrado"}</dd>
+              <dt>RTT do socket</dt><dd>{formatMs(route.dispatchTimeline.socketRttMs)}</dd>
+              <dt>Leitura de chaves</dt><dd>{formatMs(route.dispatchTimeline.signalKeyReadMs)} ({route.dispatchTimeline.signalKeyReadOps || 0} operação(ões))</dd>
+              <dt>Gravação de chaves</dt><dd>{formatMs(route.dispatchTimeline.signalKeyWriteMs)} ({route.dispatchTimeline.signalKeyWriteOps || 0} operação(ões))</dd>
+              <dt>Segunda mensagem</dt><dd>{route.dispatchTimeline.secondLaneMode === "speculative" ? "Faixa rápida adaptativa" : "Protegida pelo ACK"}</dd>
               <dt>Timeout usado</dt><dd>{route.dispatchTimeline.timeoutUsed ? "sim" : "não"}</dd>
               <dt>Retry usado</dt><dd>{route.dispatchTimeline.retryUsed ? "sim" : "não"}</dd>
               <dt>Not acceptable</dt><dd>{route.dispatchTimeline.notAcceptableCount}</dd>

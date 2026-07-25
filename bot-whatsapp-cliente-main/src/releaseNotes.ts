@@ -1,26 +1,26 @@
 import { AppRelease } from "./shared/types";
 
 const RELEASE_DETAILS = {
-  version: "1.6.0",
-  publishedAt: "2026-07-25T22:00:00.000Z",
-  title: "Faixa exclusiva para o disparo",
-  summary: "Durante a espera pela abertura, o processo do bot agora fica mais livre para reagir imediatamente ao evento.",
+  version: "1.7.0",
+  publishedAt: "2026-07-25T18:42:08.000Z",
+  title: "Sessão mais rápida e diagnóstico profundo",
+  summary: "A sessão do WhatsApp ficou mais ágil no primeiro disparo e ganhou novas proteções para continuar conectada após atualizações.",
   changes: [
     {
-      title: "Espera praticamente ociosa",
-      description: "Verificações com cache válido não geram snapshots, remontagem de mensagens ou leitura repetida de configuração."
+      title: "Sessão transacional",
+      description: "Credenciais e chaves agora usam um armazenamento mais rápido, com migração automática e cópia de segurança do formato anterior."
     },
     {
-      title: "Dispositivos atualizados ao armar",
-      description: "O bot consulta uma lista fresca dos dispositivos do grupo ao iniciar e usa cache nos ciclos seguintes."
+      title: "Primeiro disparo mais leve",
+      description: "Leituras e gravações da sessão deixam de disputar vários arquivos no momento em que a rota precisa ser enviada."
     },
     {
-      title: "Logs sem bloquear o envio",
-      description: "A gravação automática do histórico agora usa disco de forma assíncrona e não segura o callback do WhatsApp."
+      title: "Faixa rápida adaptativa",
+      description: "Quando o histórico recente está saudável, a segunda mensagem pode avançar mais cedo sem perder as proteções contra rejeição."
     },
     {
-      title: "Saúde mais leve",
-      description: "O monitoramento verifica o WebSocket sem repetir consultas pesadas já cobertas pelo aquecimento."
+      title: "Diagnóstico no painel",
+      description: "O admin passa a enxergar tempo do socket, acesso às chaves, dispositivos preparados e o modo usado em cada disparo."
     }
   ]
 } satisfies Omit<AppRelease, "id">;

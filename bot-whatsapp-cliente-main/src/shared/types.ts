@@ -92,6 +92,8 @@ export type BotPerformanceMetrics = {
   lastGroupCryptoWarmDurationMs?: number;
   warmedGroupDeviceCount?: number;
   lastSenderKeyWarmDurationMs?: number;
+  authBackend?: "sqlite" | "multi-file";
+  socketRttMs?: number;
   workerProcessId?: number;
   workerRestartCount?: number;
   telemetryCount?: number;
@@ -136,6 +138,14 @@ export type RouteDispatchTimeline = {
   openingSignal?: "group_update" | "opening_message" | "already_open" | "image_ready" | "manual" | "simulation";
   internalWarmState?: "cold" | "warming" | "ready";
   internalWarmAgeMs?: number;
+  authBackend?: "sqlite" | "multi-file";
+  warmedDeviceCount?: number;
+  socketRttMs?: number;
+  signalKeyReadMs?: number;
+  signalKeyWriteMs?: number;
+  signalKeyReadOps?: number;
+  signalKeyWriteOps?: number;
+  secondLaneMode?: "ack-gated" | "speculative";
   events: RouteDispatchTimelineEvent[];
 };
 

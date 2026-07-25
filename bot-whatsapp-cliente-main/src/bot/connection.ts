@@ -13,6 +13,7 @@ import { readRouteImageOcrWithoutBlockingSocket } from "./ocrIsolated";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
+import { useSqliteAuthState } from "./sqliteAuthState";
 import { DEFAULT_LEADER_CONTACTS } from "./leaderDefaults";
 import { RomaneioStore } from "../services/romaneio/romaneioStore";
 import { isPreferredImageCity, PREFERRED_IMAGE_CITY, rankImageRouteOptions } from "../services/romaneio/rankImageRoutes";
@@ -40,6 +41,8 @@ let generateWAMessageFromContent: any;
 let downloadMediaMessage: any;
 let Browsers: any;
 let makeCacheableSignalKeyStore: any;
+let BufferJSON: any;
+let proto: any;
 let baileysLoadPromise: Promise<void> | undefined;
 
 function loadBaileys(): Promise<void> {
@@ -57,6 +60,8 @@ function loadBaileys(): Promise<void> {
     downloadMediaMessage = baileys.downloadMediaMessage;
     Browsers = baileys.Browsers;
     makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
+    BufferJSON = baileys.BufferJSON;
+    proto = baileys.proto;
   })();
 
   return baileysLoadPromise;
@@ -91,6 +96,7 @@ const RACE_KEEP_ALIVE_INTERVAL_MS = 10000;
 const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000;
 const CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
 const SENDER_KEY_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
+const SOCKET_RTT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
 const ACTIVE_CHAT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
 const INTERNAL_WARM_READY_MAX_AGE_MS = 90 * 1000;
 const INITIAL_INTERNAL_WARM_WAIT_MS = 2200;
@@ -231,6 +237,10 @@ export class BotService extends EventEmitter {
   private credsSaveInFlight?: Promise<void>;
   private credsSaveDirty = false;
   private saveCredsNow?: () => Promise<void> | void;
+  private flushAuthState?: () => Promise<void>;
+  private closeAuthState?: () => Promise<void>;
+  private destroyAuthState?: () => void;
+  private authBackend: "sqlite" | "multi-file" = "multi-file";
   private targetSimulationCycles = new Set<number>();
   private autoClearInvalidSession = false;
   private clearedInvalidSessionInCurrentRun = false;
@@ -254,6 +264,9 @@ export class BotService extends EventEmitter {
   private warmedGroupParticipantSignature = "";
   private lastSenderKeyWarmAt = 0;
   private lastSenderKeyWarmDurationMs = 0;
+  private lastSocketRttAt = 0;
+  private lastSocketRttMs?: number;
+  private activeSignalProfileTimeline?: RouteDispatchTimeline;
   private groupCryptoWarmInFlight?: Promise<boolean>;
   private adaptiveOpeningSettleMs = 0;
   private lastNotAcceptableAlertAt = 0;
@@ -325,6 +338,8 @@ export class BotService extends EventEmitter {
         lastGroupCryptoWarmDurationMs: this.lastGroupCryptoWarmDurationMs,
         warmedGroupDeviceCount: this.warmedGroupDeviceCount,
         lastSenderKeyWarmDurationMs: this.lastSenderKeyWarmDurationMs,
+        authBackend: this.authBackend,
+        socketRttMs: this.lastSocketRttMs,
         activeQueue: Math.max(this.performanceMetrics.activeQueue, this.dispatchQueueStore.pending().length),
         telemetryCount: telemetry.count,
         averageFirstRelayMs: telemetry.averageFirstRelayMs,
@@ -421,6 +436,44 @@ export class BotService extends EventEmitter {
     return "cold";
   }
 
+  private profileSignalKeyStore(keys: any) {
+    if (!keys) return keys;
+    const profiled = {
+      ...keys,
+      get: async (type: string, ids: string[]) => {
+        const startedAt = process.hrtime.bigint();
+        try {
+          return await keys.get(type, ids);
+        } finally {
+          this.recordSignalKeyTiming("read", startedAt);
+        }
+      },
+      set: async (data: Record<string, Record<string, unknown>>) => {
+        const startedAt = process.hrtime.bigint();
+        try {
+          return await keys.set(data);
+        } finally {
+          this.recordSignalKeyTiming("write", startedAt);
+        }
+      }
+    };
+    if (typeof keys.clear === "function") profiled.clear = () => keys.clear();
+    return profiled;
+  }
+
+  private recordSignalKeyTiming(kind: "read" | "write", startedAt: bigint) {
+    const timeline = this.activeSignalProfileTimeline;
+    if (!timeline) return;
+    const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    if (kind === "read") {
+      timeline.signalKeyReadMs = roundMetric((timeline.signalKeyReadMs || 0) + elapsedMs);
+      timeline.signalKeyReadOps = (timeline.signalKeyReadOps || 0) + 1;
+      return;
+    }
+    timeline.signalKeyWriteMs = roundMetric((timeline.signalKeyWriteMs || 0) + elapsedMs);
+    timeline.signalKeyWriteOps = (timeline.signalKeyWriteOps || 0) + 1;
+  }
+
   private createDispatchTimeline(eventDetectedAt: number, sendStartedAt: number, mode: RouteDispatchTimeline["mode"], openingSignal?: OpeningSignal): RouteDispatchTimeline {
     const internalWarmState = this.getCurrentInternalWarmState(sendStartedAt);
     const internalWarmAgeMs = this.getInternalWarmAgeMs(sendStartedAt);
@@ -435,6 +488,13 @@ export class BotService extends EventEmitter {
       openingSignal,
       internalWarmState,
       internalWarmAgeMs,
+      authBackend: this.authBackend,
+      warmedDeviceCount: this.warmedGroupDeviceCount,
+      socketRttMs: this.lastSocketRttMs,
+      signalKeyReadMs: 0,
+      signalKeyWriteMs: 0,
+      signalKeyReadOps: 0,
+      signalKeyWriteOps: 0,
       events: [
         {
           id: `event-${eventDetectedAt}`,
@@ -1009,6 +1069,9 @@ export class BotService extends EventEmitter {
     await this.flushCreds().catch((error) => {
       this.logger.warning(`Não consegui salvar credenciais antes de parar: ${this.getErrorMessage(error)}`);
     });
+    await this.flushAuthState?.().catch((error) => {
+      this.logger.warning(`Não consegui concluir o espelho da sessão: ${this.getErrorMessage(error)}`);
+    });
     this.routeStore.flush();
     this.dispatchQueueStore.flush();
     this.telemetryStore.flush();
@@ -1029,6 +1092,10 @@ export class BotService extends EventEmitter {
     }
 
     this.sock = undefined;
+    await this.closeAuthState?.().catch(() => undefined);
+    this.closeAuthState = undefined;
+    this.flushAuthState = undefined;
+    this.destroyAuthState = undefined;
     this.invalidateInternalWarmState();
     this.groupState = "unknown";
     this.currentUserInTargetGroup = false;
@@ -1667,13 +1734,41 @@ export class BotService extends EventEmitter {
     this.logger.info(this.reconnectAttempts > 0 ? "Tentando reconectar..." : "Bot iniciado.");
 
     await loadBaileys();
-    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    await this.closeAuthState?.().catch(() => undefined);
+    this.closeAuthState = undefined;
+    this.flushAuthState = undefined;
+    this.destroyAuthState = undefined;
+
+    let authSession: any;
+    try {
+      authSession = await useSqliteAuthState(this.authDir, {
+        BufferJSON,
+        proto,
+        useMultiFileAuthState
+      });
+      this.authBackend = "sqlite";
+      this.flushAuthState = authSession.flush;
+      this.closeAuthState = authSession.close;
+      this.destroyAuthState = authSession.destroy;
+      if (authSession.migratedFiles > 0) {
+        this.logger.success(`Sessão migrada para SQLite: ${authSession.migratedFiles} chave(s) importada(s), backup antigo preservado.`);
+      }
+    } catch (error) {
+      this.authBackend = "multi-file";
+      this.logger.warning(`SQLite auth indisponível; usando sessão compatível em arquivos: ${this.getErrorMessage(error)}.`);
+      authSession = await useMultiFileAuthState(this.authDir);
+    }
+    const { state, saveCreds } = authSession;
     this.saveCredsNow = saveCreds;
     const version = await this.getWhatsAppVersion();
     const socketLogger = P({ level: "silent" });
-    const auth = makeCacheableSignalKeyStore
-      ? { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, socketLogger) }
-      : state;
+    const cachedKeys = makeCacheableSignalKeyStore
+      ? makeCacheableSignalKeyStore(state.keys, socketLogger)
+      : state.keys;
+    const auth = {
+      creds: state.creds,
+      keys: this.profileSignalKeyStore(cachedKeys)
+    };
 
     this.sock = makeWASocket({
       auth,
@@ -3114,6 +3209,7 @@ export class BotService extends EventEmitter {
     this.activeSendCycleId = cycleId;
     this.activeSendTrigger = trigger;
     this.acceptedMessageCountByCycle.set(cycleId, 0);
+    if (this.monitoringMode === "target") this.activeSignalProfileTimeline = timeline;
     // Inicia o relay antes das gravações de auditoria. A primeira chamada ao
     // WhatsApp ocorre imediatamente; fila e histórico são persistidos ainda
     // neste mesmo ciclo, antes da Promise do relay concluir.
@@ -3329,6 +3425,8 @@ export class BotService extends EventEmitter {
         return;
       }
 
+      const speculativeSecondLane = mensagens.length > 1 && this.shouldUseSpeculativeSecondLane(trigger);
+      timeline.secondLaneMode = speculativeSecondLane ? "speculative" : "ack-gated";
       let releaseFirstMessageLane = () => undefined;
       const firstMessageLane = new Promise<void>((resolve) => {
         releaseFirstMessageLane = resolve;
@@ -3360,7 +3458,9 @@ export class BotService extends EventEmitter {
           }
           this.addTimelineEvent(timeline, `Relay ${messageNumber} chamado`, calledAt, "info", String(fullMessage?.key?.id || ""));
           this.trackOutboundRaceMessage(String(fullMessage?.key?.id || ""), cycleId, timeline, calledAt);
-          await this.relayPreparedMessage(sock, jid, fullMessage);
+          const relay = this.relayPreparedMessage(sock, jid, fullMessage);
+          if (index === 0 && speculativeSecondLane) releaseFirstMessageLane();
+          await relay;
           return String(fullMessage?.key?.id || "");
         })();
 
@@ -3389,7 +3489,9 @@ export class BotService extends EventEmitter {
             this.logger.info(`Mensagem alvo ${messageNumber} aceita pelo servidor do WhatsApp. Aguardando retorno no grupo.`);
             return messageId;
           });
-        if (index === 0) void finalPromise.then(releaseFirstMessageLane, releaseFirstMessageLane);
+        if (index === 0 && !speculativeSecondLane) {
+          void finalPromise.then(releaseFirstMessageLane, releaseFirstMessageLane);
+        }
 
         const timedInitialAttempt = index === 0
           ? this.withTimeout(firstAttempt, TARGET_ACK_TIMEOUT_MS)
@@ -3442,6 +3544,7 @@ export class BotService extends EventEmitter {
       this.updateAdaptiveOpeningSettle(timeline);
       this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length, timeline, trigger, mode: this.monitoringMode });
       this.stopMonitoringAfterTargetDispatch(cycleId);
+      if (this.activeSignalProfileTimeline === timeline) this.activeSignalProfileTimeline = undefined;
     }
   }
 
@@ -3494,6 +3597,7 @@ export class BotService extends EventEmitter {
     this.activeRouteByCycle.delete(input.cycleId);
     this.routeMessageIdsByCycle.delete(input.cycleId);
     this.acceptedMessageCountByCycle.delete(input.cycleId);
+    if (this.activeSignalProfileTimeline === input.timeline) this.activeSignalProfileTimeline = undefined;
   }
 
   private async retryTargetMessageAfterFailure(
@@ -3853,6 +3957,25 @@ export class BotService extends EventEmitter {
     }
   }
 
+  private shouldUseSpeculativeSecondLane(trigger: RouteDispatch["trigger"]) {
+    if (
+      trigger !== "automatic" ||
+      this.monitoringMode !== "target" ||
+      this.getCurrentInternalWarmState() !== "ready"
+    ) {
+      return false;
+    }
+
+    const recent = this.telemetryStore.all()
+      .filter((event) => event.mode === "target" && event.total > 1)
+      .slice(0, 5);
+    if (recent.length < 3) return false;
+    return recent.every((event) =>
+      event.confirmed === event.total &&
+      event.notAcceptableCount === 0
+    );
+  }
+
   private maybeAlertNotAcceptable(count: number) {
     if (count < NOT_ACCEPTABLE_ALERT_THRESHOLD) return;
     const now = Date.now();
@@ -3946,6 +4069,9 @@ export class BotService extends EventEmitter {
       const shouldWarmSenderKey =
         forceFullWarm ||
         Date.now() - this.lastSenderKeyWarmAt >= SENDER_KEY_KEEP_ALIVE_INTERVAL_MS;
+      const shouldMeasureSocketRtt =
+        forceFullWarm ||
+        Date.now() - this.lastSocketRttAt >= SOCKET_RTT_KEEP_ALIVE_INTERVAL_MS;
       const cryptoSupported =
         typeof this.sock.getUSyncDevices === "function" &&
         typeof this.sock.assertSessions === "function";
@@ -3974,6 +4100,7 @@ export class BotService extends EventEmitter {
           senderKeyReady = ready;
         }));
       }
+      if (shouldMeasureSocketRtt) void this.measureSocketRtt();
       if (!warmJobs.length) return this.getCurrentInternalWarmState() === "ready";
       await Promise.all(warmJobs);
 
@@ -4036,6 +4163,8 @@ export class BotService extends EventEmitter {
     this.warmedGroupDeviceCount = 0;
     this.lastSenderKeyWarmAt = 0;
     this.lastSenderKeyWarmDurationMs = 0;
+    this.lastSocketRttAt = 0;
+    this.lastSocketRttMs = undefined;
   }
 
   private isCriticalWarmWindow(date = new Date()) {
@@ -4259,6 +4388,31 @@ export class BotService extends EventEmitter {
     }
   }
 
+  private async measureSocketRtt() {
+    this.lastSocketRttAt = Date.now();
+    if (!this.sock || typeof this.sock.query !== "function" || typeof this.sock.generateMessageTag !== "function") {
+      return;
+    }
+
+    const startedAt = process.hrtime.bigint();
+    try {
+      const query = this.sock.query({
+        tag: "iq",
+        attrs: {
+          id: this.sock.generateMessageTag(),
+          to: "s.whatsapp.net",
+          type: "get",
+          xmlns: "w:p"
+        },
+        content: [{ tag: "ping", attrs: {} }]
+      });
+      await this.withTimeout(query, 1_500);
+      this.lastSocketRttMs = roundMetric(Number(process.hrtime.bigint() - startedAt) / 1_000_000);
+    } catch {
+      this.lastSocketRttMs = undefined;
+    }
+  }
+
   private getReadinessChecks(): BotReadinessCheck[] {
     const config = this.configStore.load();
     const activeGroup = this.getActiveMonitoringGroup(config);
@@ -4431,7 +4585,10 @@ export class BotService extends EventEmitter {
   }
 
   private hasAuthSession() {
-    return fs.existsSync(path.join(this.authDir, "creds.json"));
+    return (
+      fs.existsSync(path.join(this.authDir, "auth.sqlite")) ||
+      fs.existsSync(path.join(this.authDir, "creds.json"))
+    );
   }
 
   private async logoutAndClearSession() {
@@ -4534,6 +4691,10 @@ export class BotService extends EventEmitter {
 
   private removeAuthDir() {
     try {
+      this.destroyAuthState?.();
+      this.destroyAuthState = undefined;
+      this.closeAuthState = undefined;
+      this.flushAuthState = undefined;
       if (fs.existsSync(this.authDir)) {
         fs.rmSync(this.authDir, { recursive: true, force: true });
       }
@@ -4680,4 +4841,8 @@ export class BotService extends EventEmitter {
   private normalizePhone(value: string) {
     return String(value || "").split("@")[0].split(":")[0].replace(/\D/g, "");
   }
+}
+
+function roundMetric(value: number) {
+  return Math.round(value * 1000) / 1000;
 }

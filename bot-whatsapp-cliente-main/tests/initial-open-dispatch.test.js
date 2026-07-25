@@ -260,6 +260,56 @@ test("primeiro relay começa antes de construir o envelope da segunda mensagem",
   }
 });
 
+test("faixa especulativa libera a segunda mensagem sem esperar o ACK da primeira", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const calls = [];
+    let releaseFirst;
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 13;
+    bot.shouldUseSpeculativeSecondLane = () => true;
+    bot.sock = {
+      relayMessage: async (_jid, _message, options) => {
+        calls.push(options.messageId);
+        if (options.messageId === "first") {
+          await new Promise((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      }
+    };
+    bot.preparedRelayMessages = [
+      { key: { id: "first" }, message: { conversation: "Cliente A-1" } },
+      { key: { id: "second" }, message: { conversation: "Cliente A-2" } }
+    ];
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const timeline = bot.createDispatchTimeline(Date.now(), Date.now(), "race", "group_update");
+    const dispatch = bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1", "Cliente A-2"],
+      13,
+      Date.now(),
+      Date.now(),
+      "automatic",
+      timeline
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.deepEqual(calls, ["first", "second"]);
+    assert.equal(timeline.secondLaneMode, "speculative");
+    releaseFirst();
+    await dispatch;
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("disparo reconstrói envelope com ID e timestamp novos", async () => {
   const { bot, directory } = createBot();
   try {
