@@ -11,6 +11,7 @@ import {
   LeaderContact,
   PanelUser,
   PanelUserRole,
+  ReleaseNotice,
   RomaneioLocateResult,
   RomaneioSettings,
   RomaneioSnapshot,
@@ -99,6 +100,17 @@ export async function getPanelMe() {
   setPanelUserEmail(user.email);
   setPanelUserRole(user.role);
   return user;
+}
+
+export function getReleaseNotice() {
+  return fetchJson<ReleaseNotice>("/api/release");
+}
+
+export function acknowledgeRelease(releaseId: string) {
+  return fetchJson<{ ok: boolean }>("/api/release/acknowledge", {
+    method: "POST",
+    body: JSON.stringify({ releaseId })
+  });
 }
 
 export function getPushConfig() {

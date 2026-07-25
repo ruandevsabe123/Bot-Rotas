@@ -12,6 +12,7 @@ import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser }
 import { SupportMessageStore } from "./supportMessageStore";
 import { ImageUsageStore } from "./imageUsageStore";
 import { PushNotificationStore } from "./pushNotificationStore";
+import { getCurrentRelease } from "./releaseNotes";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
@@ -50,6 +51,7 @@ function resolveDataDir() {
 }
 
 const dataDir = resolveDataDir();
+const currentRelease = getCurrentRelease();
 
 type PanelUserRecord = {
   password: string;
@@ -60,6 +62,8 @@ type PanelUserRecord = {
   updatedAt: string;
   lastLoginAt?: string;
   lastSeenAt?: string;
+  lastSeenReleaseId?: string;
+  lastSeenReleaseAt?: string;
   totalUsageMs: number;
   loginHistory: StoredPanelUser["loginHistory"];
 };
@@ -1166,6 +1170,33 @@ const server = http.createServer(async (request, response) => {
         blocked: panelUsers.get(authorizedEmail)?.blocked,
         color: panelUsers.get(authorizedEmail)?.color
       });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/release") {
+      const user = panelUsers.get(authorizedEmail);
+      sendJson(response, 200, {
+        release: currentRelease,
+        shouldShow: user?.role === "client" && user.lastSeenReleaseId !== currentRelease.id
+      });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/release/acknowledge") {
+      const body = await readJsonBody<{ releaseId?: string }>(request);
+      const releaseId = String(body.releaseId || "").trim();
+      if (releaseId !== currentRelease.id) {
+        sendJson(response, 409, { error: "Uma versão mais nova já está disponível. Atualize o painel." });
+        return;
+      }
+
+      const updatedUser = panelUserStore.acknowledgeRelease(authorizedEmail, releaseId);
+      if (!updatedUser) {
+        sendJson(response, 404, { error: "Usuário não encontrado." });
+        return;
+      }
+      syncPanelUser(updatedUser);
+      sendJson(response, 200, { ok: true });
       return;
     }
 

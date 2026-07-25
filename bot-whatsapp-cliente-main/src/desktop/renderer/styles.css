@@ -3600,6 +3600,106 @@ h2 {
   width: min(520px, 100%);
 }
 
+.release-backdrop {
+  z-index: 24;
+}
+
+.release-dialog {
+  display: grid;
+  gap: 16px;
+  width: min(560px, 100%);
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid rgba(245, 197, 66, 0.28);
+  border-radius: 8px;
+  background: #121518;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.52);
+}
+
+.release-heading {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.release-heading h2 {
+  margin: 3px 0 0;
+  font-size: 1.42rem;
+}
+
+.release-icon {
+  display: grid;
+  flex: 0 0 46px;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  border-radius: 8px;
+  color: #111315;
+  background: #f5c542;
+}
+
+.release-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 13px;
+  border-bottom: 1px solid rgba(245, 247, 248, 0.1);
+  color: #aeb7be;
+  font-size: 0.84rem;
+}
+
+.release-meta strong {
+  color: #f5c542;
+}
+
+.release-summary {
+  margin: 0;
+  color: #edf1f3;
+  line-height: 1.55;
+}
+
+.release-change-list {
+  display: grid;
+  gap: 4px;
+}
+
+.release-change {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 11px;
+  padding: 11px 0;
+  border-bottom: 1px solid rgba(245, 247, 248, 0.07);
+}
+
+.release-change:last-child {
+  border-bottom: 0;
+}
+
+.release-change > svg {
+  margin-top: 2px;
+  color: #35d07f;
+}
+
+.release-change span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.release-change strong {
+  color: #f5f7f8;
+  font-size: 0.94rem;
+}
+
+.release-change small {
+  color: #aeb7be;
+  font-size: 0.84rem;
+  line-height: 1.48;
+  overflow-wrap: anywhere;
+}
+
 .confirmation-dialog.tone-manual {
   border-color: rgba(53, 208, 127, 0.42);
   background:

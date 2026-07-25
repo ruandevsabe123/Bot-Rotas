@@ -42,6 +42,7 @@ import {
   AdminUserDetail,
   AdminUserSummary,
   AdminUsersSnapshot,
+  AppRelease,
   BotSnapshot,
   MonitoredRoute,
   OcrRouteOption,
@@ -62,6 +63,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminCommandCenter } from "./admin/AdminCommandCenter";
 import { enableWebPushNotifications } from "./pushNotifications";
 import {
+  acknowledgeRelease,
   botApi,
   clearAdminMaintenance,
   confirmRomaneio,
@@ -69,6 +71,7 @@ import {
   getAdminMonitor,
   getAdminUserDetail,
   getPanelMe,
+  getReleaseNotice,
   getPanelToken,
   getPanelUserEmail,
   getPanelUserRole,
@@ -2677,6 +2680,59 @@ function OcrRouteApprovalPanel({
   );
 }
 
+function ReleaseDialog({
+  release,
+  busy,
+  error,
+  onAcknowledge
+}: {
+  release: AppRelease;
+  busy: boolean;
+  error?: string;
+  onAcknowledge: () => void;
+}) {
+  const publishedAt = new Date(release.publishedAt);
+  const publishedLabel = Number.isNaN(publishedAt.getTime())
+    ? ""
+    : publishedAt.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
+
+  return (
+    <div className="modal-backdrop release-backdrop" role="presentation">
+      <section className="release-dialog" role="dialog" aria-modal="true" aria-labelledby="release-title">
+        <div className="release-heading">
+          <span className="release-icon" aria-hidden="true"><Sparkles size={24} /></span>
+          <div>
+            <p className="panel-label">Nova versão disponível</p>
+            <h2 id="release-title">{release.title}</h2>
+          </div>
+        </div>
+        <div className="release-meta">
+          <strong>Versão {release.version}</strong>
+          {publishedLabel ? <span>{publishedLabel}</span> : null}
+        </div>
+        <p className="release-summary">{release.summary}</p>
+        <div className="release-change-list">
+          {release.changes.map((change) => (
+            <div className="release-change" key={change.title}>
+              <CheckCircle2 size={19} aria-hidden="true" />
+              <span>
+                <strong>{change.title}</strong>
+                <small>{change.description}</small>
+              </span>
+            </div>
+          ))}
+        </div>
+        {error ? <p className="login-error">{error}</p> : null}
+        <div className="confirmation-actions">
+          <button className="button primary" disabled={busy} type="button" onClick={onAcknowledge}>
+            {busy ? "Salvando..." : "Entendi, continuar"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<BotSnapshot>(emptySnapshot);
   const [busy, setBusy] = useState(false);
@@ -2704,6 +2760,9 @@ export default function App() {
   const [incidentReason, setIncidentReason] = useState("");
   const [incidentClock, setIncidentClock] = useState(Date.now());
   const [notificationStatus, setNotificationStatus] = useState("");
+  const [releaseNotice, setReleaseNotice] = useState<AppRelease>();
+  const [releaseAcknowledgeBusy, setReleaseAcknowledgeBusy] = useState(false);
+  const [releaseError, setReleaseError] = useState("");
   const connectionSectionRef = useRef<HTMLElement | null>(null);
 
   function showActionToast(message: string, tone?: ActionToast["tone"]) {
@@ -2802,6 +2861,21 @@ export default function App() {
       document.removeEventListener("visibilitychange", refreshAfterBackground);
       window.removeEventListener("focus", refreshAfterBackground);
       window.removeEventListener("pageshow", refreshAfterBackground);
+    };
+  }, [authenticated, userRole]);
+
+  useEffect(() => {
+    if (!authenticated || userRole === "admin" || window.botApi) return;
+    let mounted = true;
+    getReleaseNotice()
+      .then((notice) => {
+        if (!mounted || !notice.shouldShow) return;
+        setReleaseNotice(notice.release);
+        setReleaseError("");
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
     };
   }, [authenticated, userRole]);
 
@@ -3342,6 +3416,20 @@ export default function App() {
     }
   }
 
+  async function handleAcknowledgeRelease() {
+    if (!releaseNotice) return;
+    setReleaseAcknowledgeBusy(true);
+    setReleaseError("");
+    try {
+      await acknowledgeRelease(releaseNotice.id);
+      setReleaseNotice(undefined);
+    } catch (error) {
+      setReleaseError(error instanceof Error ? error.message : "Não consegui confirmar a leitura. Tente novamente.");
+    } finally {
+      setReleaseAcknowledgeBusy(false);
+    }
+  }
+
   async function snoozePendingClientIncident() {
     if (!pendingClientIncident || !pendingIncidentSnoozeDelay) return;
     await runAction(() => botApi.snoozeRouteIncident({ routeId: pendingClientIncident.id }));
@@ -3677,6 +3765,14 @@ export default function App() {
       </nav>
 
       {actionToast ? <div className={["action-toast", actionToast.tone ? `tone-${actionToast.tone}` : ""].filter(Boolean).join(" ")}>{actionToast.message}</div> : null}
+      {releaseNotice ? (
+        <ReleaseDialog
+          release={releaseNotice}
+          busy={releaseAcknowledgeBusy}
+          error={releaseError}
+          onAcknowledge={() => void handleAcknowledgeRelease()}
+        />
+      ) : null}
       {groupEditor ? (
         <div className="modal-backdrop" role="presentation">
           <section className="sheet-dialog" role="dialog" aria-modal="true" aria-labelledby="group-editor-title">

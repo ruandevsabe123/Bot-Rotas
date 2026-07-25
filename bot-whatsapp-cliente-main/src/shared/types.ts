@@ -263,6 +263,25 @@ export type AdminImageUsageSnapshot = {
 
 export type PanelUserRole = "client" | "admin";
 
+export type AppReleaseChange = {
+  title: string;
+  description: string;
+};
+
+export type AppRelease = {
+  id: string;
+  version: string;
+  publishedAt: string;
+  title: string;
+  summary: string;
+  changes: AppReleaseChange[];
+};
+
+export type ReleaseNotice = {
+  release: AppRelease;
+  shouldShow: boolean;
+};
+
 export type PanelUser = {
   email: string;
   role: PanelUserRole;
