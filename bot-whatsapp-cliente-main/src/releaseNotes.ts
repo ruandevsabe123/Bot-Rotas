@@ -1,26 +1,26 @@
 import { AppRelease } from "./shared/types";
 
 const RELEASE_DETAILS = {
-  version: "1.2.0",
+  version: "1.3.0",
   publishedAt: "2026-07-25T12:00:00.000Z",
-  title: "Testes mais práticos no painel",
-  summary: "O administrador agora consegue conferir a experiência de um cliente de teste sem precisar sair e entrar em outra conta.",
+  title: "Bot imagem protegido durante reconexões",
+  summary: "O envio da rota agora continua protegido mesmo quando o WhatsApp oscila durante a análise da imagem.",
   changes: [
     {
-      title: "Modo cliente no painel admin",
-      description: "Selecione o cliente de teste ou use a conta de teste identificada pelo sistema para abrir o painel exatamente como ela vê."
+      title: "Rota preservada durante a queda",
+      description: "Se a imagem terminar de ser analisada sem conexão, o bot mantém a rota pronta e continua armado."
     },
     {
-      title: "Retorno rápido e seguro",
-      description: "Uma faixa no modo de teste permite voltar ao painel administrativo sem informar a senha novamente."
+      title: "Envio retomado após reconectar",
+      description: "Quando o WhatsApp volta, o bot verifica o grupo e envia a rota preservada se ele estiver aberto."
     },
     {
-      title: "Avisos também para o administrador",
-      description: "As novidades de cada versão agora aparecem uma vez para o admin, além de continuarem disponíveis para cada cliente."
+      title: "Proteção contra mensagem duplicada",
+      description: "Se o WhatsApp já tiver aceitado a mensagem antes da queda, o sistema cancela o reenvio automático."
     },
     {
-      title: "Proteção contra conta errada",
-      description: "O sistema não entra automaticamente em um cliente real: ele exige uma conta de teste reconhecida ou uma seleção feita no filtro."
+      title: "Menos reinícios desnecessários",
+      description: "Uma falha temporária ao consultar o grupo não reinicia mais uma sessão que continua conectada."
     }
   ]
 } satisfies Omit<AppRelease, "id">;

@@ -151,6 +151,8 @@ export class BotService extends EventEmitter {
   private unknownDisconnects = 0;
   private sendCycleId = 0;
   private activeSendCycle?: Promise<void>;
+  private activeSendCycleId?: number;
+  private activeSendTrigger?: RouteDispatch["trigger"];
   private criticalDispatchInProgress = false;
   private pendingReactionBatch?: any[];
   private reactionProcessingScheduled = false;
@@ -170,6 +172,13 @@ export class BotService extends EventEmitter {
   private preparedNuclearMode = false;
   private preparedTargetDispatchMode: BotConfig["targetDispatchMode"] = "manual";
   private pendingOcrMessages: string[] = [];
+  private pendingOcrReconnectDispatch?: {
+    analysisId?: string;
+    trigger: "manual" | "automatic";
+    interruptedCycleId?: number;
+    queuedAt: string;
+  };
+  private acceptedMessageCountByCycle = new Map<number, number>();
   private lastOcrDispatchKey = "";
   private lastOcrInsight?: RouteOcrInsight;
   private ocrRouteSelection: OcrRouteSelectionState = { status: "idle", options: [] };
@@ -228,6 +237,7 @@ export class BotService extends EventEmitter {
   private lastKeepAliveAt?: string;
   private lastKeepAliveDurationMs = 0;
   private keepAliveCount = 0;
+  private consecutiveHealthCheckFailures = 0;
   private lastFullMetadataWarmAt = 0;
   private lastGroupCryptoWarmAt = 0;
   private lastGroupCryptoWarmDurationMs = 0;
@@ -608,6 +618,8 @@ export class BotService extends EventEmitter {
     const config = this.configStore.save({ nuclearMode: useNuclearMode, targetDispatchMode });
     this.refreshSocketJidFilterCache(config);
     this.pendingOcrMessages = [];
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.latestRouteImageSequence += 1;
@@ -696,7 +708,11 @@ export class BotService extends EventEmitter {
     this.armedAt = undefined;
     this.sendCycleId += 1;
     this.activeSendCycle = undefined;
+    this.activeSendCycleId = undefined;
+    this.activeSendTrigger = undefined;
     this.criticalDispatchInProgress = false;
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.activeTestRunId += 1;
     if (this.testStatus.active) {
       this.testStatus = {
@@ -965,9 +981,14 @@ export class BotService extends EventEmitter {
     this.groupState = "unknown";
     this.currentUserInTargetGroup = false;
     this.criticalDispatchInProgress = false;
+    this.activeSendCycle = undefined;
+    this.activeSendCycleId = undefined;
+    this.activeSendTrigger = undefined;
     this.pendingReactionBatch = undefined;
     this.reactionProcessingScheduled = false;
     this.pendingOcrMessages = [];
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.processingImageIds.clear();
     this.latestRouteImageSequence += 1;
@@ -1065,9 +1086,14 @@ export class BotService extends EventEmitter {
     this.sendCycleId += 1;
     this.monitoringEnabled = false;
     this.criticalDispatchInProgress = false;
+    this.activeSendCycle = undefined;
+    this.activeSendCycleId = undefined;
+    this.activeSendTrigger = undefined;
     this.pendingReactionBatch = undefined;
     this.reactionProcessingScheduled = false;
     this.pendingOcrMessages = [];
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.processingImageIds.clear();
@@ -1436,6 +1462,8 @@ export class BotService extends EventEmitter {
     });
     this.latestRouteImageSequence += 1;
     this.pendingOcrMessages = [];
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.montarMensagens();
@@ -1665,6 +1693,7 @@ export class BotService extends EventEmitter {
     if (connection === "open") {
       this.unknownDisconnects = 0;
       this.reconnectAttempts = 0;
+      this.consecutiveHealthCheckFailures = 0;
       this.clearQrCode(false);
       this.setStatus("connected");
       this.addStatusEvent("connected", "WhatsApp conectado.");
@@ -1679,7 +1708,8 @@ export class BotService extends EventEmitter {
           this.startHealthCheck();
           this.startWarmKeepAlive();
           this.logger.success("Monitoramento restaurado após reconexão.");
-          this.dispatchIfGroupAlreadyOpen("reconexão");
+          const recoveryHandled = await this.resumeOcrDispatchAfterReconnect();
+          if (!recoveryHandled) this.dispatchIfGroupAlreadyOpen("reconexão");
         } else {
           void this.prewarmConnectionSafely("Pré-aquecendo sessão após conexão...");
         }
@@ -1693,6 +1723,20 @@ export class BotService extends EventEmitter {
 
     if (connection === "close") {
       const closedSocket = this.sock;
+      const interruptedCycleId = this.activeSendCycleId;
+      if (
+        this.monitoringEnabled &&
+        this.monitoringMode === "target" &&
+        this.preparedTargetDispatchMode === "ocr" &&
+        this.pendingOcrMessages.length &&
+        (!interruptedCycleId || (this.acceptedMessageCountByCycle.get(interruptedCycleId) || 0) === 0)
+      ) {
+        this.deferOcrDispatchUntilReconnect(
+          this.activeSendTrigger === "manual" ? "manual" : "automatic",
+          interruptedCycleId
+        );
+        if (interruptedCycleId && interruptedCycleId === this.sendCycleId) this.sendCycleId += 1;
+      }
       this.sock = undefined;
       this.clearQrCode(false);
       this.clearHealthCheckTimer();
@@ -2146,7 +2190,8 @@ export class BotService extends EventEmitter {
 
   private async processRouteImage(msg: any, groupJid: string, sequence: number) {
     const config = this.configStore.load();
-    if (config.targetDispatchMode !== "ocr" || !this.sock) return;
+    const analysisSocket = this.sock;
+    if (config.targetDispatchMode !== "ocr" || !analysisSocket) return;
 
     const messageId = String(msg?.key?.id || Date.now());
     const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
@@ -2181,7 +2226,7 @@ export class BotService extends EventEmitter {
         {},
         {
           logger: P({ level: "silent" }),
-          reuploadRequest: this.sock.updateMediaMessage
+          reuploadRequest: analysisSocket.updateMediaMessage
         }
       );
 
@@ -2360,8 +2405,17 @@ export class BotService extends EventEmitter {
     if (!activeGroup.jid || !this.pendingOcrMessages.length) return false;
 
     const analysisId = this.lastOcrInsight?.analysisId;
-    if (trigger === "automatic" && analysisId && this.routeStore.all().some((route) => route.ocr?.analysisId === analysisId)) {
-      this.logger.info("[ROMANEIO] Esta mesma imagem já iniciou um disparo automático. Reenvio duplicado ignorado.");
+    const previousDispatch = trigger === "automatic" && analysisId
+      ? this.routeStore.all().find((route) => route.ocr?.analysisId === analysisId && route.confirmedCount > 0)
+      : undefined;
+    if (previousDispatch) {
+      this.pendingOcrReconnectDispatch = undefined;
+      this.logger.info("[ROMANEIO] Esta imagem já teve mensagem aceita pelo WhatsApp. Recuperação duplicada cancelada.");
+      return false;
+    }
+
+    if (this.status !== "connected" || !this.sock) {
+      this.deferOcrDispatchUntilReconnect(trigger);
       return false;
     }
 
@@ -2381,10 +2435,25 @@ export class BotService extends EventEmitter {
       }
     }
 
-    if (!isOpen) return false;
+    if (!isOpen) {
+      if (this.pendingOcrReconnectDispatch) {
+        this.pendingOcrReconnectDispatch = undefined;
+        this.logger.info("[ROMANEIO] WhatsApp reconectou com o grupo fechado. A rota continua pronta para a próxima abertura.");
+      }
+      return false;
+    }
+    if (this.status !== "connected" || !this.sock) {
+      this.deferOcrDispatchUntilReconnect(trigger);
+      return false;
+    }
     const cycleId = ++this.sendCycleId;
+    const recoveryBeforeDispatch = this.pendingOcrReconnectDispatch;
+    this.pendingOcrReconnectDispatch = undefined;
     const dispatched = this.enviarMensagensRapidas(cycleId, trigger, Date.now(), "image_ready");
     if (!dispatched) {
+      if (!this.pendingOcrReconnectDispatch && recoveryBeforeDispatch) {
+        this.pendingOcrReconnectDispatch = recoveryBeforeDispatch;
+      }
       this.logger.warning("[ROMANEIO] A rota ficou pronta com o grupo aberto, mas outro disparo ainda estava concluindo. Tentarei novamente imediatamente após ele terminar.");
       const activeCycle = this.activeSendCycle;
       if (activeCycle) {
@@ -2399,6 +2468,71 @@ export class BotService extends EventEmitter {
       ? "[ROMANEIO] Grupo já estava aberto: melhor rota enviada imediatamente após a imagem."
       : "[ROMANEIO] Grupo já estava aberto: rota confirmada enviada imediatamente.");
     this.emitSnapshot();
+    return true;
+  }
+
+  private deferOcrDispatchUntilReconnect(
+    trigger: "manual" | "automatic",
+    interruptedCycleId?: number
+  ) {
+    if (!this.pendingOcrMessages.length || !this.monitoringEnabled) return;
+    const alreadyQueued =
+      this.pendingOcrReconnectDispatch?.analysisId === this.lastOcrInsight?.analysisId &&
+      this.pendingOcrReconnectDispatch?.interruptedCycleId === interruptedCycleId;
+    this.pendingOcrReconnectDispatch = {
+      analysisId: this.lastOcrInsight?.analysisId,
+      trigger,
+      interruptedCycleId,
+      queuedAt: new Date().toISOString()
+    };
+    if (!alreadyQueued) {
+      this.logger.warning(
+        "[ROMANEIO] A rota ficou pronta durante uma desconexão. Mantive o bot armado e enviarei após o WhatsApp reconectar."
+      );
+      this.addStatusEvent("reconnecting", "Rota da imagem preservada para envio após reconexão.");
+    }
+    this.ocrRouteSelection = {
+      ...this.ocrRouteSelection,
+      message: "Rota pronta. Aguardando o WhatsApp reconectar para enviar com segurança."
+    };
+    this.emitSnapshot();
+  }
+
+  private async resumeOcrDispatchAfterReconnect() {
+    const recovery = this.pendingOcrReconnectDispatch;
+    if (!recovery) return false;
+    if (!this.monitoringEnabled || !this.pendingOcrMessages.length) {
+      this.pendingOcrReconnectDispatch = undefined;
+      return false;
+    }
+    if (this.status !== "connected" || !this.sock) return true;
+
+    if (this.activeSendCycle) {
+      const activeCycle = this.activeSendCycle;
+      void activeCycle.finally(() => {
+        if (
+          this.activeSendCycle !== activeCycle &&
+          this.pendingOcrReconnectDispatch === recovery &&
+          this.status === "connected"
+        ) {
+          void this.resumeOcrDispatchAfterReconnect();
+        }
+      }).catch(() => undefined);
+      return true;
+    }
+
+    const previousAccepted = recovery.analysisId
+      ? this.routeStore.all().some((route) => route.ocr?.analysisId === recovery.analysisId && route.confirmedCount > 0)
+      : false;
+    if (previousAccepted) {
+      this.pendingOcrReconnectDispatch = undefined;
+      this.logger.success("[ROMANEIO] O WhatsApp confirmou a mensagem anterior; não foi necessário reenviar após reconectar.");
+      return true;
+    }
+
+    this.prepareSendPlan();
+    this.logger.info("[ROMANEIO] WhatsApp reconectado. Retomando a rota preservada da imagem.");
+    await this.dispatchPreparedOcrIfGroupOpen(recovery.trigger);
     return true;
   }
 
@@ -2924,6 +3058,9 @@ export class BotService extends EventEmitter {
     );
     this.performanceMetrics.activeQueue = mensagens.length;
     this.criticalDispatchInProgress = true;
+    this.activeSendCycleId = cycleId;
+    this.activeSendTrigger = trigger;
+    this.acceptedMessageCountByCycle.set(cycleId, 0);
     // Inicia o relay antes das gravações de auditoria. A primeira chamada ao
     // WhatsApp ocorre imediatamente; fila e histórico são persistidos ainda
     // neste mesmo ciclo, antes da Promise do relay concluir.
@@ -2941,6 +3078,8 @@ export class BotService extends EventEmitter {
     const trackedSendCycle = sendCycle.finally(() => {
       if (this.activeSendCycle === trackedSendCycle) {
         this.activeSendCycle = undefined;
+        if (this.activeSendCycleId === cycleId) this.activeSendCycleId = undefined;
+        if (this.activeSendTrigger === trigger) this.activeSendTrigger = undefined;
         this.criticalDispatchInProgress = false;
       }
     });
@@ -3178,6 +3317,14 @@ export class BotService extends EventEmitter {
           )
           .then((messageId) => {
             if (!messageId) return messageId;
+            const acceptedCount = (this.acceptedMessageCountByCycle.get(cycleId) || 0) + 1;
+            this.acceptedMessageCountByCycle.set(cycleId, acceptedCount);
+            if (this.pendingOcrReconnectDispatch?.interruptedCycleId === cycleId) {
+              this.pendingOcrReconnectDispatch = undefined;
+              this.logger.success(
+                "[ROMANEIO] O WhatsApp aceitou a mensagem antes de concluir a queda. Reenvio após reconexão cancelado."
+              );
+            }
             const ackAt = Date.now();
             if (!timeline.firstAckAt) {
               timeline.firstAckAt = new Date(ackAt).toISOString();
@@ -3293,6 +3440,7 @@ export class BotService extends EventEmitter {
     this.addStatusEvent("dispatch", `${triggerLabelForEvent(input.trigger)} confirmado: ${confirmed}/${input.total}.`);
     this.activeRouteByCycle.delete(input.cycleId);
     this.routeMessageIdsByCycle.delete(input.cycleId);
+    this.acceptedMessageCountByCycle.delete(input.cycleId);
   }
 
   private async retryTargetMessageAfterFailure(
@@ -3304,6 +3452,14 @@ export class BotService extends EventEmitter {
     timeline: RouteDispatchTimeline
   ): Promise<string | false> {
     const firstMessage = this.getErrorMessage(error);
+    if (this.isConnectionUnavailableError(firstMessage)) {
+      this.deferOcrDispatchUntilReconnect(
+        this.activeSendTrigger === "manual" ? "manual" : "automatic",
+        cycleId
+      );
+      if (cycleId === this.sendCycleId) this.sendCycleId += 1;
+      return false;
+    }
     if (!this.isRetryableSendError(firstMessage)) throw error;
 
     timeline.retryUsed = true;
@@ -3359,6 +3515,11 @@ export class BotService extends EventEmitter {
     if (this.targetSimulationCycles.has(cycleId)) return;
     if (this.monitoringMode !== "target") return;
     if (!this.monitoringEnabled) return;
+    if (this.pendingOcrReconnectDispatch?.interruptedCycleId === cycleId) {
+      this.logger.warning("[ROMANEIO] Disparo interrompido pela conexão. Bot continua armado aguardando reconexão.");
+      this.emitSnapshot();
+      return;
+    }
 
     this.monitoringEnabled = false;
     this.armedAt = undefined;
@@ -3603,6 +3764,19 @@ export class BotService extends EventEmitter {
     );
   }
 
+  private isConnectionUnavailableError(errorMessage: string) {
+    const normalizedMessage = errorMessage.toLowerCase();
+    return (
+      normalizedMessage.includes("connection closed") ||
+      normalizedMessage.includes("connection is closed") ||
+      normalizedMessage.includes("socket closed") ||
+      normalizedMessage.includes("socket is closed") ||
+      normalizedMessage.includes("websocket") ||
+      normalizedMessage.includes("not connected") ||
+      normalizedMessage.includes("não há conexão ativa")
+    );
+  }
+
   private isNotAcceptableError(errorMessage: string) {
     return errorMessage.toLowerCase().includes("not-acceptable");
   }
@@ -3735,9 +3909,16 @@ export class BotService extends EventEmitter {
     try {
       this.performanceMetrics.eventLoopLagMs = await this.measureEventLoopLag();
       await this.prewarmConnection();
+      this.consecutiveHealthCheckFailures = 0;
     } catch (error) {
-      this.logger.warning(`Health check falhou: ${this.getErrorMessage(error)}. Reiniciando conexão.`);
-      await this.restart();
+      this.consecutiveHealthCheckFailures += 1;
+      const detail = this.getErrorMessage(error);
+      if (this.consecutiveHealthCheckFailures === 1 || this.consecutiveHealthCheckFailures % 3 === 0) {
+        this.logger.warning(
+          `Verificação de aquecimento falhou ${this.consecutiveHealthCheckFailures}x: ${detail}. ` +
+          "Mantive a sessão ativa; a reconexão ocorrerá somente se o WhatsApp fechar o socket."
+        );
+      }
     }
   }
 

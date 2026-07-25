@@ -23,6 +23,8 @@ test("dispara imediatamente ao armar se o grupo já estiver aberto", () => {
   try {
     bot.monitoringEnabled = true;
     bot.monitoringMode = "target";
+    bot.status = "connected";
+    bot.sock = {};
     bot.groupState = "open";
     bot.preparedTargetDispatchMode = "manual";
     bot.preparedTargetJid = "motoristas@g.us";
@@ -342,6 +344,8 @@ test("imagem nova dispara assim que fica pronta com o grupo aberto", async () =>
   try {
     bot.monitoringEnabled = true;
     bot.monitoringMode = "target";
+    bot.status = "connected";
+    bot.sock = {};
     bot.groupState = "open";
     bot.preparedTargetDispatchMode = "ocr";
     bot.preparedTargetJid = "motoristas@g.us";
