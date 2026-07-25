@@ -1,26 +1,26 @@
 import { AppRelease } from "./shared/types";
 
 const RELEASE_DETAILS = {
-  version: "1.5.0",
-  publishedAt: "2026-07-25T20:00:00.000Z",
-  title: "Primeira mensagem ainda mais rápida",
-  summary: "O caminho entre a abertura do grupo e o primeiro envio recebeu uma nova rodada de otimizações internas.",
+  version: "1.6.0",
+  publishedAt: "2026-07-25T22:00:00.000Z",
+  title: "Faixa exclusiva para o disparo",
+  summary: "Durante a espera pela abertura, o processo do bot agora fica mais livre para reagir imediatamente ao evento.",
   changes: [
     {
-      title: "Primeiro envio com prioridade máxima",
-      description: "O bot agora inicia a primeira mensagem antes de preparar o envelope da segunda."
+      title: "Espera praticamente ociosa",
+      description: "Verificações com cache válido não geram snapshots, remontagem de mensagens ou leitura repetida de configuração."
     },
     {
-      title: "Criptografia mantida em memória",
-      description: "As informações criptográficas usadas pelo grupo são carregadas antecipadamente e renovadas durante a espera."
+      title: "Dispositivos atualizados ao armar",
+      description: "O bot consulta uma lista fresca dos dispositivos do grupo ao iniciar e usa cache nos ciclos seguintes."
     },
     {
-      title: "Callback de imagem mais leve",
-      description: "A chegada da imagem não faz mais leitura de configuração em disco antes de tratar os eventos do grupo."
+      title: "Logs sem bloquear o envio",
+      description: "A gravação automática do histórico agora usa disco de forma assíncrona e não segura o callback do WhatsApp."
     },
     {
-      title: "Aquecimento continua silencioso",
-      description: "As novas preparações permanecem totalmente internas, sem mensagem de teste e sem ação do cliente."
+      title: "Saúde mais leve",
+      description: "O monitoramento verifica o WebSocket sem repetir consultas pesadas já cobertas pelo aquecimento."
     }
   ]
 } satisfies Omit<AppRelease, "id">;

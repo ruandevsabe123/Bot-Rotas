@@ -44,7 +44,8 @@ test("aquecimento obrigatório prepara sessões sem enviar mensagem real", async
           }
         }
       },
-      getUSyncDevices: async (participants) => {
+      getUSyncDevices: async (participants, useCache) => {
+        assert.equal(useCache, false);
         calls.devices += 1;
         return participants.map((jid, index) => ({ jid: `${index}:${jid}` }));
       },
@@ -105,6 +106,39 @@ test("aquecimento periódico não disputa recursos com análise de imagem", asyn
     assert.equal(await bot.runWarmKeepAlive("timer"), false);
     assert.equal(metadataReads, 0);
     assert.equal(relayCalls, 0);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("verificação quente fica silenciosa quando nenhum cache precisa ser renovado", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const now = Date.now();
+    let snapshots = 0;
+    let plans = 0;
+    bot.sock = {};
+    bot.groupMetadataCache.set("motoristas@g.us", {
+      id: "motoristas@g.us",
+      participants: []
+    });
+    bot.lastFullMetadataWarmAt = now;
+    bot.lastActiveChatWarmAt = now;
+    bot.lastGroupCryptoWarmAt = now;
+    bot.lastSenderKeyWarmAt = now;
+    bot.lastInternalWarmAt = new Date(now).toISOString();
+    bot.internalWarmState = "ready";
+    bot.emitSnapshot = () => {
+      snapshots += 1;
+    };
+    bot.prepareSendPlan = () => {
+      plans += 1;
+      return true;
+    };
+
+    assert.equal(await bot.runWarmKeepAlive("timer"), true);
+    assert.equal(snapshots, 0);
+    assert.equal(plans, 0);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

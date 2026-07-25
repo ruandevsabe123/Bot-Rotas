@@ -130,15 +130,17 @@ test("recuperação não reenvia imagem que já teve mensagem aceita", async () 
   }
 });
 
-test("falha temporária de aquecimento não reinicia uma sessão conectada", async () => {
+test("health check do alvo não repete consulta pesada nem reinicia uma sessão conectada", async () => {
   const { bot, directory } = createImageBot();
   try {
     let restarts = 0;
+    let heavyChecks = 0;
     bot.status = "connected";
-    bot.sock = {};
+    bot.sock = { ws: { isOpen: true } };
     bot.measureEventLoopLag = async () => 0;
     bot.prewarmConnection = async () => {
-      throw new Error("metadata timeout");
+      heavyChecks += 1;
+      throw new Error("não deveria executar");
     };
     bot.restart = async () => {
       restarts += 1;
@@ -149,7 +151,29 @@ test("falha temporária de aquecimento não reinicia uma sessão conectada", asy
     await bot.runHealthCheck();
 
     assert.equal(restarts, 0);
-    assert.equal(bot.consecutiveHealthCheckFailures, 3);
+    assert.equal(heavyChecks, 0);
+    assert.equal(bot.consecutiveHealthCheckFailures, 0);
+    assert.equal(bot.status, "connected");
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("health check leve registra websocket fechado sem forçar reinício", async () => {
+  const { bot, directory } = createImageBot();
+  try {
+    let restarts = 0;
+    bot.status = "connected";
+    bot.sock = { ws: { isOpen: false } };
+    bot.measureEventLoopLag = async () => 0;
+    bot.restart = async () => {
+      restarts += 1;
+    };
+
+    await bot.runHealthCheck();
+
+    assert.equal(restarts, 0);
+    assert.equal(bot.consecutiveHealthCheckFailures, 1);
     assert.equal(bot.status, "connected");
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });

@@ -1192,6 +1192,7 @@ export class BotService extends EventEmitter {
     if (this.sock && this.status === "connected") {
       await this.resolveConfiguredGroup();
     }
+    if (this.monitoringEnabled) void this.startWarmKeepAlive("armado");
 
     this.emitSnapshot();
   }
@@ -1202,6 +1203,9 @@ export class BotService extends EventEmitter {
       ? this.configStore.saveTestGroupById(groupId, groupName || group)
       : this.configStore.saveTestGroup(group);
     this.refreshSocketJidFilterCache(config);
+    if (this.monitoringEnabled && this.monitoringMode === "test") {
+      void this.startWarmKeepAlive("armado");
+    }
     this.logger.success(`Grupo de teste salvo: ${config.grupoTesteNome || config.grupoTesteJid}`);
     this.emitSnapshot();
   }
@@ -3876,16 +3880,18 @@ export class BotService extends EventEmitter {
     const intervalMs = this.getWarmKeepAliveIntervalMs(config);
     this.warmKeepAliveIntervalMs = intervalMs;
     this.warmKeepAliveTimer = setInterval(() => {
-      void this.runWarmKeepAlive("timer");
+      void this.runWarmKeepAlive("timer", config);
     }, intervalMs);
 
-    const initialWarmup = this.runWarmKeepAlive(reason);
+    const initialWarmup = this.runWarmKeepAlive(reason, config);
     void initialWarmup.catch(() => undefined);
     return initialWarmup;
   }
 
-  private async runWarmKeepAlive(reason: "timer" | "armado" | "reconexão" = "timer") {
-    const config = this.configStore.load();
+  private async runWarmKeepAlive(
+    reason: "timer" | "armado" | "reconexão" = "timer",
+    config = this.configStore.load()
+  ) {
     const mandatoryTargetWarm = this.monitoringEnabled && this.monitoringMode === "target";
     if (
       (!config.alwaysWarmMode && !mandatoryTargetWarm) ||
@@ -3905,8 +3911,10 @@ export class BotService extends EventEmitter {
 
     const startedAt = Date.now();
     const forceFullWarm = reason !== "timer";
-    this.internalWarmState = "warming";
-    this.emitSnapshot();
+    if (forceFullWarm) {
+      this.internalWarmState = "warming";
+      this.emitSnapshot();
+    }
     try {
       const activeGroup = this.getActiveMonitoringGroup(config);
       if (!activeGroup.jid) {
@@ -3966,7 +3974,8 @@ export class BotService extends EventEmitter {
           senderKeyReady = ready;
         }));
       }
-      if (warmJobs.length) await Promise.all(warmJobs);
+      if (!warmJobs.length) return this.getCurrentInternalWarmState() === "ready";
+      await Promise.all(warmJobs);
 
       if (this.criticalDispatchInProgress || this.activeSendCycle || !cryptoReady || !senderKeyReady) {
         this.internalWarmState = "cold";
@@ -3987,7 +3996,7 @@ export class BotService extends EventEmitter {
           `${this.warmedGroupDeviceCount} dispositivo(s) prontos, sem enviar mensagem.`
         );
       }
-      this.emitSnapshot();
+      if (forceFullWarm) this.emitSnapshot();
       return true;
     } catch (error) {
       this.lastKeepAliveDurationMs = Date.now() - startedAt;
@@ -4058,7 +4067,15 @@ export class BotService extends EventEmitter {
 
     try {
       this.performanceMetrics.eventLoopLagMs = await this.measureEventLoopLag();
-      await this.prewarmConnection();
+      // O aquecimento dedicado já mantém o alvo pronto. Evite repetir leitura de
+      // configuração, metadados e envelopes em outro timer durante a corrida.
+      if (this.monitoringMode === "target") {
+        if (this.sock?.ws && this.sock.ws.isOpen === false) {
+          throw new Error("WebSocket do WhatsApp não está aberto.");
+        }
+      } else {
+        await this.prewarmConnection();
+      }
       this.consecutiveHealthCheckFailures = 0;
     } catch (error) {
       this.consecutiveHealthCheckFailures += 1;
@@ -4191,7 +4208,9 @@ export class BotService extends EventEmitter {
     const startedAt = Date.now();
     const warmPromise = (async () => {
       try {
-        const devices = await this.sock.getUSyncDevices(participantJids, true, false);
+        // Ao armar/reconectar, consulte uma lista realmente fresca. Nos ciclos
+        // periódicos, use o cache do Baileys para não criar tráfego desnecessário.
+        const devices = await this.sock.getUSyncDevices(participantJids, !force, false);
         const deviceJids = (devices || [])
           .map((device: any) => String(device?.jid || ""))
           .filter(Boolean);
@@ -4200,7 +4219,9 @@ export class BotService extends EventEmitter {
         this.lastGroupCryptoWarmAt = Date.now();
         this.lastGroupCryptoWarmDurationMs = this.lastGroupCryptoWarmAt - startedAt;
         this.warmedGroupDeviceCount = deviceJids.length;
-        this.logger.info(`Criptografia do grupo pré-aquecida: ${participantJids.length} participante(s), ${deviceJids.length} dispositivo(s), ${this.lastGroupCryptoWarmDurationMs}ms.`);
+        if (force) {
+          this.logger.info(`Criptografia do grupo pré-aquecida: ${participantJids.length} participante(s), ${deviceJids.length} dispositivo(s), ${this.lastGroupCryptoWarmDurationMs}ms.`);
+        }
         return true;
       } catch (error) {
         this.lastGroupCryptoWarmDurationMs = Date.now() - startedAt;
