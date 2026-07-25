@@ -139,12 +139,7 @@ test("mudança de participantes invalida metadados e refaz o aquecimento criptog
   const { bot, directory } = createBot();
   try {
     const groupJid = "motoristas@g.us";
-    const metadata = {
-      id: groupJid,
-      participants: [{ id: "1@s.whatsapp.net" }, { id: "2@s.whatsapp.net" }]
-    };
-    let warmed;
-    let prepared = 0;
+    let warmed = 0;
     bot.activeConnectionId = 4;
     bot.monitoringEnabled = true;
     bot.preparedTargetJid = groupJid;
@@ -154,13 +149,9 @@ test("mudança de participantes invalida metadados e refaz o aquecimento criptog
     bot.lastGroupCryptoWarmAt = Date.now();
     bot.warmedGroupDeviceCount = 10;
     bot.deferSecondarySocketTask = (task) => task();
-    bot.refreshGroupMetadata = async () => metadata;
-    bot.prewarmGroupCrypto = async (received, force) => {
-      warmed = { received, force };
-      return true;
-    };
-    bot.prepareSendPlan = () => {
-      prepared += 1;
+    bot.runWarmKeepAlive = async (reason) => {
+      assert.equal(reason, "timer");
+      warmed += 1;
       return true;
     };
 
@@ -170,8 +161,8 @@ test("mudança de participantes invalida metadados e refaz o aquecimento criptog
     assert.equal(bot.groupMetadataCache.has(groupJid), false);
     assert.equal(bot.warmedGroupParticipantSignature, "");
     assert.equal(bot.warmedGroupDeviceCount, 0);
-    assert.deepEqual(warmed, { received: metadata, force: true });
-    assert.equal(prepared, 1);
+    assert.equal(bot.internalWarmState, "cold");
+    assert.equal(warmed, 1);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

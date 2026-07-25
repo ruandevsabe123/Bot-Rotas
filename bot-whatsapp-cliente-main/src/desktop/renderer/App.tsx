@@ -581,9 +581,14 @@ function PerformanceStrip({ snapshot }: { snapshot: BotSnapshot }) {
   const metrics = snapshot.performanceMetrics || emptySnapshot.performanceMetrics!;
   const healthLabel = metrics.raceHealth === "excellent" ? "excelente" : metrics.raceHealth === "good" ? "boa" : metrics.raceHealth === "poor" ? "atenção" : metrics.raceHealth === "critical" ? "crítica" : "sem teste";
   const healthTone = metrics.raceHealth === "excellent" || metrics.raceHealth === "good" ? "green" : metrics.raceHealth === "unknown" ? "blue" : "yellow";
+  const warmLabel = metrics.internalWarmState === "ready"
+    ? "aquecido"
+    : metrics.internalWarmState === "warming"
+    ? "aquecendo"
+    : "frio";
   return (
     <section className="performance-strip">
-      <AdminMetric Icon={Zap} tone={healthTone} title="Saúde da corrida" value={healthLabel} detail={`loop ${metrics.eventLoopLagMs || 0}ms`} />
+      <AdminMetric Icon={Zap} tone={healthTone} title="Saúde da corrida" value={healthLabel} detail={`${warmLabel} · loop ${metrics.eventLoopLagMs || 0}ms`} />
       <AdminMetric Icon={Gauge} tone="green" title="ACK P95" value={`${metrics.p95FirstAckMs || 0}ms`} detail={`relay ${metrics.p95FirstRelayMs || 0}ms`} />
       <AdminMetric Icon={Activity} tone={(metrics.notAcceptableCount || 0) ? "yellow" : "blue"} title="Retorno do grupo" value={metrics.lastFirstGroupEchoMs === undefined ? "—" : `${metrics.lastFirstGroupEchoMs}ms`} detail={(metrics.notAcceptableCount || 0) ? `${metrics.notAcceptableCount} recusas` : "sem recusa"} />
       <AdminMetric Icon={Wifi} tone={snapshot.status === "connected" ? "green" : "yellow"} title="Conexão" value={snapshot.status === "connected" ? "online" : "atenção"} detail={snapshot.monitoringEnabled ? `armado há ${formatDuration(metrics.armedIdleMs || 0)}` : "aguardando operação"} />

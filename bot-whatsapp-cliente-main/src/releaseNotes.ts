@@ -1,26 +1,26 @@
 import { AppRelease } from "./shared/types";
 
 const RELEASE_DETAILS = {
-  version: "1.3.0",
-  publishedAt: "2026-07-25T12:00:00.000Z",
-  title: "Bot imagem protegido durante reconexões",
-  summary: "O envio da rota agora continua protegido mesmo quando o WhatsApp oscila durante a análise da imagem.",
+  version: "1.4.0",
+  publishedAt: "2026-07-25T18:00:00.000Z",
+  title: "Primeiro disparo mais aquecido",
+  summary: "O bot agora mantém internamente o grupo e a sessão preparados para reduzir a demora da primeira mensagem.",
   changes: [
     {
-      title: "Rota preservada durante a queda",
-      description: "Se a imagem terminar de ser analisada sem conexão, o bot mantém a rota pronta e continua armado."
+      title: "Preparação automática ao armar",
+      description: "Ao iniciar ou reconectar, o bot prepara grupo, dispositivos e mensagens antes de ficar aguardando a abertura."
     },
     {
-      title: "Envio retomado após reconectar",
-      description: "Quando o WhatsApp volta, o bot verifica o grupo e envia a rota preservada se ele estiver aberto."
+      title: "Sessões mantidas prontas",
+      description: "A preparação interna é renovada durante a espera para diminuir o impacto do primeiro disparo."
     },
     {
-      title: "Proteção contra mensagem duplicada",
-      description: "Se o WhatsApp já tiver aceitado a mensagem antes da queda, o sistema cancela o reenvio automático."
+      title: "Sem mensagem de aquecimento",
+      description: "Todo o processo acontece internamente e não envia testes nem exige qualquer ação do cliente."
     },
     {
-      title: "Menos reinícios desnecessários",
-      description: "Uma falha temporária ao consultar o grupo não reinicia mais uma sessão que continua conectada."
+      title: "Prontidão visível no painel",
+      description: "O painel e a telemetria agora mostram se o disparo começou com a preparação aquecida."
     }
   ]
 } satisfies Omit<AppRelease, "id">;

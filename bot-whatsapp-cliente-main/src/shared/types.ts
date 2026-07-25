@@ -84,6 +84,11 @@ export type BotPerformanceMetrics = {
   lastKeepAliveAt?: string;
   lastKeepAliveDurationMs?: number;
   keepAliveCount?: number;
+  internalWarmState?: "cold" | "warming" | "ready";
+  lastInternalWarmAt?: string;
+  lastInternalWarmDurationMs?: number;
+  internalWarmAgeMs?: number;
+  lastDispatchWasWarm?: boolean;
   lastGroupCryptoWarmDurationMs?: number;
   warmedGroupDeviceCount?: number;
   workerProcessId?: number;
@@ -128,6 +133,8 @@ export type RouteDispatchTimeline = {
   notAcceptableCount: number;
   mode: "normal" | "race";
   openingSignal?: "group_update" | "opening_message" | "already_open" | "image_ready" | "manual" | "simulation";
+  internalWarmState?: "cold" | "warming" | "ready";
+  internalWarmAgeMs?: number;
   events: RouteDispatchTimelineEvent[];
 };
 

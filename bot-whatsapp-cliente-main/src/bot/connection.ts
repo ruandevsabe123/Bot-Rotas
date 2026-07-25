@@ -89,6 +89,10 @@ const HEALTH_CHECK_INTERVAL_MS = 25000;
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
 const RACE_KEEP_ALIVE_INTERVAL_MS = 10000;
 const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000;
+const CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS = 90 * 1000;
+const ACTIVE_CHAT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
+const INTERNAL_WARM_READY_MAX_AGE_MS = 2 * 60 * 1000;
+const INITIAL_INTERNAL_WARM_WAIT_MS = 2200;
 const CRITICAL_KEEP_ALIVE_INTERVAL_MS = 5000;
 const SOCKET_KEEP_ALIVE_INTERVAL_MS = 10000;
 const SOCKET_CONNECT_TIMEOUT_MS = 15000;
@@ -237,6 +241,10 @@ export class BotService extends EventEmitter {
   private lastKeepAliveAt?: string;
   private lastKeepAliveDurationMs = 0;
   private keepAliveCount = 0;
+  private internalWarmState: "cold" | "warming" | "ready" = "cold";
+  private lastInternalWarmAt?: string;
+  private lastInternalWarmDurationMs = 0;
+  private lastActiveChatWarmAt = 0;
   private consecutiveHealthCheckFailures = 0;
   private lastFullMetadataWarmAt = 0;
   private lastGroupCryptoWarmAt = 0;
@@ -307,6 +315,10 @@ export class BotService extends EventEmitter {
         lastKeepAliveAt: this.lastKeepAliveAt,
         lastKeepAliveDurationMs: this.lastKeepAliveDurationMs,
         keepAliveCount: this.keepAliveCount,
+        internalWarmState: this.getCurrentInternalWarmState(),
+        lastInternalWarmAt: this.lastInternalWarmAt,
+        lastInternalWarmDurationMs: this.lastInternalWarmDurationMs,
+        internalWarmAgeMs: this.getInternalWarmAgeMs(),
         lastGroupCryptoWarmDurationMs: this.lastGroupCryptoWarmDurationMs,
         warmedGroupDeviceCount: this.warmedGroupDeviceCount,
         activeQueue: Math.max(this.performanceMetrics.activeQueue, this.dispatchQueueStore.pending().length),
@@ -364,6 +376,7 @@ export class BotService extends EventEmitter {
       lastFirstRelayCallMs: input.timeline?.firstRelayCallMs,
       lastFirstAckMs: input.timeline?.firstAckMs,
       lastDispatchTimeline: input.timeline,
+      lastDispatchWasWarm: input.timeline?.internalWarmState === "ready",
       averageMessageSendMs: average(this.performanceMetrics.averageMessageSendMs, perMessage),
       dispatchCount: nextCount,
       sentMessages: this.performanceMetrics.sentMessages + input.confirmed,
@@ -383,7 +396,30 @@ export class BotService extends EventEmitter {
     this.maybeAlertNotAcceptable(event.notAcceptableCount);
   }
 
+  private getInternalWarmAgeMs(now = Date.now()) {
+    if (!this.lastInternalWarmAt) return undefined;
+    const warmedAt = new Date(this.lastInternalWarmAt).getTime();
+    if (!Number.isFinite(warmedAt)) return undefined;
+    return Math.max(0, now - warmedAt);
+  }
+
+  private getCurrentInternalWarmState(now = Date.now()): "cold" | "warming" | "ready" {
+    if (this.internalWarmState === "warming") return "warming";
+    const ageMs = this.getInternalWarmAgeMs(now);
+    if (
+      this.internalWarmState === "ready" &&
+      ageMs !== undefined &&
+      ageMs <= INTERNAL_WARM_READY_MAX_AGE_MS &&
+      this.status === "connected"
+    ) {
+      return "ready";
+    }
+    return "cold";
+  }
+
   private createDispatchTimeline(eventDetectedAt: number, sendStartedAt: number, mode: RouteDispatchTimeline["mode"], openingSignal?: OpeningSignal): RouteDispatchTimeline {
+    const internalWarmState = this.getCurrentInternalWarmState(sendStartedAt);
+    const internalWarmAgeMs = this.getInternalWarmAgeMs(sendStartedAt);
     return {
       eventDetectedAt: new Date(eventDetectedAt).toISOString(),
       sendStartedAt: new Date(sendStartedAt).toISOString(),
@@ -393,6 +429,8 @@ export class BotService extends EventEmitter {
       notAcceptableCount: 0,
       mode,
       openingSignal,
+      internalWarmState,
+      internalWarmAgeMs,
       events: [
         {
           id: `event-${eventDetectedAt}`,
@@ -407,7 +445,12 @@ export class BotService extends EventEmitter {
           label: "Disparo iniciado",
           at: new Date(sendStartedAt).toISOString(),
           offsetMs: Math.max(0, sendStartedAt - eventDetectedAt),
-          level: "info"
+          level: "info",
+          detail: internalWarmState === "ready"
+            ? `Preparação interna aquecida há ${internalWarmAgeMs || 0}ms`
+            : internalWarmState === "warming"
+            ? "Preparação interna ainda em andamento"
+            : "Preparação interna fria"
         }
       ]
     };
@@ -644,7 +687,10 @@ export class BotService extends EventEmitter {
     this.armedAt = Date.now();
     this.addStatusEvent("armed", `Bot armado em modo ${modeLabel}.`);
     this.startHealthCheck();
-    this.startWarmKeepAlive();
+    const initialWarmup = this.startWarmKeepAlive("armado");
+    if (this.groupState !== "open") {
+      await this.waitForInitialInternalWarmup(initialWarmup);
+    }
     this.logger.success(targetDispatchMode === "ocr" ? "✅ BOT IMAGEM ARMADO. Aguardando foto da rota..." : useNuclearMode ? "✅ Bot NUCLEAR ARMADO. Aguardando abertura do grupo..." : "✅ Bot MANUAL ARMADO. Aguardando abertura do grupo...");
     this.dispatchIfGroupAlreadyOpen("armado");
     this.emitSnapshot();
@@ -695,7 +741,7 @@ export class BotService extends EventEmitter {
     this.armedAt = Date.now();
     this.addStatusEvent("armed", "Bot de teste armado.");
     this.startHealthCheck();
-    this.startWarmKeepAlive();
+    void this.startWarmKeepAlive("armado");
     this.logger.success("✅ TESTE ARMADO - O grupo de teste será ouvido como grupo real.");
     this.emitSnapshot();
     return true;
@@ -704,6 +750,7 @@ export class BotService extends EventEmitter {
   disableMonitoring(): void {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
+    this.invalidateInternalWarmState();
     this.refreshSocketJidFilterCache();
     this.armedAt = undefined;
     this.sendCycleId += 1;
@@ -978,6 +1025,7 @@ export class BotService extends EventEmitter {
     }
 
     this.sock = undefined;
+    this.invalidateInternalWarmState();
     this.groupState = "unknown";
     this.currentUserInTargetGroup = false;
     this.criticalDispatchInProgress = false;
@@ -1130,6 +1178,7 @@ export class BotService extends EventEmitter {
     this.preparedRelayMessages = [];
     this.preparedRelaySignature = "";
     this.preparedRelayBuiltAt = 0;
+    this.invalidateInternalWarmState(true);
     this.pendingOcrMessages = [];
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
@@ -1422,7 +1471,7 @@ export class BotService extends EventEmitter {
     const config = this.configStore.save(nextSettings);
     this.refreshRuntimeSettings(config);
     this.prepareSendPlan();
-    if (this.monitoringEnabled) this.startWarmKeepAlive();
+    if (this.monitoringEnabled) void this.startWarmKeepAlive("armado");
     if (changingMode) {
       this.logger.success(config.nuclearMode ? "Modo nuclear ativado." : "Modo nuclear desativado.");
     }
@@ -1706,7 +1755,10 @@ export class BotService extends EventEmitter {
         if (this.monitoringEnabled) {
           await this.captureInitialGroupState();
           this.startHealthCheck();
-          this.startWarmKeepAlive();
+          const reconnectWarmup = this.startWarmKeepAlive("reconexão");
+          if (this.groupState !== "open") {
+            await this.waitForInitialInternalWarmup(reconnectWarmup);
+          }
           this.logger.success("Monitoramento restaurado após reconexão.");
           const recoveryHandled = await this.resumeOcrDispatchAfterReconnect();
           if (!recoveryHandled) this.dispatchIfGroupAlreadyOpen("reconexão");
@@ -1738,6 +1790,7 @@ export class BotService extends EventEmitter {
         if (interruptedCycleId && interruptedCycleId === this.sendCycleId) this.sendCycleId += 1;
       }
       this.sock = undefined;
+      this.invalidateInternalWarmState();
       this.clearQrCode(false);
       this.clearHealthCheckTimer();
       this.clearWarmKeepAliveTimer();
@@ -2060,20 +2113,12 @@ export class BotService extends EventEmitter {
     this.warmedGroupParticipantSignature = "";
     this.lastGroupCryptoWarmAt = 0;
     this.warmedGroupDeviceCount = 0;
+    this.invalidateInternalWarmState();
 
     if (!this.monitoringEnabled || this.criticalDispatchInProgress || !this.sock) return;
 
     this.deferSecondarySocketTask(() => {
-      void (async () => {
-        try {
-          const metadata = await this.refreshGroupMetadata(groupJid);
-          this.lastFullMetadataWarmAt = Date.now();
-          await this.prewarmGroupCrypto(metadata, true);
-          this.prepareSendPlan();
-        } catch (error) {
-          this.logger.warning(`Cache do grupo será refeito no próximo aquecimento: ${this.getErrorMessage(error)}.`);
-        }
-      })();
+      void this.runWarmKeepAlive("timer");
     });
   }
 
@@ -3523,6 +3568,7 @@ export class BotService extends EventEmitter {
 
     this.monitoringEnabled = false;
     this.armedAt = undefined;
+    this.invalidateInternalWarmState();
     this.clearHealthCheckTimer();
     this.clearWarmKeepAliveTimer();
     this.logger.warning("Disparo no grupo alvo finalizado. Bot parado automaticamente para evitar mensagens duplicadas.");
@@ -3817,10 +3863,11 @@ export class BotService extends EventEmitter {
     }, HEALTH_CHECK_INTERVAL_MS);
   }
 
-  private startWarmKeepAlive() {
+  private startWarmKeepAlive(reason: "armado" | "reconexão" = "armado") {
     this.clearWarmKeepAliveTimer();
     const config = this.configStore.load();
-    if (!config.alwaysWarmMode) return;
+    const mandatoryTargetWarm = this.monitoringEnabled && this.monitoringMode === "target";
+    if (!config.alwaysWarmMode && !mandatoryTargetWarm) return Promise.resolve(false);
 
     const intervalMs = this.getWarmKeepAliveIntervalMs(config);
     this.warmKeepAliveIntervalMs = intervalMs;
@@ -3828,26 +3875,44 @@ export class BotService extends EventEmitter {
       void this.runWarmKeepAlive("timer");
     }, intervalMs);
 
-    void this.runWarmKeepAlive("armado");
+    const initialWarmup = this.runWarmKeepAlive(reason);
+    void initialWarmup.catch(() => undefined);
+    return initialWarmup;
   }
 
-  private async runWarmKeepAlive(reason: "timer" | "armado" = "timer") {
+  private async runWarmKeepAlive(reason: "timer" | "armado" | "reconexão" = "timer") {
     const config = this.configStore.load();
-    if (!config.alwaysWarmMode || !this.monitoringEnabled || this.status !== "connected" || !this.sock) return false;
+    const mandatoryTargetWarm = this.monitoringEnabled && this.monitoringMode === "target";
+    if (
+      (!config.alwaysWarmMode && !mandatoryTargetWarm) ||
+      !this.monitoringEnabled ||
+      this.status !== "connected" ||
+      !this.sock
+    ) return false;
     if (this.criticalDispatchInProgress || this.activeSendCycle) return false;
+    if (reason === "timer" && (this.processingImageIds.size > 0 || this.ocrRouteSelection.status === "analyzing")) {
+      return false;
+    }
     const nextInterval = this.getWarmKeepAliveIntervalMs(config);
     if (this.warmKeepAliveIntervalMs && nextInterval !== this.warmKeepAliveIntervalMs) {
-      this.startWarmKeepAlive();
+      void this.startWarmKeepAlive(reason === "timer" ? "armado" : reason);
       return true;
     }
 
     const startedAt = Date.now();
+    const forceFullWarm = reason !== "timer";
+    this.internalWarmState = "warming";
+    this.emitSnapshot();
     try {
       const activeGroup = this.getActiveMonitoringGroup(config);
-      if (!activeGroup.jid) return false;
+      if (!activeGroup.jid) {
+        this.internalWarmState = "cold";
+        return false;
+      }
 
       let metadata = this.groupMetadataCache.get(activeGroup.jid);
       const shouldRefreshFullMetadata =
+        forceFullWarm ||
         !metadata ||
         Date.now() - this.lastFullMetadataWarmAt >= FULL_METADATA_KEEP_ALIVE_INTERVAL_MS;
 
@@ -3855,28 +3920,96 @@ export class BotService extends EventEmitter {
         metadata = await this.refreshGroupMetadata(activeGroup.jid);
         this.lastFullMetadataWarmAt = Date.now();
       }
-      if (shouldRefreshFullMetadata) {
-        await Promise.all([
-          this.prewarmActiveChat(activeGroup.jid),
-          this.prewarmGroupCrypto(metadata)
-        ]);
+      if (this.criticalDispatchInProgress || this.activeSendCycle) {
+        this.internalWarmState = "cold";
+        this.emitSnapshot();
+        return false;
+      }
+      const shouldWarmActiveChat =
+        forceFullWarm ||
+        Date.now() - this.lastActiveChatWarmAt >= ACTIVE_CHAT_KEEP_ALIVE_INTERVAL_MS;
+      const shouldWarmCrypto =
+        forceFullWarm ||
+        Date.now() - this.lastGroupCryptoWarmAt >= CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS;
+      const cryptoSupported =
+        typeof this.sock.getUSyncDevices === "function" &&
+        typeof this.sock.assertSessions === "function";
+      let cryptoReady =
+        !cryptoSupported ||
+        (
+          this.lastGroupCryptoWarmAt > 0 &&
+          Date.now() - this.lastGroupCryptoWarmAt < CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS
+        );
+      const warmJobs: Promise<unknown>[] = [];
+      if (shouldWarmActiveChat) {
+        warmJobs.push(this.prewarmActiveChat(activeGroup.jid).then(() => {
+          this.lastActiveChatWarmAt = Date.now();
+        }));
+      }
+      if (shouldWarmCrypto && cryptoSupported) {
+        warmJobs.push(this.prewarmGroupCrypto(metadata, forceFullWarm).then((ready) => {
+          cryptoReady = ready;
+        }));
+      }
+      if (warmJobs.length) await Promise.all(warmJobs);
+
+      if (this.criticalDispatchInProgress || this.activeSendCycle || !cryptoReady) {
+        this.internalWarmState = "cold";
+        this.emitSnapshot();
+        return false;
       }
       this.prepareSendPlan();
-      this.lastKeepAliveAt = new Date().toISOString();
+      const finishedAt = Date.now();
+      this.lastKeepAliveAt = new Date(finishedAt).toISOString();
       this.lastKeepAliveDurationMs = Date.now() - startedAt;
+      this.lastInternalWarmAt = this.lastKeepAliveAt;
+      this.lastInternalWarmDurationMs = this.lastKeepAliveDurationMs;
+      this.internalWarmState = "ready";
       this.keepAliveCount += 1;
+      if (forceFullWarm) {
+        this.logger.info(
+          `Preparação interna concluída em ${this.lastInternalWarmDurationMs}ms: ` +
+          `${this.warmedGroupDeviceCount} dispositivo(s) prontos, sem enviar mensagem.`
+        );
+      }
       this.emitSnapshot();
       return true;
     } catch (error) {
       this.lastKeepAliveDurationMs = Date.now() - startedAt;
+      this.lastInternalWarmDurationMs = this.lastKeepAliveDurationMs;
+      this.internalWarmState = "cold";
+      if (forceFullWarm) {
+        this.logger.warning(`Preparação interna incompleta: ${this.getErrorMessage(error)}.`);
+      }
+      this.emitSnapshot();
       return false;
     }
+  }
+
+  private async waitForInitialInternalWarmup(warmup: Promise<boolean>) {
+    return Promise.race([
+      warmup,
+      this.delay(INITIAL_INTERNAL_WARM_WAIT_MS).then(() => false)
+    ]);
   }
 
   private getWarmKeepAliveIntervalMs(config = this.configStore.load()) {
     const configuredInterval = Math.max(15000, config.keepAliveIntervalMs || DEFAULT_KEEP_ALIVE_INTERVAL_MS);
     if (this.monitoringMode !== "target") return Math.max(60000, configuredInterval);
     return Math.min(configuredInterval, this.isCriticalWarmWindow() ? CRITICAL_KEEP_ALIVE_INTERVAL_MS : RACE_KEEP_ALIVE_INTERVAL_MS);
+  }
+
+  private invalidateInternalWarmState(clearCaches = false) {
+    this.internalWarmState = "cold";
+    if (!clearCaches) return;
+    this.lastInternalWarmAt = undefined;
+    this.lastInternalWarmDurationMs = 0;
+    this.lastActiveChatWarmAt = 0;
+    this.lastFullMetadataWarmAt = 0;
+    this.warmedGroupParticipantSignature = "";
+    this.lastGroupCryptoWarmAt = 0;
+    this.lastGroupCryptoWarmDurationMs = 0;
+    this.warmedGroupDeviceCount = 0;
   }
 
   private isCriticalWarmWindow(date = new Date()) {
@@ -4034,7 +4167,7 @@ export class BotService extends EventEmitter {
 
     const signature = `${metadata.id}::${participantJids.join("|")}`;
     const isFresh = signature === this.warmedGroupParticipantSignature &&
-      Date.now() - this.lastGroupCryptoWarmAt < 4 * 60 * 1000;
+      Date.now() - this.lastGroupCryptoWarmAt < CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS;
     if (!force && isFresh) return true;
     if (this.groupCryptoWarmInFlight) return this.groupCryptoWarmInFlight;
 
@@ -4101,6 +4234,11 @@ export class BotService extends EventEmitter {
         id: "group_state",
         label: "Estado do grupo validado",
         ok: this.groupState !== "unknown"
+      },
+      {
+        id: "internal_warm",
+        label: "Preparação interna aquecida",
+        ok: this.getCurrentInternalWarmState() === "ready"
       },
       {
         id: "armed",

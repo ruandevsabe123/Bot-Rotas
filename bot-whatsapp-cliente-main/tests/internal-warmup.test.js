@@ -1,0 +1,119 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const test = require("node:test");
+const { BotService } = require("../dist/bot/connection.js");
+
+function createBot() {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "bot-internal-warmup-"));
+  const bot = new BotService({
+    configPath: path.join(directory, "config.json"),
+    routeStorePath: path.join(directory, "routes.json"),
+    dispatchQueuePath: path.join(directory, "queue.json"),
+    telemetryPath: path.join(directory, "telemetry.json"),
+    logStorePath: path.join(directory, "logs.json"),
+    clientEmail: "cliente@teste.com"
+  });
+  bot.configStore.save({
+    grupoAlvoJid: "motoristas@g.us",
+    grupoAlvoNome: "Motoristas",
+    nomeEnvio: "Cliente",
+    codigosMensagensAlvo: ["F-14"],
+    alwaysWarmMode: false
+  });
+  bot.monitoringEnabled = true;
+  bot.monitoringMode = "target";
+  bot.status = "connected";
+  bot.emitSnapshot = () => undefined;
+  return { bot, directory };
+}
+
+test("aquecimento obrigatório prepara sessões sem enviar mensagem real", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const calls = { devices: 0, sessions: 0, relay: 0, presence: 0 };
+    bot.sock = {
+      getUSyncDevices: async (participants) => {
+        calls.devices += 1;
+        return participants.map((jid, index) => ({ jid: `${index}:${jid}` }));
+      },
+      assertSessions: async () => {
+        calls.sessions += 1;
+      },
+      presenceSubscribe: async () => {
+        calls.presence += 1;
+      },
+      sendPresenceUpdate: async () => {
+        calls.presence += 1;
+      },
+      relayMessage: async () => {
+        calls.relay += 1;
+      }
+    };
+    bot.refreshGroupMetadata = async () => ({
+      id: "motoristas@g.us",
+      announce: true,
+      participants: [
+        { id: "1@s.whatsapp.net" },
+        { id: "2@s.whatsapp.net" }
+      ]
+    });
+    bot.ensurePreparedRelayMessages = () => true;
+
+    assert.equal(await bot.runWarmKeepAlive("armado"), true);
+    assert.equal(calls.devices, 1);
+    assert.equal(calls.sessions, 1);
+    assert.equal(calls.presence, 2);
+    assert.equal(calls.relay, 0);
+    assert.equal(bot.internalWarmState, "ready");
+    assert.equal(bot.getCurrentInternalWarmState(), "ready");
+    assert.equal(bot.warmedGroupDeviceCount, 2);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("aquecimento periódico não disputa recursos com análise de imagem", async () => {
+  const { bot, directory } = createBot();
+  try {
+    let metadataReads = 0;
+    let relayCalls = 0;
+    bot.sock = {
+      relayMessage: async () => {
+        relayCalls += 1;
+      }
+    };
+    bot.refreshGroupMetadata = async () => {
+      metadataReads += 1;
+      return { id: "motoristas@g.us", participants: [] };
+    };
+    bot.processingImageIds.add("imagem-em-analise");
+
+    assert.equal(await bot.runWarmKeepAlive("timer"), false);
+    assert.equal(metadataReads, 0);
+    assert.equal(relayCalls, 0);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("telemetria registra se o disparo começou aquecido ou frio", () => {
+  const { bot, directory } = createBot();
+  try {
+    const now = Date.now();
+    bot.internalWarmState = "ready";
+    bot.lastInternalWarmAt = new Date(now - 250).toISOString();
+
+    const warmTimeline = bot.createDispatchTimeline(now, now, "race", "group_update");
+    assert.equal(warmTimeline.internalWarmState, "ready");
+    assert.match(warmTimeline.events[1].detail, /aquecida/);
+
+    bot.lastInternalWarmAt = new Date(now - (3 * 60 * 1000)).toISOString();
+    const coldTimeline = bot.createDispatchTimeline(now, now, "race", "group_update");
+    assert.equal(coldTimeline.internalWarmState, "cold");
+    assert.match(coldTimeline.events[1].detail, /fria/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
