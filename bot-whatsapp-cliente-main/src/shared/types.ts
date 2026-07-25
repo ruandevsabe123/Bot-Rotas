@@ -189,7 +189,9 @@ export type BotSnapshot = {
   status: BotStatus;
   groupState: BotGroupState;
   qrCode: string;
-  pairingCode?: string;
+  qrGeneratedAt?: string;
+  qrExpiresAt?: string;
+  qrAttempt?: number;
   config: BotConfig;
   groups: BotGroup[];
   readinessChecks: BotReadinessCheck[];
@@ -592,7 +594,7 @@ export type DesktopApi = {
   stopBot: () => Promise<BotSnapshot>;
   restartBot: () => Promise<BotSnapshot>;
   clearSession: () => Promise<BotSnapshot>;
-  requestPairingCode: (payload: { phoneNumber: string }) => Promise<BotSnapshot>;
+  refreshQrCode: () => Promise<BotSnapshot>;
   factoryReset: () => Promise<BotSnapshot>;
   clearLogs: () => Promise<BotSnapshot>;
   refreshGroups: () => Promise<BotSnapshot>;

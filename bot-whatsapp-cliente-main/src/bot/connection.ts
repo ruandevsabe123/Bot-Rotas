@@ -93,6 +93,7 @@ const CRITICAL_KEEP_ALIVE_INTERVAL_MS = 5000;
 const SOCKET_KEEP_ALIVE_INTERVAL_MS = 10000;
 const SOCKET_CONNECT_TIMEOUT_MS = 15000;
 const SOCKET_QUERY_TIMEOUT_MS = 15000;
+export const QR_CODE_LIFETIME_MS = 60_000;
 const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
 // A primeira rota ganha acesso exclusivo ao socket; a segunda sai logo depois.
@@ -133,8 +134,9 @@ export class BotService extends EventEmitter {
   private status: BotStatus = "disconnected";
   private groupState: BotGroupState = "unknown";
   private qrCode = "";
-  private pairingCode = "";
-  private pairingCodeRequested = false;
+  private qrGeneratedAt?: string;
+  private qrExpiresAt?: string;
+  private qrAttempt = 0;
   private error = "";
   private reconnectAttempts = 0;
   private reconnectTimer?: NodeJS.Timeout;
@@ -212,6 +214,8 @@ export class BotService extends EventEmitter {
   private outboundRaceTracking = new Map<string, { cycleId: number; timeline: RouteDispatchTimeline; relayCalledAt: number; routeId?: string }>();
   private dispatchQueueIdByCycle = new Map<number, string>();
   private pendingCredsSave?: NodeJS.Timeout;
+  private credsSaveInFlight?: Promise<void>;
+  private credsSaveDirty = false;
   private saveCredsNow?: () => Promise<void> | void;
   private targetSimulationCycles = new Set<number>();
   private autoClearInvalidSession = false;
@@ -273,7 +277,9 @@ export class BotService extends EventEmitter {
       status: this.status,
       groupState: this.groupState,
       qrCode: this.qrCode,
-      pairingCode: this.pairingCode || undefined,
+      qrGeneratedAt: this.qrGeneratedAt,
+      qrExpiresAt: this.qrExpiresAt,
+      qrAttempt: this.qrAttempt || undefined,
       config: this.configStore.load(),
       groups: this.groups,
       readinessChecks: this.getReadinessChecks(),
@@ -480,6 +486,7 @@ export class BotService extends EventEmitter {
 
   private scheduleCredsSave() {
     if (!this.saveCredsNow) return;
+    this.credsSaveDirty = true;
     if (this.pendingCredsSave) return;
     this.pendingCredsSave = setTimeout(() => {
       this.pendingCredsSave = undefined;
@@ -494,8 +501,23 @@ export class BotService extends EventEmitter {
       clearTimeout(this.pendingCredsSave);
       this.pendingCredsSave = undefined;
     }
-    if (!this.saveCredsNow) return;
-    await this.saveCredsNow();
+    if (this.credsSaveInFlight) {
+      await this.credsSaveInFlight;
+      if (this.credsSaveDirty) await this.flushCreds();
+      return;
+    }
+    const saveCreds = this.saveCredsNow;
+    if (!saveCreds) return;
+
+    this.credsSaveDirty = false;
+    const savePromise = Promise.resolve(saveCreds());
+    this.credsSaveInFlight = savePromise;
+    try {
+      await savePromise;
+    } finally {
+      if (this.credsSaveInFlight === savePromise) this.credsSaveInFlight = undefined;
+    }
+    if (this.credsSaveDirty) await this.flushCreds();
   }
 
   validateRoute(routeId: string, validatedBy: string) {
@@ -904,8 +926,6 @@ export class BotService extends EventEmitter {
   async stop() {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
     if (!this.isRunning()) {
       this.logger.warning("Não é possível parar: o bot ainda não foi iniciado.");
       return;
@@ -917,7 +937,7 @@ export class BotService extends EventEmitter {
     this.clearHealthCheckTimer();
     this.clearWarmKeepAliveTimer();
     this.reconnectAttempts = 0;
-    this.qrCode = "";
+    this.clearQrCode();
 
     await this.flushCreds().catch((error) => {
       this.logger.warning(`Não consegui salvar credenciais antes de parar: ${this.getErrorMessage(error)}`);
@@ -928,8 +948,10 @@ export class BotService extends EventEmitter {
 
     if (this.sock) {
       try {
+        this.sock.ev.removeAllListeners("creds.update");
         this.sock.ev.removeAllListeners("connection.update");
         this.sock.ev.removeAllListeners("groups.update");
+        this.sock.ev.removeAllListeners("group-participants.update");
         this.sock.ev.removeAllListeners("messages.upsert");
         this.sock.ev.removeAllListeners("messaging-history.set");
         this.sock.end?.(undefined);
@@ -967,11 +989,9 @@ export class BotService extends EventEmitter {
       this.clearReconnectTimer();
       this.clearHealthCheckTimer();
       this.clearWarmKeepAliveTimer();
-      this.pairingCode = "";
-      this.pairingCodeRequested = false;
     }
 
-    this.qrCode = "";
+    this.clearQrCode();
     this.error = "";
     this.logger.info("Bot encerrado. Sessão/auth preservada para a próxima abertura.");
     this.emitSnapshot();
@@ -992,38 +1012,26 @@ export class BotService extends EventEmitter {
 
   async clearSession() {
     await this.logoutAndClearSession();
-    this.qrCode = "";
+    this.clearQrCode();
     this.error = "";
     this.logger.warning("Sessão/auth apagada e logout solicitado. Gerando um novo QR Code.");
     this.emitSnapshot();
     await this.start();
   }
 
-  async requestPairingCode(phoneNumber: string) {
-    const digits = String(phoneNumber || "").replace(/\D/g, "");
-    if (digits.length < 10 || digits.length > 15) {
-      throw new Error("Informe o número completo com DDI e DDD. Exemplo: 5522999999999.");
-    }
+  async refreshQrCode() {
     if (this.status === "connected" || this.sock?.authState?.creds?.registered) {
-      throw new Error("Já existe uma sessão salva. Use Limpar sessão antes de gerar um código para outro aparelho.");
+      throw new Error("O WhatsApp já está conectado.");
     }
-    if (!this.isRunning()) await this.start();
-    if (!this.sock?.requestPairingCode) {
-      throw new Error("A conexão ainda não está pronta. Aguarde o QR aparecer e tente novamente.");
-    }
-
-    this.pairingCodeRequested = true;
-    try {
-      const code = String(await this.sock.requestPairingCode(digits)).replace(/\D/g, "");
-      if (!code) throw new Error("O WhatsApp não retornou um código de pareamento.");
-      this.pairingCode = code.replace(/(.{4})/g, "$1 ").trim();
-      this.logger.info(`Código de pareamento gerado para telefone terminado em ${digits.slice(-4)}.`);
-      this.emitSnapshot();
-    } catch (error) {
-      this.pairingCodeRequested = false;
-      this.pairingCode = "";
-      throw new Error(`Não consegui gerar o código de pareamento: ${this.getErrorMessage(error)}`);
-    }
+    if (this.isRunning()) await this.stop();
+    this.clearPendingCredsSave();
+    this.removeAuthDir();
+    this.clearQrCode();
+    this.error = "";
+    this.reconnectAttempts = 0;
+    this.unknownDisconnects = 0;
+    this.logger.info("Gerando um QR Code novo e descartando tentativas expiradas.");
+    await this.start();
   }
 
   async factoryReset() {
@@ -1050,9 +1058,7 @@ export class BotService extends EventEmitter {
     this.configStore.save(DEFAULT_CONFIG);
     this.refreshSocketJidFilterCache(DEFAULT_CONFIG);
     this.groupState = "unknown";
-    this.qrCode = "";
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
+    this.clearQrCode();
     this.error = "";
     this.reconnectAttempts = 0;
     this.unknownDisconnects = 0;
@@ -1567,8 +1573,7 @@ export class BotService extends EventEmitter {
   private async connect() {
     const connectionId = ++this.activeConnectionId;
     this.qrReceivedInCurrentConnection = false;
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
+    this.clearQrCode();
     this.estadoInicialDoGrupoCapturado = false;
     this.grupoJaFechouDepoisDoInicio = false;
     this.clearReconnectTimer();
@@ -1592,6 +1597,7 @@ export class BotService extends EventEmitter {
       connectTimeoutMs: SOCKET_CONNECT_TIMEOUT_MS,
       defaultQueryTimeoutMs: SOCKET_QUERY_TIMEOUT_MS,
       keepAliveIntervalMs: SOCKET_KEEP_ALIVE_INTERVAL_MS,
+      qrTimeout: QR_CODE_LIFETIME_MS,
       emitOwnEvents: true,
       fireInitQueries: true,
       printQRInTerminal: false,
@@ -1633,22 +1639,33 @@ export class BotService extends EventEmitter {
   private async handleConnectionUpdate(update: any, connectionId: number) {
     if (connectionId !== this.activeConnectionId) return;
 
-    const { connection, lastDisconnect, qr } = update;
+    const { connection, lastDisconnect, qr, isNewLogin } = update;
 
     if (qr) {
+      const now = Date.now();
       this.unknownDisconnects = 0;
       this.qrReceivedInCurrentConnection = true;
       this.qrCode = qr;
+      this.qrGeneratedAt = new Date(now).toISOString();
+      this.qrExpiresAt = new Date(now + QR_CODE_LIFETIME_MS).toISOString();
+      this.qrAttempt += 1;
       this.setStatus("waiting_qr");
-      this.logger.info("QR Code gerado.");
+      this.logger.info(`QR Code ${this.qrAttempt} gerado com validade ampliada.`);
+    }
+
+    if (isNewLogin) {
+      this.clearQrCode(false);
+      this.setStatus("reconnecting");
+      this.logger.success("QR Code lido pelo WhatsApp. Finalizando a conexão...");
+      await this.flushCreds().catch((error) => {
+        this.logger.warning(`Não consegui salvar imediatamente a nova sessão: ${this.getErrorMessage(error)}`);
+      });
     }
 
     if (connection === "open") {
       this.unknownDisconnects = 0;
       this.reconnectAttempts = 0;
-      this.qrCode = "";
-      this.pairingCode = "";
-      this.pairingCodeRequested = false;
+      this.clearQrCode(false);
       this.setStatus("connected");
       this.addStatusEvent("connected", "WhatsApp conectado.");
       this.logger.success("WhatsApp conectado.");
@@ -1677,9 +1694,13 @@ export class BotService extends EventEmitter {
     if (connection === "close") {
       const closedSocket = this.sock;
       this.sock = undefined;
+      this.clearQrCode(false);
       this.clearHealthCheckTimer();
       this.clearWarmKeepAliveTimer();
       this.disposeSocket(closedSocket);
+      await this.flushCreds().catch((error) => {
+        this.logger.warning(`Falha ao persistir sessão ao fechar o socket: ${this.getErrorMessage(error)}`);
+      });
       if (this.stopping) return;
 
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
@@ -1736,15 +1757,13 @@ export class BotService extends EventEmitter {
           this.removeAuthDir();
           this.reconnectAttempts = 0;
           this.unknownDisconnects = 0;
-          this.qrCode = "";
-          this.pairingCode = "";
-          this.pairingCodeRequested = false;
+          this.clearQrCode();
           this.scheduleReconnect(true);
           return;
         }
 
         this.failConnectionWithoutReconnect(
-          `Sessão inválida ou logout detectado (${statusCode || "sem código"}). Parei para evitar loop de reconexão. Use Limpar sessão para gerar um novo QR Code/código de pareamento.`
+          `Sessão inválida ou logout detectado (${statusCode || "sem código"}). Parei para evitar loop de reconexão. Use Limpar sessão para gerar um novo QR Code.`
         );
         return;
       }
@@ -1758,7 +1777,7 @@ export class BotService extends EventEmitter {
           this.unknownDisconnects >= 2
         ) {
           this.failConnectionWithoutReconnect(
-            "A sessão local fechou sem motivo claro antes de conectar. Parei para evitar loop de reconexão. Use Limpar sessão para gerar um novo QR Code/código de pareamento."
+            "A sessão local fechou sem motivo claro antes de conectar. Parei para evitar loop de reconexão. Use Limpar sessão para gerar um novo QR Code."
           );
           this.unknownDisconnects = 0;
           return;
@@ -1776,7 +1795,6 @@ export class BotService extends EventEmitter {
     this.clearWarmKeepAliveTimer();
     this.reconnectAttempts = Math.max(this.reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
     this.error = message;
-    this.pairingCodeRequested = false;
     this.setStatus("error");
     this.logger.error(message);
   }
@@ -4008,6 +4026,7 @@ export class BotService extends EventEmitter {
   private disposeSocket(socket: any) {
     if (!socket) return;
     try {
+      socket.ev?.removeAllListeners?.("creds.update");
       socket.ev?.removeAllListeners?.("connection.update");
       socket.ev?.removeAllListeners?.("groups.update");
       socket.ev?.removeAllListeners?.("group-participants.update");
@@ -4059,8 +4078,7 @@ export class BotService extends EventEmitter {
       this.clearWarmKeepAliveTimer();
     }
 
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
+    this.clearQrCode();
     this.removeAuthDir();
     this.groupState = "unknown";
     this.currentUserInTargetGroup = false;
@@ -4151,7 +4169,15 @@ export class BotService extends EventEmitter {
       clearTimeout(this.pendingCredsSave);
       this.pendingCredsSave = undefined;
     }
+    this.credsSaveDirty = false;
     this.saveCredsNow = undefined;
+  }
+
+  private clearQrCode(resetAttempt = true) {
+    this.qrCode = "";
+    this.qrGeneratedAt = undefined;
+    this.qrExpiresAt = undefined;
+    if (resetAttempt) this.qrAttempt = 0;
   }
 
   private resetPartialQrAuth() {
@@ -4160,9 +4186,7 @@ export class BotService extends EventEmitter {
     this.reconnectAttempts = 0;
     this.unknownDisconnects = 0;
     this.qrReceivedInCurrentConnection = false;
-    this.qrCode = "";
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
+    this.clearQrCode();
     this.setStatus("reconnecting");
   }
 

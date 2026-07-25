@@ -7,7 +7,7 @@ const ALLOWED_METHODS = new Set([
   "stop",
   "restart",
   "clearSession",
-  "requestPairingCode",
+  "refreshQrCode",
   "factoryReset",
   "clearLogs",
   "clearRouteHistory",

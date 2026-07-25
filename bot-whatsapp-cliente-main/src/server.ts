@@ -830,8 +830,8 @@ async function handleAction(bot: BotProcessProxy, action: string, body: any) {
     case "clear-session":
       await bot.clearSession();
       break;
-    case "request-pairing-code":
-      await bot.requestPairingCode(String(body.phoneNumber || ""));
+    case "refresh-qr":
+      await bot.refreshQrCode();
       break;
     case "factory-reset":
       await bot.factoryReset();
@@ -1474,7 +1474,13 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      const svg = await QRCode.toString(snapshot.qrCode, { type: "svg", width: 320, margin: 2 });
+      const svg = await QRCode.toString(snapshot.qrCode, {
+        type: "svg",
+        width: 400,
+        margin: 4,
+        errorCorrectionLevel: "M",
+        color: { dark: "#000000", light: "#ffffff" }
+      });
       response.writeHead(200, {
         "Content-Type": "image/svg+xml",
         "Cache-Control": "no-store"

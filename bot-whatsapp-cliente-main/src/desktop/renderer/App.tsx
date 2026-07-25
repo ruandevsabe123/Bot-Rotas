@@ -3433,9 +3433,11 @@ export default function App() {
               <QrCodeBox
                 qrCode={snapshot.qrCode}
                 status={snapshot.status}
-                pairingCode={snapshot.pairingCode}
+                qrGeneratedAt={snapshot.qrGeneratedAt}
+                qrExpiresAt={snapshot.qrExpiresAt}
+                qrAttempt={snapshot.qrAttempt}
                 busy={busy}
-                onRequestPairingCode={(phoneNumber) => runAction(() => botApi.requestPairingCode({ phoneNumber }))}
+                onRefreshQrCode={() => runAction(botApi.refreshQrCode)}
               />
             ) : null}
           </section>

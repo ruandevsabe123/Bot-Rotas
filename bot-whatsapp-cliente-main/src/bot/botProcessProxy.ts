@@ -129,7 +129,7 @@ export class BotProcessProxy extends EventEmitter {
   stop() { return this.call("stop"); }
   restart() { return this.call("restart"); }
   clearSession() { return this.call("clearSession"); }
-  requestPairingCode(phoneNumber: string) { return this.call("requestPairingCode", phoneNumber); }
+  refreshQrCode() { return this.call("refreshQrCode"); }
   factoryReset() { return this.call("factoryReset"); }
   clearLogs(silent = false) { return this.call("clearLogs", silent); }
   clearRouteHistory(silent = false) { return this.call("clearRouteHistory", silent); }

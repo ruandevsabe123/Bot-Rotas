@@ -102,8 +102,8 @@ function registerIpc() {
     await bot.clearSession();
     return bot.getSnapshot();
   });
-  ipcMain.handle("bot:requestPairingCode", async (_event, payload: { phoneNumber: string }) => {
-    await bot.requestPairingCode(String(payload?.phoneNumber || ""));
+  ipcMain.handle("bot:refreshQrCode", async () => {
+    await bot.refreshQrCode();
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:factoryReset", async () => {

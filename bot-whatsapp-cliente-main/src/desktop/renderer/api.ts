@@ -340,7 +340,7 @@ function createWebApi(): DesktopApi {
     stopBot: () => action("stop"),
     restartBot: () => action("restart"),
     clearSession: () => action("clear-session"),
-    requestPairingCode: (payload) => action("request-pairing-code", payload),
+    refreshQrCode: () => action("refresh-qr"),
     factoryReset: () => action("factory-reset"),
     clearLogs: () => action("clear-logs"),
     refreshGroups: () => action("refresh-groups"),
