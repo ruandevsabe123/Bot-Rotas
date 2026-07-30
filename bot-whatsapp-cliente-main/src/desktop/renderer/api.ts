@@ -141,6 +141,13 @@ export function saveImagePricing(clientEmail: string, amountCents: number) {
   });
 }
 
+export function saveImageMonthlyTotal(clientEmail: string, amountCents: number, month?: string) {
+  return fetchJson<AdminImageUsageSnapshot>(`/api/admin/image-total/${encodeURIComponent(clientEmail)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ amountCents, month })
+  });
+}
+
 export function subscribeAdminMonitor(callback: (snapshot: AdminMonitorSnapshot) => void, onError?: () => void) {
   const token = getPanelToken();
   if (!token) return () => undefined;
@@ -335,6 +342,7 @@ function action<TPayload = unknown>(name: string, payload?: TPayload) {
 
 function createWebApi(): DesktopApi {
   return {
+    reportRendererHeartbeat: () => undefined,
     getSnapshot: () => fetchJson<BotSnapshot>("/api/snapshot"),
     startBot: () => action("start"),
     stopBot: () => action("stop"),

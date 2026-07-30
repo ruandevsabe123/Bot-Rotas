@@ -2701,7 +2701,22 @@ export class BotService extends EventEmitter {
     if (!groupJid.endsWith("@g.us") || !participantIds.length) return "";
 
     try {
-      const metadata = this.groupMetadataCache.get(groupJid) || (await this.refreshGroupMetadata(groupJid));
+      const cachedMetadata = this.groupMetadataCache.get(groupJid);
+      const cachedPhone = this.findReactionPhoneInMetadata(cachedMetadata, participantIds);
+      if (cachedPhone) return cachedPhone;
+
+      // Reações recentes podem trazer o LID antes de o cache do grupo receber o
+      // respectivo PN. Atualiza uma vez somente quando o cache não resolveu.
+      const metadata = await this.refreshGroupMetadata(groupJid);
+      return this.findReactionPhoneInMetadata(metadata, participantIds);
+    } catch (error) {
+      this.logger.warning(`Não consegui resolver telefone da reação pelo grupo: ${this.getErrorMessage(error)}`);
+    }
+
+    return "";
+  }
+
+  private findReactionPhoneInMetadata(metadata: any, participantIds: string[]) {
       const participants = Array.isArray(metadata?.participants) ? metadata.participants : [];
 
       for (const participant of participants) {
@@ -2739,10 +2754,6 @@ export class BotService extends EventEmitter {
 
         if (phone) return phone;
       }
-    } catch (error) {
-      this.logger.warning(`Não consegui resolver telefone da reação pelo grupo: ${this.getErrorMessage(error)}`);
-    }
-
     return "";
   }
 

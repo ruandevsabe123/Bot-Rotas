@@ -20,6 +20,8 @@ app.disableHardwareAcceleration();
 let mainWindow: BrowserWindow | undefined;
 let bot: BotService;
 let isQuitting = false;
+let lastRendererHeartbeat = 0;
+let rendererRecoveryTimer: NodeJS.Timeout | undefined;
 
 const isDev = !app.isPackaged;
 const singleInstanceLock = app.requestSingleInstanceLock();
@@ -55,7 +57,8 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      backgroundThrottling: false
     }
   });
 
@@ -66,13 +69,28 @@ function createWindow() {
   }
 
   mainWindow.on("closed", () => {
+    if (rendererRecoveryTimer) clearTimeout(rendererRecoveryTimer);
+    rendererRecoveryTimer = undefined;
     mainWindow = undefined;
   });
 
   const repaintAndRefresh = () => {
     if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+    const restoreStartedAt = Date.now();
     mainWindow.webContents.invalidate();
     mainWindow.webContents.send("bot:snapshot", bot.getSnapshot());
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+      mainWindow.webContents.invalidate();
+      mainWindow.webContents.send("bot:snapshot", bot.getSnapshot());
+    }, 180);
+
+    if (rendererRecoveryTimer) clearTimeout(rendererRecoveryTimer);
+    rendererRecoveryTimer = setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+      if (lastRendererHeartbeat >= restoreStartedAt) return;
+      void mainWindow.webContents.reloadIgnoringCache();
+    }, 1500);
   };
   mainWindow.on("restore", repaintAndRefresh);
   mainWindow.on("show", repaintAndRefresh);
@@ -85,6 +103,9 @@ function createWindow() {
 }
 
 function registerIpc() {
+  ipcMain.on("renderer:heartbeat", () => {
+    lastRendererHeartbeat = Date.now();
+  });
   ipcMain.handle("bot:getSnapshot", () => bot.getSnapshot());
   ipcMain.handle("bot:start", async () => {
     await bot.start();

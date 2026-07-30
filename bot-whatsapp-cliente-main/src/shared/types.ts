@@ -241,6 +241,7 @@ export type ImageUsageClientSummary = {
   detected: number;
   amountCents: number;
   defaultAmountCents: number;
+  manualTotalAmountCents?: number;
 };
 
 export type ClientImageUsageSnapshot = {
@@ -583,6 +584,7 @@ export type GeneralSettingsPayload = {
 };
 
 export type DesktopApi = {
+  reportRendererHeartbeat: () => void;
   getSnapshot: () => Promise<BotSnapshot>;
   startBot: () => Promise<BotSnapshot>;
   stopBot: () => Promise<BotSnapshot>;

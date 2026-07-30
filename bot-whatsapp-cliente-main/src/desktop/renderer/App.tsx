@@ -2790,6 +2790,21 @@ export default function App() {
   }, [authenticated, userRole]);
 
   useEffect(() => {
+    const reportRendererHeartbeat = () => botApi.reportRendererHeartbeat();
+    reportRendererHeartbeat();
+    document.addEventListener("visibilitychange", reportRendererHeartbeat);
+    window.addEventListener("focus", reportRendererHeartbeat);
+    window.addEventListener("pageshow", reportRendererHeartbeat);
+    const heartbeat = window.setInterval(reportRendererHeartbeat, 4000);
+    return () => {
+      document.removeEventListener("visibilitychange", reportRendererHeartbeat);
+      window.removeEventListener("focus", reportRendererHeartbeat);
+      window.removeEventListener("pageshow", reportRendererHeartbeat);
+      window.clearInterval(heartbeat);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!authenticated || userRole === "admin") return;
     const refreshAfterBackground = () => {
       if (document.visibilityState !== "visible") return;

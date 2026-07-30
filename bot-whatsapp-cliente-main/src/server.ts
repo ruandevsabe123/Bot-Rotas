@@ -1235,6 +1235,21 @@ const server = http.createServer(async (request, response) => {
       return;
     }
 
+    if (request.method === "PATCH" && url.pathname.startsWith("/api/admin/image-total/")) {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const clientEmail = decodeURIComponent(url.pathname.replace("/api/admin/image-total/", "")).trim().toLowerCase();
+      const body = await readJsonBody<{ amountCents?: number; month?: string }>(request);
+      if (!panelUsers.has(clientEmail) || !Number.isFinite(Number(body.amountCents))) {
+        sendJson(response, 400, { error: "Cliente ou valor total inválido." });
+        return;
+      }
+      imageUsageStore.setMonthlyTotal(clientEmail, Number(body.amountCents), typeof body.month === "string" ? body.month : undefined);
+      broadcastAdminSnapshot();
+      broadcastSnapshot(clientEmail);
+      sendJson(response, 200, imageUsageStore.snapshot());
+      return;
+    }
+
     if (request.method === "POST" && url.pathname === "/api/admin/maintenance/clear") {
       if (!requireAdmin(authorizedEmail, response)) return;
       const body = await readJsonBody<{ target?: string; clientEmail?: string }>(request);

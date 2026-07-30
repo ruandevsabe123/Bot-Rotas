@@ -55,6 +55,22 @@ test("usa R$ 0,70 como padrão e preserva telemetria da análise", () => {
   assert.equal(store.clientSnapshot("cliente@teste.com").amountCents, 70);
 });
 
+test("permite substituir o total mensal calculado por cliente", () => {
+  const filePath = tempFile("usage-total-manual.json");
+  const store = new ImageUsageStore(filePath);
+  store.record({ id: "foto-total", clientEmail: "alan@teste.com", messageId: "4", result: "detected" });
+  store.decide("foto-total", "billable", "admin@teste.com", 570);
+  store.setMonthlyTotal("alan@teste.com", 1000);
+
+  const snapshot = store.snapshot();
+  const client = snapshot.clients.find((item) => item.clientEmail === "alan@teste.com");
+  assert.equal(client.amountCents, 1000);
+  assert.equal(client.manualTotalAmountCents, 1000);
+  assert.equal(snapshot.totals.amountCents, 1000);
+  assert.equal(store.clientSnapshot("alan@teste.com").amountCents, 1000);
+  assert.equal(new ImageUsageStore(filePath).clientSnapshot("alan@teste.com").amountCents, 1000);
+});
+
 function createPendingRoute(store, id = "rota-lider") {
   return store.create({
     id,

@@ -5,6 +5,7 @@ import { AdminImageUsageSnapshot, ClientImageUsageSnapshot, ImageAnalysisResult,
 type StoredImageUsage = {
   entries: ImageUsageEntry[];
   defaultAmounts: Record<string, number>;
+  monthlyTotalOverrides: Record<string, number>;
 };
 
 type RecordAnalysisInput = {
@@ -101,6 +102,12 @@ export class ImageUsageStore {
     this.save();
   }
 
+  setMonthlyTotal(clientEmail: string, amountCents: number, month = this.currentMonth()) {
+    const email = clientEmail.trim().toLowerCase();
+    this.data.monthlyTotalOverrides[this.monthlyTotalKey(email, month)] = this.normalizeAmount(amountCents);
+    this.save();
+  }
+
   snapshot(month = this.currentMonth()): AdminImageUsageSnapshot {
     const entries = this.data.entries.filter((entry) => entry.createdAt.slice(0, 7) === month);
     const emails = new Set([...Object.keys(this.data.defaultAmounts), ...entries.map((entry) => entry.clientEmail)]);
@@ -115,7 +122,7 @@ export class ImageUsageStore {
         billable: entries.filter((entry) => entry.decision === "billable").length,
         excluded: entries.filter((entry) => entry.decision === "excluded").length,
         detected: entries.filter((entry) => entry.result === "detected").length,
-        amountCents: entries.filter((entry) => entry.decision === "billable").reduce((total, entry) => total + entry.amountCents, 0)
+        amountCents: clients.reduce((total, client) => total + client.amountCents, 0)
       }
     };
   }
@@ -125,14 +132,14 @@ export class ImageUsageStore {
     const entries = this.data.entries.filter((entry) => entry.clientEmail === email && entry.createdAt.slice(0, 7) === month);
     return {
       month,
-      amountCents: entries
-        .filter((entry) => entry.decision === "billable")
-        .reduce((total, entry) => total + entry.amountCents, 0)
+      amountCents: this.summary(email, month, entries).amountCents
     };
   }
 
   private summary(clientEmail: string, month: string, entries: ImageUsageEntry[]) {
     const clientEntries = entries.filter((entry) => entry.clientEmail === clientEmail);
+    const calculatedAmountCents = clientEntries.filter((entry) => entry.decision === "billable").reduce((total, entry) => total + entry.amountCents, 0);
+    const manualTotalAmountCents = this.data.monthlyTotalOverrides[this.monthlyTotalKey(clientEmail, month)];
     return {
       clientEmail,
       month,
@@ -141,13 +148,18 @@ export class ImageUsageStore {
       billable: clientEntries.filter((entry) => entry.decision === "billable").length,
       excluded: clientEntries.filter((entry) => entry.decision === "excluded").length,
       detected: clientEntries.filter((entry) => entry.result === "detected").length,
-      amountCents: clientEntries.filter((entry) => entry.decision === "billable").reduce((total, entry) => total + entry.amountCents, 0),
-      defaultAmountCents: this.defaultAmount(clientEmail)
+      amountCents: manualTotalAmountCents === undefined ? calculatedAmountCents : manualTotalAmountCents,
+      defaultAmountCents: this.defaultAmount(clientEmail),
+      manualTotalAmountCents
     };
   }
 
   private defaultAmount(clientEmail: string) {
     return this.normalizeAmount(this.data.defaultAmounts[clientEmail] ?? 70);
+  }
+
+  private monthlyTotalKey(clientEmail: string, month: string) {
+    return `${month}:${clientEmail}`;
   }
 
   private normalizeAmount(value: number) {
@@ -165,13 +177,17 @@ export class ImageUsageStore {
       try {
         const parsed = JSON.parse(fs.readFileSync(candidate, "utf-8"));
         if (parsed && Array.isArray(parsed.entries) && parsed.defaultAmounts && typeof parsed.defaultAmounts === "object") {
-          return { entries: parsed.entries, defaultAmounts: parsed.defaultAmounts };
+          return {
+            entries: parsed.entries,
+            defaultAmounts: parsed.defaultAmounts,
+            monthlyTotalOverrides: parsed.monthlyTotalOverrides && typeof parsed.monthlyTotalOverrides === "object" ? parsed.monthlyTotalOverrides : {}
+          };
         }
       } catch {
         // Tenta o backup antes de iniciar um registro vazio.
       }
     }
-    return { entries: [], defaultAmounts: {} };
+    return { entries: [], defaultAmounts: {}, monthlyTotalOverrides: {} };
   }
 
   private save() {

@@ -56,6 +56,7 @@ import {
   saveAdminLeader,
   saveAdminUser,
   saveImagePricing,
+  saveImageMonthlyTotal,
   subscribeAdminMonitor,
   validateAdminRoute
 } from "../api";
@@ -647,6 +648,8 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
       (snapshot.imageUsage?.clients || []).forEach((client) => {
         const key = `client:${client.clientEmail}`;
         if (next[key] === undefined) next[key] = (client.defaultAmountCents / 100).toFixed(2).replace(".", ",");
+        const totalKey = `total:${client.clientEmail}`;
+        next[totalKey] = (client.amountCents / 100).toFixed(2).replace(".", ",");
       });
       return next;
     });
@@ -962,6 +965,20 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
       refresh();
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : "Não consegui salvar o valor padrão.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateImageMonthlyTotal(clientEmail: string) {
+    setBusy(true);
+    try {
+      const next = await saveImageMonthlyTotal(clientEmail, parseMoney(usageAmounts[`total:${clientEmail}`] || "0"), imageUsage.month);
+      setImageUsage(next);
+      showToast("Total mensal do cliente atualizado.");
+      refresh();
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui salvar o total mensal.");
     } finally {
       setBusy(false);
     }
@@ -1490,15 +1507,17 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             <section className="adminx-usage-layout">
               <article className="adminx-panel adminx-pricing-panel">
                 <div className="adminx-panel-head">
-                  <div><p>Valor por cliente</p><h2>Tabela padrão</h2></div>
+                  <div><p>Valores por cliente</p><h2>Preço e total mensal</h2></div>
                   <CircleDollarSign size={22} />
                 </div>
                 <div className="adminx-pricing-list">
                   {pricingClients.map((client) => (
                     <div className="adminx-pricing-row" key={client.clientEmail}>
-                      <div><strong>{client.clientEmail}</strong><small>{client.billable} aprovada(s) · {formatMoney(client.amountCents)}</small></div>
-                      <label><span>R$</span><input inputMode="decimal" value={usageAmounts[`client:${client.clientEmail}`] || "0,00"} onChange={(event) => setUsageAmounts((current) => ({ ...current, [`client:${client.clientEmail}`]: event.target.value }))} /></label>
-                      <button className="button" disabled={busy} type="button" onClick={() => updateImagePricing(client.clientEmail)}>Salvar</button>
+                      <div><strong>{client.clientEmail}</strong><small>{client.billable} aprovada(s) · total atual {formatMoney(client.amountCents)}</small></div>
+                      <label><span>Preço R$</span><input inputMode="decimal" value={usageAmounts[`client:${client.clientEmail}`] || "0,00"} onChange={(event) => setUsageAmounts((current) => ({ ...current, [`client:${client.clientEmail}`]: event.target.value }))} /></label>
+                      <button className="button" disabled={busy} type="button" onClick={() => updateImagePricing(client.clientEmail)}>Preço padrão</button>
+                      <label><span>Total R$</span><input inputMode="decimal" value={usageAmounts[`total:${client.clientEmail}`] || "0,00"} onChange={(event) => setUsageAmounts((current) => ({ ...current, [`total:${client.clientEmail}`]: event.target.value }))} /></label>
+                      <button className="button primary" disabled={busy} type="button" onClick={() => updateImageMonthlyTotal(client.clientEmail)}>Salvar total</button>
                     </div>
                   ))}
                   {!pricingClients.length ? <p className="adminx-empty-text">Nenhum cliente cadastrado.</p> : null}

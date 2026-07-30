@@ -11,6 +11,7 @@ import {
 } from "../shared/types";
 
 const api: DesktopApi = {
+  reportRendererHeartbeat: () => ipcRenderer.send("renderer:heartbeat"),
   getSnapshot: () => ipcRenderer.invoke("bot:getSnapshot"),
   startBot: () => ipcRenderer.invoke("bot:start"),
   stopBot: () => ipcRenderer.invoke("bot:stop"),
