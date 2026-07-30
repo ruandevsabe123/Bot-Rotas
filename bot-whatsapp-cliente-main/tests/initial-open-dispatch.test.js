@@ -310,6 +310,19 @@ test("faixa especulativa libera a segunda mensagem sem esperar o ACK da primeira
   }
 });
 
+test("conexão aquecida libera a faixa paralela sem histórico de três disparos", () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.monitoringMode = "target";
+    bot.status = "connected";
+    bot.internalWarmState = "ready";
+    bot.lastInternalWarmAt = new Date().toISOString();
+    assert.equal(bot.shouldUseSpeculativeSecondLane("automatic"), true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("disparo reconstrói envelope com ID e timestamp novos", async () => {
   const { bot, directory } = createBot();
   try {

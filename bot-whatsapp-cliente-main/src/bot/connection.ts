@@ -3587,7 +3587,10 @@ export class BotService extends EventEmitter {
     input.timeline.totalDurationMs = Math.max(0, finishedAt - input.sendStartedAt);
 
     if (confirmed === input.total) {
-      this.logger.info(`Disparo modo corrida aceito pelo servidor em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
+      this.logger.info(
+        `Confirmação final do WhatsApp em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}. ` +
+        `Primeiro relay saiu em ${input.timeline.firstRelayCallMs ?? 0}ms.`
+      );
     } else {
       this.logger.warning(`Disparo modo corrida terminou com atenção em ${input.timeline.totalDurationMs}ms: ${confirmed}/${input.total}.`);
     }
@@ -3977,14 +3980,10 @@ export class BotService extends EventEmitter {
       return false;
     }
 
-    const recent = this.telemetryStore.all()
-      .filter((event) => event.mode === "target" && event.total > 1)
-      .slice(0, 5);
-    if (recent.length < 3) return false;
-    return recent.every((event) =>
-      event.confirmed === event.total &&
-      event.notAcceptableCount === 0
-    );
+    // A conexão já está aquecida: não aguarde três corridas anteriores para
+    // liberar a segunda rota. Ela sai 18ms depois da primeira chamada; qualquer
+    // recusa continua coberta pelo retry, sem atrasar a rota que abriu a corrida.
+    return true;
   }
 
   private maybeAlertNotAcceptable(count: number) {
