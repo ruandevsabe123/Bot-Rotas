@@ -29,9 +29,10 @@ function createBot() {
   return { bot, directory };
 }
 
-test("aquecimento obrigatório prepara sessões sem enviar mensagem real", async () => {
+test("aquecimento interno continua ativo mesmo com monitoramento parado", async () => {
   const { bot, directory } = createBot();
   try {
+    bot.monitoringEnabled = false;
     const calls = { devices: 0, sessions: 0, senderKey: 0, relay: 0, presence: 0 };
     bot.sock = {
       authState: {

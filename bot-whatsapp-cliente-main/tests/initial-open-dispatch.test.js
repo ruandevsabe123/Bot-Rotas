@@ -43,6 +43,40 @@ test("dispara imediatamente ao armar se o grupo já estiver aberto", () => {
   }
 });
 
+test("disparo manual aquece o grupo antes de usar o relay quando estava frio", async () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.configStore.save({
+      grupoAlvoJid: "motoristas@g.us",
+      grupoAlvoNome: "Motoristas",
+      nomeEnvio: "Cliente",
+      codigosMensagensAlvo: ["F-14"]
+    });
+    bot.status = "connected";
+    bot.sock = {};
+    let warmCalls = 0;
+    let dispatched = false;
+    bot.runWarmKeepAlive = async () => {
+      warmCalls += 1;
+      bot.internalWarmState = "ready";
+      bot.lastInternalWarmAt = new Date().toISOString();
+      return true;
+    };
+    bot.refreshGroupMetadata = async () => ({ announce: false });
+    bot.prepareSendPlan = () => true;
+    bot.enviarMensagensRapidas = () => {
+      dispatched = true;
+      return true;
+    };
+
+    assert.equal(await bot.manualDispatch(), true);
+    assert.equal(warmCalls, 1);
+    assert.equal(dispatched, true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("primeira mensagem não espera a adaptação aplicada à segunda", async () => {
   const { bot, directory } = createBot();
   try {

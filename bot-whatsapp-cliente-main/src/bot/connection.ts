@@ -893,6 +893,19 @@ export class BotService extends EventEmitter {
       return false;
     }
 
+    // O clique manual não pode pular a preparação criptográfica. Em grupos
+    // grandes, disparar frio faz o relay gastar segundos criando sessões e
+    // gravando chaves antes de alcançar o socket.
+    if (this.getCurrentInternalWarmState() !== "ready") {
+      this.logger.info("Preparando criptografia do grupo antes do disparo manual...");
+      const warmed = await this.runWarmKeepAlive("armado");
+      if (!warmed || this.getCurrentInternalWarmState() !== "ready") {
+        this.logger.warning("Disparo manual aguardando preparação interna. Tente novamente quando o painel indicar conexão aquecida.");
+        this.emitSnapshot();
+        return false;
+      }
+    }
+
     try {
       const metadata = await this.refreshGroupMetadata(targetJid);
       this.groupState = metadata?.announce === false ? "open" : "closed";
@@ -1259,7 +1272,9 @@ export class BotService extends EventEmitter {
     if (this.sock && this.status === "connected") {
       await this.resolveConfiguredGroup();
     }
-    if (this.monitoringEnabled) void this.startWarmKeepAlive("armado");
+    // O grupo pode ser trocado pouco antes de um disparo manual. Aquece em
+    // segundo plano mesmo com o monitoramento parado para não iniciar frio.
+    void this.startWarmKeepAlive("armado");
 
     this.emitSnapshot();
   }
@@ -1855,18 +1870,16 @@ export class BotService extends EventEmitter {
         this.reportPendingDispatchesAfterBoot();
         await this.loadGroups();
         await this.resolveConfiguredGroup();
+        const reconnectWarmup = this.startWarmKeepAlive("reconexão");
         if (this.monitoringEnabled) {
           await this.captureInitialGroupState();
           this.startHealthCheck();
-          const reconnectWarmup = this.startWarmKeepAlive("reconexão");
           if (this.groupState !== "open") {
             await this.waitForInitialInternalWarmup(reconnectWarmup);
           }
           this.logger.success("Monitoramento restaurado após reconexão.");
           const recoveryHandled = await this.resumeOcrDispatchAfterReconnect();
           if (!recoveryHandled) this.dispatchIfGroupAlreadyOpen("reconexão");
-        } else {
-          void this.prewarmConnectionSafely("Pré-aquecendo sessão após conexão...");
         }
         this.logger.info("Aguardando abertura do grupo.");
       } catch (error) {
@@ -2219,7 +2232,7 @@ export class BotService extends EventEmitter {
     this.lastSenderKeyWarmAt = 0;
     this.invalidateInternalWarmState();
 
-    if (!this.monitoringEnabled || this.criticalDispatchInProgress || !this.sock) return;
+    if (this.criticalDispatchInProgress || !this.sock) return;
 
     this.deferSecondarySocketTask(() => {
       void this.runWarmKeepAlive("timer");
@@ -4007,8 +4020,6 @@ export class BotService extends EventEmitter {
   private startWarmKeepAlive(reason: "armado" | "reconexão" = "armado") {
     this.clearWarmKeepAliveTimer();
     const config = this.configStore.load();
-    const mandatoryTargetWarm = this.monitoringEnabled && this.monitoringMode === "target";
-    if (!config.alwaysWarmMode && !mandatoryTargetWarm) return Promise.resolve(false);
 
     const intervalMs = this.getWarmKeepAliveIntervalMs(config);
     this.warmKeepAliveIntervalMs = intervalMs;
@@ -4025,13 +4036,7 @@ export class BotService extends EventEmitter {
     reason: "timer" | "armado" | "reconexão" = "timer",
     config = this.configStore.load()
   ) {
-    const mandatoryTargetWarm = this.monitoringEnabled && this.monitoringMode === "target";
-    if (
-      (!config.alwaysWarmMode && !mandatoryTargetWarm) ||
-      !this.monitoringEnabled ||
-      this.status !== "connected" ||
-      !this.sock
-    ) return false;
+    if (this.status !== "connected" || !this.sock) return false;
     if (this.criticalDispatchInProgress || this.activeSendCycle) return false;
     if (reason === "timer" && (this.processingImageIds.size > 0 || this.ocrRouteSelection.status === "analyzing")) {
       return false;

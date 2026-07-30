@@ -142,6 +142,7 @@ const panelUsers = mergeStoredUsers(parsePanelUsers(
   process.env.PANEL_USERS,
   configuredAdminEmails
 ), panelUserStore.all(), configuredAdminEmails);
+const isolatedClientEmail = String(process.env.ISOLATED_CLIENT_EMAIL || "").trim().toLowerCase();
 const pushNotificationStore = new PushNotificationStore(
   path.join(dataDir, "push_notifications.json"),
   { publicKey: process.env.WEB_PUSH_PUBLIC_KEY, privateKey: process.env.WEB_PUSH_PRIVATE_KEY },
@@ -162,6 +163,13 @@ if (!process.env.PANEL_SESSION_SECRET) {
   console.warn("PANEL_SESSION_SECRET não configurado. Sessões serão invalidadas a cada restart.");
 }
 console.log("Painel de usuarios habilitados:", Array.from(panelUsers.keys()).join(", ") || "nenhum");
+if (isolatedClientEmail) {
+  if (!panelUsers.has(isolatedClientEmail)) {
+    console.error(`ISOLATED_CLIENT_EMAIL não existe em PANEL_USERS: ${isolatedClientEmail}`);
+  } else {
+    console.log(`Modo isolado ativo: somente o bot de ${isolatedClientEmail} será iniciado neste serviço.`);
+  }
+}
 console.log("Administradores do painel:", Array.from(panelUsers.entries()).filter(([, user]) => user.role === "admin").map(([email]) => email).join(", ") || "nenhum");
 if (!configuredAdminEmails.size && !Array.from(panelUsers.values()).some((user) => user.role === "admin")) {
   console.error("Nenhum administrador configurado. Use PANEL_ADMIN_EMAILS ou marque um usuário com :admin em PANEL_USERS.");
@@ -259,6 +267,9 @@ async function renameUserStorage(oldEmail: string, nextEmail: string) {
 
 function getBotForEmail(email: string) {
   const normalizedEmail = email.toLowerCase();
+  if (isolatedClientEmail && normalizedEmail !== isolatedClientEmail) {
+    throw new Error("Este serviço está isolado para outro cliente.");
+  }
   const existing = bots.get(normalizedEmail);
   if (existing) return existing;
 
@@ -444,11 +455,11 @@ function getAuthorizedEmail(request: http.IncomingMessage) {
   const token = String(request.headers["x-panel-token"] || "").trim();
   const password = String(request.headers["x-panel-password"] || "").trim();
   const tokenEmail = verifySessionToken(token);
-  if (tokenEmail) return tokenEmail;
+  if (tokenEmail && isEmailAllowedOnThisService(tokenEmail)) return tokenEmail;
 
   if (password) {
     for (const [email, expected] of panelUsers.entries()) {
-      if (!expected.blocked && expected.password === password) return email;
+      if (!expected.blocked && expected.password === password && isEmailAllowedOnThisService(email)) return email;
     }
   }
 
@@ -457,7 +468,7 @@ function getAuthorizedEmail(request: http.IncomingMessage) {
 
 function getAuthorizedEmailFromUrl(url: URL) {
   const tokenEmail = verifySessionToken(String(url.searchParams.get("token") || "").trim());
-  if (tokenEmail && !panelUsers.get(tokenEmail)?.blocked) return tokenEmail;
+  if (tokenEmail && !panelUsers.get(tokenEmail)?.blocked && isEmailAllowedOnThisService(tokenEmail)) return tokenEmail;
   return undefined;
 }
 
@@ -503,9 +514,17 @@ function requireAdmin(email: string, response: http.ServerResponse) {
 }
 
 function getClientEmails() {
+  if (isolatedClientEmail) {
+    const isolatedUser = panelUsers.get(isolatedClientEmail);
+    return isolatedUser?.role === "client" ? [isolatedClientEmail] : [];
+  }
   return Array.from(panelUsers.entries())
     .filter(([, user]) => user.role !== "admin")
     .map(([email]) => email);
+}
+
+function isEmailAllowedOnThisService(email: string) {
+  return !isolatedClientEmail || email.toLowerCase() === isolatedClientEmail;
 }
 
 function toUserSummary(email: string, user: PanelUserRecord) {
@@ -1098,7 +1117,7 @@ const server = http.createServer(async (request, response) => {
         return;
       }
       const expectedPassword = panelUsers.get(email);
-      if (!email || !expectedPassword || password !== expectedPassword.password) {
+      if (!email || !expectedPassword || password !== expectedPassword.password || !isEmailAllowedOnThisService(email)) {
         sendJson(response, 401, { error: "Email ou senha invalidos." });
         return;
       }
