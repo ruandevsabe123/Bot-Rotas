@@ -23,6 +23,8 @@ test("dispara imediatamente ao armar se o grupo já estiver aberto", () => {
   try {
     bot.monitoringEnabled = true;
     bot.monitoringMode = "target";
+    bot.status = "connected";
+    bot.sock = {};
     bot.groupState = "open";
     bot.preparedTargetDispatchMode = "manual";
     bot.preparedTargetJid = "motoristas@g.us";
@@ -65,13 +67,24 @@ test("primeira mensagem não espera a adaptação aplicada à segunda", async ()
     bot.addStatusEvent = () => undefined;
 
     const startedAt = Date.now();
+    const timeline = {
+      eventDetectedAt: new Date(startedAt).toISOString(),
+      sendStartedAt: new Date(startedAt).toISOString(),
+      detectionDelayMs: 0,
+      timeoutUsed: false,
+      retryUsed: false,
+      notAcceptableCount: 0,
+      mode: "race",
+      events: []
+    };
     const dispatch = bot.sendAggressiveTargetSequence(
       "motoristas@g.us",
       ["Cliente A-1", "Cliente A-2"],
       7,
       startedAt,
       startedAt,
-      "automatic"
+      "automatic",
+      timeline
     );
 
     assert.equal(calls.length, 1);
@@ -81,6 +94,217 @@ test("primeira mensagem não espera a adaptação aplicada à segunda", async ()
     assert.equal(calls.length, 2);
     assert.equal(calls[1].id, "second");
     assert.ok(calls[1].at - calls[0].at >= 60);
+    assert.ok(timeline.firstAckMs < 60);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("pré-aquece dispositivos e sessões do grupo sem repetir enquanto o cache está fresco", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const calls = { devices: 0, sessions: 0 };
+    bot.sock = {
+      getUSyncDevices: async (participants, useCache) => {
+        calls.devices += 1;
+        assert.equal(useCache, true);
+        return participants.map((jid, index) => ({ jid: `${index}:${jid}` }));
+      },
+      assertSessions: async (devices, force) => {
+        calls.sessions += 1;
+        assert.equal(devices.length, 3);
+        assert.equal(force, false);
+        return true;
+      }
+    };
+    const metadata = {
+      id: "motoristas@g.us",
+      participants: [
+        { id: "1@s.whatsapp.net" },
+        { id: "2@s.whatsapp.net" },
+        { id: "3@s.whatsapp.net" }
+      ]
+    };
+
+    assert.equal(await bot.prewarmGroupCrypto(metadata), true);
+    assert.equal(await bot.prewarmGroupCrypto(metadata), true);
+    assert.deepEqual(calls, { devices: 1, sessions: 1 });
+    assert.equal(bot.warmedGroupDeviceCount, 3);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("mudança de participantes invalida metadados e refaz o aquecimento criptográfico", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const groupJid = "motoristas@g.us";
+    let warmed = 0;
+    bot.activeConnectionId = 4;
+    bot.monitoringEnabled = true;
+    bot.preparedTargetJid = groupJid;
+    bot.sock = {};
+    bot.groupMetadataCache.set(groupJid, { id: groupJid, participants: [] });
+    bot.warmedGroupParticipantSignature = "antiga";
+    bot.lastGroupCryptoWarmAt = Date.now();
+    bot.warmedGroupDeviceCount = 10;
+    bot.deferSecondarySocketTask = (task) => task();
+    bot.runWarmKeepAlive = async (reason) => {
+      assert.equal(reason, "timer");
+      warmed += 1;
+      return true;
+    };
+
+    bot.handleGroupParticipantsUpdate({ id: groupJid, action: "add" }, 4);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(bot.groupMetadataCache.has(groupJid), false);
+    assert.equal(bot.warmedGroupParticipantSignature, "");
+    assert.equal(bot.warmedGroupDeviceCount, 0);
+    assert.equal(bot.internalWarmState, "cold");
+    assert.equal(warmed, 1);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("segunda mensagem só usa o socket depois do ACK da primeira", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const calls = [];
+    let releaseFirst;
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 11;
+    bot.adaptiveOpeningSettleMs = 0;
+    bot.sock = {
+      relayMessage: async (_jid, _message, options) => {
+        calls.push(options.messageId);
+        if (options.messageId === "first") {
+          await new Promise((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      }
+    };
+    bot.preparedRelayMessages = [
+      { key: { id: "first" }, message: { conversation: "Cliente A-1" } },
+      { key: { id: "second" }, message: { conversation: "Cliente A-2" } }
+    ];
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const dispatch = bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1", "Cliente A-2"],
+      11
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls, ["first"]);
+
+    releaseFirst();
+    await dispatch;
+    assert.deepEqual(calls, ["first", "second"]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("primeiro relay começa antes de construir o envelope da segunda mensagem", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const order = [];
+    let releaseFirst;
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 12;
+    bot.sock = {
+      relayMessage: async (_jid, _message, options) => {
+        order.push(`relay:${options.messageId}`);
+        if (options.messageId === "first") {
+          await new Promise((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      }
+    };
+    bot.preparedRelayMessages = [
+      { key: { id: "first" }, message: { conversation: "Cliente A-1" } }
+    ];
+    bot.buildRelayTextMessage = (_sock, _jid, message) => {
+      order.push(`build:${message}`);
+      return { key: { id: "second" }, message: { conversation: message } };
+    };
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const dispatch = bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1", "Cliente A-2"],
+      12
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.deepEqual(order, ["relay:first", "build:Cliente A-2"]);
+    releaseFirst();
+    await dispatch;
+    assert.deepEqual(order, ["relay:first", "build:Cliente A-2", "relay:second"]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("faixa especulativa libera a segunda mensagem sem esperar o ACK da primeira", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const calls = [];
+    let releaseFirst;
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 13;
+    bot.shouldUseSpeculativeSecondLane = () => true;
+    bot.sock = {
+      relayMessage: async (_jid, _message, options) => {
+        calls.push(options.messageId);
+        if (options.messageId === "first") {
+          await new Promise((resolve) => {
+            releaseFirst = resolve;
+          });
+        }
+      }
+    };
+    bot.preparedRelayMessages = [
+      { key: { id: "first" }, message: { conversation: "Cliente A-1" } },
+      { key: { id: "second" }, message: { conversation: "Cliente A-2" } }
+    ];
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const timeline = bot.createDispatchTimeline(Date.now(), Date.now(), "race", "group_update");
+    const dispatch = bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1", "Cliente A-2"],
+      13,
+      Date.now(),
+      Date.now(),
+      "automatic",
+      timeline
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+
+    assert.deepEqual(calls, ["first", "second"]);
+    assert.equal(timeline.secondLaneMode, "speculative");
+    releaseFirst();
+    await dispatch;
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -208,6 +432,8 @@ test("imagem nova dispara assim que fica pronta com o grupo aberto", async () =>
   try {
     bot.monitoringEnabled = true;
     bot.monitoringMode = "target";
+    bot.status = "connected";
+    bot.sock = {};
     bot.groupState = "open";
     bot.preparedTargetDispatchMode = "ocr";
     bot.preparedTargetJid = "motoristas@g.us";

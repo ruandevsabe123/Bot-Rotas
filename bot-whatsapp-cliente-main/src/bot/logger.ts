@@ -5,6 +5,7 @@ import { BotLog, LogLevel } from "../shared/types";
 export class BotLogger {
   private logs: BotLog[] = [];
   private flushTimer?: NodeJS.Timeout;
+  private saveInFlight?: Promise<void>;
   private dirty = false;
 
   constructor(private readonly onChange?: () => void, private readonly filePath?: string) {
@@ -75,6 +76,10 @@ export class BotLogger {
 
   flush() {
     if (!this.filePath) return;
+    if (this.saveInFlight) {
+      this.dirty = true;
+      return;
+    }
     this.dirty = false;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
@@ -89,8 +94,26 @@ export class BotLogger {
     this.dirty = true;
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined;
       if (!this.dirty) return;
-      this.flush();
+      this.saveInBackground();
     }, delayMs);
+  }
+
+  private saveInBackground() {
+    if (!this.filePath || this.saveInFlight) return;
+    this.dirty = false;
+    const payload = JSON.stringify(this.logs, null, 2);
+    const directory = path.dirname(this.filePath);
+
+    this.saveInFlight = fs.promises.mkdir(directory, { recursive: true })
+      .then(() => fs.promises.writeFile(this.filePath!, payload))
+      .catch(() => {
+        this.dirty = true;
+      })
+      .finally(() => {
+        this.saveInFlight = undefined;
+        if (this.dirty) this.scheduleSave();
+      });
   }
 }

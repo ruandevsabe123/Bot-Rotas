@@ -12,6 +12,8 @@ export type StoredPanelUser = {
   updatedAt: string;
   lastLoginAt?: string;
   lastSeenAt?: string;
+  lastSeenReleaseId?: string;
+  lastSeenReleaseAt?: string;
   totalUsageMs: number;
   loginHistory: LoginEvent[];
 };
@@ -114,6 +116,27 @@ export class PanelUserStore {
     );
   }
 
+  acknowledgeRelease(email: string, releaseId: string) {
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedReleaseId = releaseId.trim();
+    if (!normalizedEmail || !normalizedReleaseId) return undefined;
+
+    const now = new Date().toISOString();
+    let updatedUser: StoredPanelUser | undefined;
+    const users = this.load().map((user) => {
+      if (user.email !== normalizedEmail) return user;
+      updatedUser = {
+        ...user,
+        lastSeenReleaseId: normalizedReleaseId,
+        lastSeenReleaseAt: now,
+        updatedAt: now
+      };
+      return updatedUser;
+    });
+    if (updatedUser) this.save(users);
+    return updatedUser;
+  }
+
   private load(): StoredPanelUser[] {
     if (!fs.existsSync(this.filePath)) return [];
 
@@ -143,6 +166,8 @@ export class PanelUserStore {
       updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : now,
       lastLoginAt: typeof input.lastLoginAt === "string" ? input.lastLoginAt : undefined,
       lastSeenAt: typeof input.lastSeenAt === "string" ? input.lastSeenAt : undefined,
+      lastSeenReleaseId: typeof input.lastSeenReleaseId === "string" ? input.lastSeenReleaseId : undefined,
+      lastSeenReleaseAt: typeof input.lastSeenReleaseAt === "string" ? input.lastSeenReleaseAt : undefined,
       totalUsageMs: Number(input.totalUsageMs || 0),
       loginHistory: Array.isArray(input.loginHistory)
         ? input.loginHistory.map((event: any) => ({

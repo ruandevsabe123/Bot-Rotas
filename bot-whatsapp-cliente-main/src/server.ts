@@ -5,19 +5,21 @@ import path from "path";
 import crypto from "crypto";
 import QRCode from "qrcode";
 import qrcodeTerminal from "qrcode-terminal";
-import { BotService, DEFAULT_LEADER_CONTACTS } from "./bot/connection";
-import { shutdownIsolatedOcrWorker } from "./bot/ocrIsolated";
+import { BotProcessProxy } from "./bot/botProcessProxy";
+import { DEFAULT_LEADER_CONTACTS } from "./bot/leaderDefaults";
 import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderStore";
 import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
 import { ImageUsageStore } from "./imageUsageStore";
 import { PushNotificationStore } from "./pushNotificationStore";
+import { getCurrentRelease } from "./releaseNotes";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
-import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
+import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 180;
+const IMPERSONATION_SESSION_TTL_MS = 1000 * 60 * 60 * 4;
 const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
 const DAILY_SESSION_RESET_HOUR = Number(process.env.DAILY_SESSION_RESET_HOUR || 0);
 const DAILY_SESSION_RESET_MINUTE = Number(process.env.DAILY_SESSION_RESET_MINUTE || 0);
@@ -50,6 +52,7 @@ function resolveDataDir() {
 }
 
 const dataDir = resolveDataDir();
+const currentRelease = getCurrentRelease();
 
 type PanelUserRecord = {
   password: string;
@@ -60,6 +63,8 @@ type PanelUserRecord = {
   updatedAt: string;
   lastLoginAt?: string;
   lastSeenAt?: string;
+  lastSeenReleaseId?: string;
+  lastSeenReleaseAt?: string;
   totalUsageMs: number;
   loginHistory: StoredPanelUser["loginHistory"];
 };
@@ -167,16 +172,16 @@ type Client = {
   response: http.ServerResponse;
 };
 
-const bots = new Map<string, BotService>();
+const bots = new Map<string, BotProcessProxy>();
 const clients = new Set<Client>();
 const adminClients = new Set<http.ServerResponse>();
 const lastSnapshotState = new Map<string, { qrCode: string; logId: string }>();
 const lastCriticalBotState = new Map<string, { status: string; monitoringEnabled: boolean; analysisKey: string; incidentId: string }>();
 let lastAdminPendingRouteIds: Set<string> | undefined;
-const pendingSnapshotBots = new Map<string, BotService>();
+const pendingSnapshotBots = new Map<string, BotProcessProxy>();
 let snapshotFanoutScheduled = false;
 
-function scheduleSnapshotFanout(email: string, bot: BotService) {
+function scheduleSnapshotFanout(email: string, bot: BotProcessProxy) {
   pendingSnapshotBots.set(email, bot);
   if (snapshotFanoutScheduled) return;
 
@@ -187,14 +192,25 @@ function scheduleSnapshotFanout(email: string, bot: BotService) {
     pendingSnapshotBots.clear();
     if (!pending.length) return;
 
-    for (const [pendingEmail, pendingBot] of pending) {
+    const ready = pending.filter(([, pendingBot]) => !pendingBot.isCriticalDispatchActive());
+    const delayed = pending.filter(([, pendingBot]) => pendingBot.isCriticalDispatchActive());
+    for (const [pendingEmail, pendingBot] of ready) {
       handleCriticalBotNotifications(pendingEmail, pendingBot.getSnapshot());
       broadcastSnapshot(pendingEmail);
       logSnapshot(pendingEmail);
     }
-    // O painel administrativo agrega todos os clientes. Atualize uma vez por
-    // ciclo, mesmo quando vários sockets emitirem snapshots juntos.
-    broadcastAdminSnapshot();
+    const anyCriticalDispatch = Array.from(bots.values()).some((bot) => bot.isCriticalDispatchActive());
+    if (ready.length && !anyCriticalDispatch) {
+      // O painel administrativo agrega todos os clientes. Atualize uma vez por
+      // ciclo, mesmo quando vários sockets emitirem snapshots juntos.
+      broadcastAdminSnapshot();
+    }
+    if (delayed.length) {
+      const retryTimer = setTimeout(() => {
+        for (const [pendingEmail, pendingBot] of delayed) scheduleSnapshotFanout(pendingEmail, pendingBot);
+      }, 75);
+      retryTimer.unref?.();
+    }
   });
 }
 
@@ -215,7 +231,7 @@ async function renameUserStorage(oldEmail: string, nextEmail: string) {
 
   const existingBot = bots.get(oldEmail);
   if (existingBot) {
-    await existingBot.stop().catch(() => undefined);
+    await existingBot.shutdown().catch(() => undefined);
     bots.delete(oldEmail);
   }
 
@@ -268,7 +284,7 @@ function getBotForEmail(email: string) {
     }
   }
 
-  const nextBot = new BotService({
+  const nextBot = new BotProcessProxy({
     authDir: userAuthDir,
     configPath: userConfigPath,
     routeStorePath: userRouteStorePath,
@@ -382,12 +398,22 @@ function signPayload(payload: string) {
   return crypto.createHmac("sha256", panelSessionSecret).update(payload).digest("base64url");
 }
 
-function createSessionToken(email: string) {
-  const payload = base64Url(JSON.stringify({ email, exp: Date.now() + SESSION_TTL_MS }));
+type PanelSessionClaims = {
+  email: string;
+  exp: number;
+  impersonatedBy?: string;
+};
+
+function createSessionToken(email: string, impersonatedBy?: string) {
+  const payload = base64Url(JSON.stringify({
+    email,
+    exp: Date.now() + (impersonatedBy ? IMPERSONATION_SESSION_TTL_MS : SESSION_TTL_MS),
+    impersonatedBy: impersonatedBy || undefined
+  }));
   return `${payload}.${signPayload(payload)}`;
 }
 
-function verifySessionToken(token: string): string | undefined {
+function verifySessionClaims(token: string): PanelSessionClaims | undefined {
   const [payload, signature] = token.split(".");
   if (!payload || !signature) return undefined;
   const expected = signPayload(payload);
@@ -397,10 +423,20 @@ function verifySessionToken(token: string): string | undefined {
     if (!crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return undefined;
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     const email = String(parsed.email || "").toLowerCase();
-    return email && panelUsers.has(email) && Number(parsed.exp) > Date.now() ? email : undefined;
+    const impersonatedBy = String(parsed.impersonatedBy || "").trim().toLowerCase() || undefined;
+    if (!email || !panelUsers.has(email) || Number(parsed.exp) <= Date.now()) return undefined;
+    return { email, exp: Number(parsed.exp), impersonatedBy };
   } catch {
     return undefined;
   }
+}
+
+function verifySessionToken(token: string): string | undefined {
+  return verifySessionClaims(token)?.email;
+}
+
+function getSessionClaims(request: http.IncomingMessage) {
+  return verifySessionClaims(String(request.headers["x-panel-token"] || "").trim());
 }
 
 function getAuthorizedEmail(request: http.IncomingMessage) {
@@ -573,11 +609,11 @@ function getAdminRoutesSnapshot(): AdminRoutesSnapshot {
   };
 }
 
-function validateAdminRoute(routeId: string, adminEmail: string) {
+async function validateAdminRoute(routeId: string, adminEmail: string) {
   for (const email of getClientEmails()) {
     const bot = getBotForEmail(email);
     const route = bot.getRoutes().find((item) => item.id === routeId);
-    if (bot.validateRoute(routeId, adminEmail)) {
+    if (await bot.validateRoute(routeId, adminEmail)) {
       imageUsageStore.decideForRoute(route?.ocr?.analysisId, routeId, "billable", adminEmail);
       return true;
     }
@@ -585,11 +621,11 @@ function validateAdminRoute(routeId: string, adminEmail: string) {
   return false;
 }
 
-function rejectAdminRoute(routeId: string, adminEmail: string, reason?: string) {
+async function rejectAdminRoute(routeId: string, adminEmail: string, reason?: string) {
   for (const email of getClientEmails()) {
     const bot = getBotForEmail(email);
     const route = bot.getRoutes().find((item) => item.id === routeId);
-    if (bot.rejectRoute(routeId, adminEmail, reason)) {
+    if (await bot.rejectRoute(routeId, adminEmail, reason)) {
       imageUsageStore.decideForRoute(route?.ocr?.analysisId, routeId, "excluded", adminEmail);
       return true;
     }
@@ -597,12 +633,12 @@ function rejectAdminRoute(routeId: string, adminEmail: string, reason?: string) 
   return false;
 }
 
-function bulkDecideAdminRoutes(routeIds: string[], adminEmail: string, decision: "validate" | "reject", reason?: string) {
+async function bulkDecideAdminRoutes(routeIds: string[], adminEmail: string, decision: "validate" | "reject", reason?: string) {
   let changed = 0;
   for (const routeId of routeIds) {
     const ok = decision === "validate"
-      ? validateAdminRoute(routeId, adminEmail)
-      : rejectAdminRoute(routeId, adminEmail, reason);
+      ? await validateAdminRoute(routeId, adminEmail)
+      : await rejectAdminRoute(routeId, adminEmail, reason);
     if (ok) changed += 1;
   }
   return changed;
@@ -668,11 +704,9 @@ function getClientSnapshot(email: string) {
   };
 }
 
-function broadcastLeadersToBots() {
+async function broadcastLeadersToBots() {
   const leaders = leaderStore.all();
-  for (const bot of bots.values()) {
-    bot.setLeaderContacts(leaders);
-  }
+  await Promise.all(Array.from(bots.values()).map((bot) => bot.setLeaderContacts(leaders)));
   broadcastAdminSnapshot();
 }
 
@@ -682,7 +716,7 @@ function getMaintenanceEmails(clientEmail?: string) {
   return getClientEmails();
 }
 
-function clearAdminMaintenanceData(target: string, clientEmail?: string) {
+async function clearAdminMaintenanceData(target: string, clientEmail?: string) {
   const emails = getMaintenanceEmails(clientEmail);
   const clearLogs = target === "logs" || target === "all";
   const clearRoutes = target === "routes" || target === "all";
@@ -693,11 +727,11 @@ function clearAdminMaintenanceData(target: string, clientEmail?: string) {
   }
 
   if (clearLogs || clearRoutes) {
-    for (const email of emails) {
+    await Promise.all(emails.map(async (email) => {
       const bot = getBotForEmail(email);
-      if (clearLogs) bot.clearLogs(true);
-      if (clearRoutes) bot.clearRouteHistory(true);
-    }
+      if (clearLogs) await bot.clearLogs(true);
+      if (clearRoutes) await bot.clearRouteHistory(true);
+    }));
   }
 
   if (clearSupport) {
@@ -723,7 +757,7 @@ function sendAdminPush(notification: Parameters<PushNotificationStore["sendToRol
   void pushNotificationStore.sendToRole("admin", notification).catch((error) => console.error("Falha ao enviar notificação ao admin:", error));
 }
 
-function handleCriticalBotNotifications(email: string, snapshot: ReturnType<BotService["getSnapshot"]>) {
+function handleCriticalBotNotifications(email: string, snapshot: BotSnapshot) {
   const selection = snapshot.ocrRouteSelection;
   const analysisKey = selection?.processedAt ? `${selection.status}:${selection.processedAt}` : "";
   const incident = (snapshot.routeDispatches || []).find((route) => route.clientIncident?.required && !route.clientIncident.answeredAt);
@@ -807,7 +841,7 @@ function logSnapshot(email: string) {
   console.log("------------------------------------");
 }
 
-async function handleAction(bot: BotService, action: string, body: any) {
+async function handleAction(bot: BotProcessProxy, action: string, body: any) {
   switch (action) {
     case "start":
       await bot.start();
@@ -821,14 +855,14 @@ async function handleAction(bot: BotService, action: string, body: any) {
     case "clear-session":
       await bot.clearSession();
       break;
-    case "request-pairing-code":
-      await bot.requestPairingCode(String(body.phoneNumber || ""));
+    case "refresh-qr":
+      await bot.refreshQrCode();
       break;
     case "factory-reset":
       await bot.factoryReset();
       break;
     case "clear-logs":
-      bot.clearLogs();
+      await bot.clearLogs();
       break;
     case "refresh-groups":
       await bot.refreshGroups();
@@ -846,10 +880,10 @@ async function handleAction(bot: BotService, action: string, body: any) {
       await bot.enableTestMonitoring();
       break;
     case "stop-monitoring":
-      bot.disableMonitoring();
+      await bot.disableMonitoring();
       break;
     case "simulate-opening":
-      bot.simulateOpening();
+      await bot.simulateOpening();
       break;
     case "manual-dispatch":
       await bot.manualDispatch();
@@ -870,11 +904,11 @@ async function handleAction(bot: BotService, action: string, body: any) {
       await bot.saveTestGroup(String(body.group || ""), body.groupId, body.groupName);
       break;
     case "save-codes":
-      bot.setMessageCodes(Array.isArray(body.codes) ? body.codes : []);
+      await bot.setMessageCodes(Array.isArray(body.codes) ? body.codes : []);
       break;
     case "save-message-settings":
     case "save-target-message-settings":
-      bot.setMessageSettings(
+      await bot.setMessageSettings(
         String(body.senderName || ""),
         Array.isArray(body.codes) ? body.codes : [],
         Array.isArray(body.routes) ? body.routes : undefined,
@@ -883,7 +917,7 @@ async function handleAction(bot: BotService, action: string, body: any) {
       );
       break;
     case "save-warmup-message-settings":
-      bot.setWarmupMessageSettings(
+      await bot.setWarmupMessageSettings(
         String(body.senderName || ""),
         Array.isArray(body.codes) ? body.codes : [],
         body.messageCount,
@@ -891,13 +925,13 @@ async function handleAction(bot: BotService, action: string, body: any) {
       );
       break;
     case "save-route-preset":
-      bot.saveRoutePreset(String(body.name || ""), Array.isArray(body.routes) ? body.routes : []);
+      await bot.saveRoutePreset(String(body.name || ""), Array.isArray(body.routes) ? body.routes : []);
       break;
     case "delete-route-preset":
-      bot.deleteRoutePreset(String(body.id || ""));
+      await bot.deleteRoutePreset(String(body.id || ""));
       break;
     case "save-general-settings":
-      bot.setGeneralSettings({
+      await bot.setGeneralSettings({
         nuclearMode: Boolean(body.nuclearMode),
         alwaysWarmMode: body.alwaysWarmMode,
         keepAliveIntervalMs: body.keepAliveIntervalMs,
@@ -905,13 +939,13 @@ async function handleAction(bot: BotService, action: string, body: any) {
       });
       break;
     case "confirm-ocr-routes":
-      bot.confirmOcrRouteSelection(Array.isArray(body.optionIds) ? body.optionIds : []);
+      await bot.confirmOcrRouteSelection(Array.isArray(body.optionIds) ? body.optionIds : []);
       break;
     case "submit-route-incident":
-      bot.submitClientIncident(String(body.routeId || ""), Boolean(body.valid), String(body.reason || ""));
+      await bot.submitClientIncident(String(body.routeId || ""), Boolean(body.valid), String(body.reason || ""));
       break;
     case "snooze-route-incident":
-      bot.snoozeClientIncident(String(body.routeId || ""));
+      await bot.snoozeClientIncident(String(body.routeId || ""));
       break;
     default:
       throw new Error(`Acao desconhecida: ${action}`);
@@ -1151,12 +1185,57 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "GET" && url.pathname === "/api/me") {
+      const session = getSessionClaims(request);
       sendJson(response, 200, {
         email: authorizedEmail,
         role: getUserRole(authorizedEmail),
         blocked: panelUsers.get(authorizedEmail)?.blocked,
-        color: panelUsers.get(authorizedEmail)?.color
+        color: panelUsers.get(authorizedEmail)?.color,
+        impersonatedBy: session?.email === authorizedEmail ? session.impersonatedBy : undefined
       });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/impersonation/return") {
+      const session = getSessionClaims(request);
+      const adminEmail = session?.impersonatedBy;
+      const admin = adminEmail ? panelUsers.get(adminEmail) : undefined;
+      if (!session || session.email !== authorizedEmail || !adminEmail || admin?.role !== "admin" || admin.blocked) {
+        sendJson(response, 403, { error: "Esta sessão não está no modo cliente de teste." });
+        return;
+      }
+      sendJson(response, 200, {
+        ok: true,
+        token: createSessionToken(adminEmail),
+        user: { email: adminEmail, role: admin.role, blocked: admin.blocked, color: admin.color }
+      });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/release") {
+      const user = panelUsers.get(authorizedEmail);
+      sendJson(response, 200, {
+        release: currentRelease,
+        shouldShow: Boolean(user && user.lastSeenReleaseId !== currentRelease.id)
+      });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/release/acknowledge") {
+      const body = await readJsonBody<{ releaseId?: string }>(request);
+      const releaseId = String(body.releaseId || "").trim();
+      if (releaseId !== currentRelease.id) {
+        sendJson(response, 409, { error: "Uma versão mais nova já está disponível. Atualize o painel." });
+        return;
+      }
+
+      const updatedUser = panelUserStore.acknowledgeRelease(authorizedEmail, releaseId);
+      if (!updatedUser) {
+        sendJson(response, 404, { error: "Usuário não encontrado." });
+        return;
+      }
+      syncPanelUser(updatedUser);
+      sendJson(response, 200, { ok: true });
       return;
     }
 
@@ -1211,8 +1290,8 @@ const server = http.createServer(async (request, response) => {
       }
       const decidedEntry = imageUsageStore.get(id);
       const linkedRoute = decidedEntry ? findRouteForImageUsage(decidedEntry) : undefined;
-      if (linkedRoute && decision === "billable") validateAdminRoute(linkedRoute.id, authorizedEmail);
-      if (linkedRoute && decision === "excluded") rejectAdminRoute(linkedRoute.id, authorizedEmail, body.note || "Análise de imagem excluída manualmente pelo admin.");
+      if (linkedRoute && decision === "billable") await validateAdminRoute(linkedRoute.id, authorizedEmail);
+      if (linkedRoute && decision === "excluded") await rejectAdminRoute(linkedRoute.id, authorizedEmail, body.note || "Análise de imagem excluída manualmente pelo admin.");
       broadcastAdminSnapshot();
       const entry = imageUsageStore.snapshot().entries.find((item) => item.id === id);
       if (entry) broadcastSnapshot(entry.clientEmail);
@@ -1253,9 +1332,36 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/admin/maintenance/clear") {
       if (!requireAdmin(authorizedEmail, response)) return;
       const body = await readJsonBody<{ target?: string; clientEmail?: string }>(request);
-      clearAdminMaintenanceData(String(body.target || ""), body.clientEmail);
+      await clearAdminMaintenanceData(String(body.target || ""), body.clientEmail);
       broadcastAdminSnapshot();
       sendJson(response, 200, getAdminMonitorSnapshot());
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/admin/impersonate") {
+      if (!requireAdmin(authorizedEmail, response)) return;
+      const body = await readJsonBody<{ email?: string }>(request);
+      const clientEmail = String(body.email || "").trim().toLowerCase();
+      const client = panelUsers.get(clientEmail);
+      if (!client || client.role !== "client") {
+        sendJson(response, 404, { error: "Usuário cliente não encontrado." });
+        return;
+      }
+      if (client.blocked) {
+        sendJson(response, 409, { error: "Desbloqueie o usuário de teste antes de entrar no modo cliente." });
+        return;
+      }
+      sendJson(response, 200, {
+        ok: true,
+        token: createSessionToken(clientEmail, authorizedEmail),
+        user: {
+          email: clientEmail,
+          role: client.role,
+          blocked: client.blocked,
+          color: client.color,
+          impersonatedBy: authorizedEmail
+        }
+      });
       return;
     }
 
@@ -1266,9 +1372,9 @@ const server = http.createServer(async (request, response) => {
       const isReject = url.pathname.endsWith("/reject");
       const routeId = decodeURIComponent(url.pathname.replace("/api/admin/routes/", "").replace(/\/validate$/, "").replace(/\/reject$/, ""));
       const changed = isValidate
-        ? validateAdminRoute(routeId, authorizedEmail)
+        ? await validateAdminRoute(routeId, authorizedEmail)
         : isReject
-        ? rejectAdminRoute(routeId, authorizedEmail, body.reason)
+        ? await rejectAdminRoute(routeId, authorizedEmail, body.reason)
         : false;
       if (!changed) {
         sendJson(response, 404, { error: "Rota não encontrada." });
@@ -1288,7 +1394,7 @@ const server = http.createServer(async (request, response) => {
         sendJson(response, 400, { error: "Informe routeIds e decision." });
         return;
       }
-      const changed = bulkDecideAdminRoutes(routeIds, authorizedEmail, decision, body.reason);
+      const changed = await bulkDecideAdminRoutes(routeIds, authorizedEmail, decision, body.reason);
       broadcastAdminSnapshot();
       sendJson(response, 200, { ...getAdminRoutesSnapshot(), changed });
       return;
@@ -1316,7 +1422,7 @@ const server = http.createServer(async (request, response) => {
       if (!requireAdmin(authorizedEmail, response)) return;
       const body = await readJsonBody<{ name?: string; phone?: string }>(request);
       leaderStore.upsert({ name: String(body.name || ""), phone: String(body.phone || "") });
-      broadcastLeadersToBots();
+      await broadcastLeadersToBots();
       sendJson(response, 200, { leaders: leaderStore.all() });
       return;
     }
@@ -1325,7 +1431,7 @@ const server = http.createServer(async (request, response) => {
       if (!requireAdmin(authorizedEmail, response)) return;
       const phone = decodeURIComponent(url.pathname.replace("/api/admin/leaders/", ""));
       leaderStore.remove(phone);
-      broadcastLeadersToBots();
+      await broadcastLeadersToBots();
       sendJson(response, 200, { leaders: leaderStore.all() });
       return;
     }
@@ -1426,7 +1532,7 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "POST" && url.pathname === "/api/romaneio/locate") {
-      sendJson(response, 200, activeBot!.locateRomaneioInGroup());
+      sendJson(response, 200, await activeBot!.locateRomaneioInGroup());
       return;
     }
 
@@ -1480,7 +1586,13 @@ const server = http.createServer(async (request, response) => {
         return;
       }
 
-      const svg = await QRCode.toString(snapshot.qrCode, { type: "svg", width: 320, margin: 2 });
+      const svg = await QRCode.toString(snapshot.qrCode, {
+        type: "svg",
+        width: 400,
+        margin: 4,
+        errorCorrectionLevel: "M",
+        color: { dark: "#000000", light: "#ffffff" }
+      });
       response.writeHead(200, {
         "Content-Type": "image/svg+xml",
         "Cache-Control": "no-store"
@@ -1530,8 +1642,7 @@ server.listen(port, "0.0.0.0", () => {
 
 async function shutdown() {
   console.log("Encerrando bots...");
-  await Promise.all(Array.from(bots.values()).map((item) => item.stop().catch(() => undefined)));
-  shutdownIsolatedOcrWorker();
+  await Promise.all(Array.from(bots.values()).map((item) => item.shutdown().catch(() => undefined)));
   server.close(() => process.exit(0));
 }
 

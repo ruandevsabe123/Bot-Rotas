@@ -14,6 +14,7 @@ import {
   Gauge,
   History,
   Inbox,
+  LogIn,
   LogOut,
   MessageSquareText,
   RefreshCw,
@@ -65,6 +66,7 @@ import { enableWebPushNotifications } from "../pushNotifications";
 type AdminCommandCenterProps = {
   userEmail: string;
   onLogout: () => void;
+  onEnterClientMode: (email: string) => void | Promise<void>;
 };
 
 type AdminPage = "today" | "dashboard" | "clients" | "validations" | "reactions" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
@@ -418,6 +420,13 @@ function RouteSidePanel({
             <dl className="adminx-kv">
               <dt>Modo corrida</dt><dd>{route.dispatchTimeline.mode === "race" ? "ativo" : "normal"}</dd>
               <dt>Gatilho mais rápido</dt><dd>{openingSignalLabel(route.dispatchTimeline.openingSignal)}</dd>
+              <dt>Armazenamento da sessão</dt><dd>{route.dispatchTimeline.authBackend === "sqlite" ? "SQLite transacional" : "Arquivos legados"}</dd>
+              <dt>Preparação interna</dt><dd>{route.dispatchTimeline.internalWarmState === "ready" ? "Aquecida" : route.dispatchTimeline.internalWarmState || "Não registrada"}</dd>
+              <dt>Dispositivos aquecidos</dt><dd>{route.dispatchTimeline.warmedDeviceCount ?? "Não registrado"}</dd>
+              <dt>RTT do socket</dt><dd>{formatMs(route.dispatchTimeline.socketRttMs)}</dd>
+              <dt>Leitura de chaves</dt><dd>{formatMs(route.dispatchTimeline.signalKeyReadMs)} ({route.dispatchTimeline.signalKeyReadOps || 0} operação(ões))</dd>
+              <dt>Gravação de chaves</dt><dd>{formatMs(route.dispatchTimeline.signalKeyWriteMs)} ({route.dispatchTimeline.signalKeyWriteOps || 0} operação(ões))</dd>
+              <dt>Segunda mensagem</dt><dd>{route.dispatchTimeline.secondLaneMode === "speculative" ? "Faixa rápida adaptativa" : "Protegida pelo ACK"}</dd>
               <dt>Timeout usado</dt><dd>{route.dispatchTimeline.timeoutUsed ? "sim" : "não"}</dd>
               <dt>Retry usado</dt><dd>{route.dispatchTimeline.retryUsed ? "sim" : "não"}</dd>
               <dt>Not acceptable</dt><dd>{route.dispatchTimeline.notAcceptableCount}</dd>
@@ -595,7 +604,7 @@ function ClientSidePanel({
   );
 }
 
-export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterProps) {
+export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: AdminCommandCenterProps) {
   const [routes, setRoutes] = useState<AdminRoutesSnapshot>(emptyRoutes);
   const [users, setUsers] = useState<AdminUsersSnapshot>(emptyUsers);
   const [support, setSupport] = useState<AdminSupportMessagesSnapshot>(emptySupport);
@@ -689,7 +698,26 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
   }, [streamState]);
 
   const clients = useMemo(() => users.users.filter((user) => user.role === "client"), [users.users]);
+  const clientModeTarget = useMemo(() => {
+    const selectedClient = clientFilter === "all"
+      ? undefined
+      : clients.find((client) => client.email === clientFilter);
+    if (selectedClient) return selectedClient;
+    return clients.find((client) => /(^|[._+@-])(test|teste)([._+@-]|$)/i.test(client.email));
+  }, [clientFilter, clients]);
   const period = useMemo(() => dateRangeMs(datePreset), [datePreset]);
+
+  async function enterClientMode() {
+    if (!clientModeTarget) return;
+    setBusy(true);
+    setError("");
+    try {
+      await onEnterClientMode(clientModeTarget.email);
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : "Não consegui abrir o modo cliente.");
+      setBusy(false);
+    }
+  }
 
   const visibleRoutes = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -1221,6 +1249,16 @@ export function AdminCommandCenter({ userEmail, onLogout }: AdminCommandCenterPr
             <StatusPill tone={streamState === "live" ? "green" : streamState === "fallback" ? "yellow" : "blue"}>
               {streamState === "live" ? "SSE ao vivo" : streamState === "fallback" ? "Polling" : "Conectando"}
             </StatusPill>
+            <button
+              className="button adminx-client-mode-button"
+              disabled={busy || !clientModeTarget}
+              type="button"
+              title={clientModeTarget ? `Entrar como ${clientModeTarget.email}` : "Selecione um cliente de teste no filtro"}
+              onClick={() => void enterClientMode()}
+            >
+              <LogIn size={17} />
+              Modo cliente
+            </button>
             <div className="adminx-notification-center">
               <button
                 aria-expanded={notificationCenterOpen}

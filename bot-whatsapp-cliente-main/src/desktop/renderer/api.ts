@@ -11,6 +11,7 @@ import {
   LeaderContact,
   PanelUser,
   PanelUserRole,
+  ReleaseNotice,
   RomaneioLocateResult,
   RomaneioSettings,
   RomaneioSnapshot,
@@ -99,6 +100,39 @@ export async function getPanelMe() {
   setPanelUserEmail(user.email);
   setPanelUserRole(user.role);
   return user;
+}
+
+export async function enterClientMode(email: string) {
+  const response = await fetchJson<{ token: string; user: PanelUser }>("/api/admin/impersonate", {
+    method: "POST",
+    body: JSON.stringify({ email })
+  });
+  setPanelToken(response.token);
+  setPanelUserEmail(response.user.email);
+  setPanelUserRole(response.user.role);
+  return response.user;
+}
+
+export async function returnToAdminMode() {
+  const response = await fetchJson<{ token: string; user: PanelUser }>("/api/impersonation/return", {
+    method: "POST",
+    body: "{}"
+  });
+  setPanelToken(response.token);
+  setPanelUserEmail(response.user.email);
+  setPanelUserRole(response.user.role);
+  return response.user;
+}
+
+export function getReleaseNotice() {
+  return fetchJson<ReleaseNotice>("/api/release");
+}
+
+export function acknowledgeRelease(releaseId: string) {
+  return fetchJson<{ ok: boolean }>("/api/release/acknowledge", {
+    method: "POST",
+    body: JSON.stringify({ releaseId })
+  });
 }
 
 export function getPushConfig() {
@@ -348,7 +382,7 @@ function createWebApi(): DesktopApi {
     stopBot: () => action("stop"),
     restartBot: () => action("restart"),
     clearSession: () => action("clear-session"),
-    requestPairingCode: (payload) => action("request-pairing-code", payload),
+    refreshQrCode: () => action("refresh-qr"),
     factoryReset: () => action("factory-reset"),
     clearLogs: () => action("clear-logs"),
     refreshGroups: () => action("refresh-groups"),

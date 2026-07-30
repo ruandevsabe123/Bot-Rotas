@@ -13,6 +13,8 @@ import { readRouteImageOcrWithoutBlockingSocket } from "./ocrIsolated";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
+import { useSqliteAuthState } from "./sqliteAuthState";
+import { DEFAULT_LEADER_CONTACTS } from "./leaderDefaults";
 import { RomaneioStore } from "../services/romaneio/romaneioStore";
 import { isPreferredImageCity, PREFERRED_IMAGE_CITY, rankImageRouteOptions } from "../services/romaneio/rankImageRoutes";
 import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, OcrRouteOption, OcrRouteSelectionState, RomaneioCandidate, RomaneioLocateResult, RomaneioRankedRoute, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
@@ -38,6 +40,9 @@ let generateMessageIDV2: any;
 let generateWAMessageFromContent: any;
 let downloadMediaMessage: any;
 let Browsers: any;
+let makeCacheableSignalKeyStore: any;
+let BufferJSON: any;
+let proto: any;
 let baileysLoadPromise: Promise<void> | undefined;
 
 function loadBaileys(): Promise<void> {
@@ -54,12 +59,15 @@ function loadBaileys(): Promise<void> {
     generateWAMessageFromContent = baileys.generateWAMessageFromContent;
     downloadMediaMessage = baileys.downloadMediaMessage;
     Browsers = baileys.Browsers;
+    makeCacheableSignalKeyStore = baileys.makeCacheableSignalKeyStore;
+    BufferJSON = baileys.BufferJSON;
+    proto = baileys.proto;
   })();
 
   return baileysLoadPromise;
 }
 
-type BotServiceOptions = {
+export type BotServiceOptions = {
   authDir?: string;
   configPath?: string;
   routeStorePath?: string;
@@ -85,11 +93,18 @@ const MAX_RECONNECT_DELAY_MS = 30000;
 const HEALTH_CHECK_INTERVAL_MS = 25000;
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
 const RACE_KEEP_ALIVE_INTERVAL_MS = 10000;
-const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 60000;
+const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000;
+const CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
+const SENDER_KEY_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
+const SOCKET_RTT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
+const ACTIVE_CHAT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
+const INTERNAL_WARM_READY_MAX_AGE_MS = 90 * 1000;
+const INITIAL_INTERNAL_WARM_WAIT_MS = 2200;
 const CRITICAL_KEEP_ALIVE_INTERVAL_MS = 5000;
 const SOCKET_KEEP_ALIVE_INTERVAL_MS = 10000;
 const SOCKET_CONNECT_TIMEOUT_MS = 15000;
 const SOCKET_QUERY_TIMEOUT_MS = 15000;
+export const QR_CODE_LIFETIME_MS = 60_000;
 const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
 // A primeira rota ganha acesso exclusivo ao socket; a segunda sai logo depois.
@@ -115,20 +130,7 @@ const CRITICAL_WINDOWS = [
   { start: "04:20", end: "08:00" },
   { start: "10:20", end: "14:00" }
 ];
-export const DEFAULT_LEADER_CONTACTS: LeaderContact[] = [
-  { name: "Gabriel Melo - Analista de Transporte", phone: "5511940670165" },
-  { name: "André Bomfim", phone: "5521998970947" },
-  { name: "Júlia Moura - Analista de Transporte", phone: "5522992143214" },
-  { name: "Gabriel Melo", phone: "5522996189621" },
-  { name: "Amanda - Analista De Transporte", phone: "5522997387295" },
-  { name: "Flávia De Azevedo Barreto", phone: "5522998597005" },
-  { name: "Henrique Nunes", phone: "5522999230394" },
-  { name: "André Bomfim - Analista de Transporte", phone: "5511913591907" },
-  { name: "Renato Balbino", phone: "5511945113460" },
-  { name: "flávia barreto", phone: "5511992561962" },
-  { name: "Thalles Lunga", phone: "5521967843028" },
-  { name: "Renato Balbino", phone: "5522998677384" }
-];
+export { DEFAULT_LEADER_CONTACTS } from "./leaderDefaults";
 
 function triggerLabelForEvent(trigger: RouteDispatch["trigger"]) {
   if (trigger === "manual") return "Disparo manual";
@@ -143,8 +145,9 @@ export class BotService extends EventEmitter {
   private status: BotStatus = "disconnected";
   private groupState: BotGroupState = "unknown";
   private qrCode = "";
-  private pairingCode = "";
-  private pairingCodeRequested = false;
+  private qrGeneratedAt?: string;
+  private qrExpiresAt?: string;
+  private qrAttempt = 0;
   private error = "";
   private reconnectAttempts = 0;
   private reconnectTimer?: NodeJS.Timeout;
@@ -159,6 +162,8 @@ export class BotService extends EventEmitter {
   private unknownDisconnects = 0;
   private sendCycleId = 0;
   private activeSendCycle?: Promise<void>;
+  private activeSendCycleId?: number;
+  private activeSendTrigger?: RouteDispatch["trigger"];
   private criticalDispatchInProgress = false;
   private pendingReactionBatch?: any[];
   private reactionProcessingScheduled = false;
@@ -178,6 +183,13 @@ export class BotService extends EventEmitter {
   private preparedNuclearMode = false;
   private preparedTargetDispatchMode: BotConfig["targetDispatchMode"] = "manual";
   private pendingOcrMessages: string[] = [];
+  private pendingOcrReconnectDispatch?: {
+    analysisId?: string;
+    trigger: "manual" | "automatic";
+    interruptedCycleId?: number;
+    queuedAt: string;
+  };
+  private acceptedMessageCountByCycle = new Map<number, number>();
   private lastOcrDispatchKey = "";
   private lastOcrInsight?: RouteOcrInsight;
   private ocrRouteSelection: OcrRouteSelectionState = { status: "idle", options: [] };
@@ -222,7 +234,13 @@ export class BotService extends EventEmitter {
   private outboundRaceTracking = new Map<string, { cycleId: number; timeline: RouteDispatchTimeline; relayCalledAt: number; routeId?: string }>();
   private dispatchQueueIdByCycle = new Map<number, string>();
   private pendingCredsSave?: NodeJS.Timeout;
+  private credsSaveInFlight?: Promise<void>;
+  private credsSaveDirty = false;
   private saveCredsNow?: () => Promise<void> | void;
+  private flushAuthState?: () => Promise<void>;
+  private closeAuthState?: () => Promise<void>;
+  private destroyAuthState?: () => void;
+  private authBackend: "sqlite" | "multi-file" = "multi-file";
   private targetSimulationCycles = new Set<number>();
   private autoClearInvalidSession = false;
   private clearedInvalidSessionInCurrentRun = false;
@@ -234,7 +252,22 @@ export class BotService extends EventEmitter {
   private lastKeepAliveAt?: string;
   private lastKeepAliveDurationMs = 0;
   private keepAliveCount = 0;
+  private internalWarmState: "cold" | "warming" | "ready" = "cold";
+  private lastInternalWarmAt?: string;
+  private lastInternalWarmDurationMs = 0;
+  private lastActiveChatWarmAt = 0;
+  private consecutiveHealthCheckFailures = 0;
   private lastFullMetadataWarmAt = 0;
+  private lastGroupCryptoWarmAt = 0;
+  private lastGroupCryptoWarmDurationMs = 0;
+  private warmedGroupDeviceCount = 0;
+  private warmedGroupParticipantSignature = "";
+  private lastSenderKeyWarmAt = 0;
+  private lastSenderKeyWarmDurationMs = 0;
+  private lastSocketRttAt = 0;
+  private lastSocketRttMs?: number;
+  private activeSignalProfileTimeline?: RouteDispatchTimeline;
+  private groupCryptoWarmInFlight?: Promise<boolean>;
   private adaptiveOpeningSettleMs = 0;
   private lastNotAcceptableAlertAt = 0;
   private romaneioDocumentCandidates = new Map<string, { candidate: RomaneioCandidate; message: any }>();
@@ -278,7 +311,9 @@ export class BotService extends EventEmitter {
       status: this.status,
       groupState: this.groupState,
       qrCode: this.qrCode,
-      pairingCode: this.pairingCode || undefined,
+      qrGeneratedAt: this.qrGeneratedAt,
+      qrExpiresAt: this.qrExpiresAt,
+      qrAttempt: this.qrAttempt || undefined,
       config: this.configStore.load(),
       groups: this.groups,
       readinessChecks: this.getReadinessChecks(),
@@ -296,6 +331,15 @@ export class BotService extends EventEmitter {
         lastKeepAliveAt: this.lastKeepAliveAt,
         lastKeepAliveDurationMs: this.lastKeepAliveDurationMs,
         keepAliveCount: this.keepAliveCount,
+        internalWarmState: this.getCurrentInternalWarmState(),
+        lastInternalWarmAt: this.lastInternalWarmAt,
+        lastInternalWarmDurationMs: this.lastInternalWarmDurationMs,
+        internalWarmAgeMs: this.getInternalWarmAgeMs(),
+        lastGroupCryptoWarmDurationMs: this.lastGroupCryptoWarmDurationMs,
+        warmedGroupDeviceCount: this.warmedGroupDeviceCount,
+        lastSenderKeyWarmDurationMs: this.lastSenderKeyWarmDurationMs,
+        authBackend: this.authBackend,
+        socketRttMs: this.lastSocketRttMs,
         activeQueue: Math.max(this.performanceMetrics.activeQueue, this.dispatchQueueStore.pending().length),
         telemetryCount: telemetry.count,
         averageFirstRelayMs: telemetry.averageFirstRelayMs,
@@ -351,6 +395,7 @@ export class BotService extends EventEmitter {
       lastFirstRelayCallMs: input.timeline?.firstRelayCallMs,
       lastFirstAckMs: input.timeline?.firstAckMs,
       lastDispatchTimeline: input.timeline,
+      lastDispatchWasWarm: input.timeline?.internalWarmState === "ready",
       averageMessageSendMs: average(this.performanceMetrics.averageMessageSendMs, perMessage),
       dispatchCount: nextCount,
       sentMessages: this.performanceMetrics.sentMessages + input.confirmed,
@@ -370,7 +415,68 @@ export class BotService extends EventEmitter {
     this.maybeAlertNotAcceptable(event.notAcceptableCount);
   }
 
+  private getInternalWarmAgeMs(now = Date.now()) {
+    if (!this.lastInternalWarmAt) return undefined;
+    const warmedAt = new Date(this.lastInternalWarmAt).getTime();
+    if (!Number.isFinite(warmedAt)) return undefined;
+    return Math.max(0, now - warmedAt);
+  }
+
+  private getCurrentInternalWarmState(now = Date.now()): "cold" | "warming" | "ready" {
+    if (this.internalWarmState === "warming") return "warming";
+    const ageMs = this.getInternalWarmAgeMs(now);
+    if (
+      this.internalWarmState === "ready" &&
+      ageMs !== undefined &&
+      ageMs <= INTERNAL_WARM_READY_MAX_AGE_MS &&
+      this.status === "connected"
+    ) {
+      return "ready";
+    }
+    return "cold";
+  }
+
+  private profileSignalKeyStore(keys: any) {
+    if (!keys) return keys;
+    const profiled = {
+      ...keys,
+      get: async (type: string, ids: string[]) => {
+        const startedAt = process.hrtime.bigint();
+        try {
+          return await keys.get(type, ids);
+        } finally {
+          this.recordSignalKeyTiming("read", startedAt);
+        }
+      },
+      set: async (data: Record<string, Record<string, unknown>>) => {
+        const startedAt = process.hrtime.bigint();
+        try {
+          return await keys.set(data);
+        } finally {
+          this.recordSignalKeyTiming("write", startedAt);
+        }
+      }
+    };
+    if (typeof keys.clear === "function") profiled.clear = () => keys.clear();
+    return profiled;
+  }
+
+  private recordSignalKeyTiming(kind: "read" | "write", startedAt: bigint) {
+    const timeline = this.activeSignalProfileTimeline;
+    if (!timeline) return;
+    const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+    if (kind === "read") {
+      timeline.signalKeyReadMs = roundMetric((timeline.signalKeyReadMs || 0) + elapsedMs);
+      timeline.signalKeyReadOps = (timeline.signalKeyReadOps || 0) + 1;
+      return;
+    }
+    timeline.signalKeyWriteMs = roundMetric((timeline.signalKeyWriteMs || 0) + elapsedMs);
+    timeline.signalKeyWriteOps = (timeline.signalKeyWriteOps || 0) + 1;
+  }
+
   private createDispatchTimeline(eventDetectedAt: number, sendStartedAt: number, mode: RouteDispatchTimeline["mode"], openingSignal?: OpeningSignal): RouteDispatchTimeline {
+    const internalWarmState = this.getCurrentInternalWarmState(sendStartedAt);
+    const internalWarmAgeMs = this.getInternalWarmAgeMs(sendStartedAt);
     return {
       eventDetectedAt: new Date(eventDetectedAt).toISOString(),
       sendStartedAt: new Date(sendStartedAt).toISOString(),
@@ -380,6 +486,15 @@ export class BotService extends EventEmitter {
       notAcceptableCount: 0,
       mode,
       openingSignal,
+      internalWarmState,
+      internalWarmAgeMs,
+      authBackend: this.authBackend,
+      warmedDeviceCount: this.warmedGroupDeviceCount,
+      socketRttMs: this.lastSocketRttMs,
+      signalKeyReadMs: 0,
+      signalKeyWriteMs: 0,
+      signalKeyReadOps: 0,
+      signalKeyWriteOps: 0,
       events: [
         {
           id: `event-${eventDetectedAt}`,
@@ -394,7 +509,12 @@ export class BotService extends EventEmitter {
           label: "Disparo iniciado",
           at: new Date(sendStartedAt).toISOString(),
           offsetMs: Math.max(0, sendStartedAt - eventDetectedAt),
-          level: "info"
+          level: "info",
+          detail: internalWarmState === "ready"
+            ? `Preparação interna aquecida há ${internalWarmAgeMs || 0}ms`
+            : internalWarmState === "warming"
+            ? "Preparação interna ainda em andamento"
+            : "Preparação interna fria"
         }
       ]
     };
@@ -483,6 +603,7 @@ export class BotService extends EventEmitter {
 
   private scheduleCredsSave() {
     if (!this.saveCredsNow) return;
+    this.credsSaveDirty = true;
     if (this.pendingCredsSave) return;
     this.pendingCredsSave = setTimeout(() => {
       this.pendingCredsSave = undefined;
@@ -497,8 +618,23 @@ export class BotService extends EventEmitter {
       clearTimeout(this.pendingCredsSave);
       this.pendingCredsSave = undefined;
     }
-    if (!this.saveCredsNow) return;
-    await this.saveCredsNow();
+    if (this.credsSaveInFlight) {
+      await this.credsSaveInFlight;
+      if (this.credsSaveDirty) await this.flushCreds();
+      return;
+    }
+    const saveCreds = this.saveCredsNow;
+    if (!saveCreds) return;
+
+    this.credsSaveDirty = false;
+    const savePromise = Promise.resolve(saveCreds());
+    this.credsSaveInFlight = savePromise;
+    try {
+      await savePromise;
+    } finally {
+      if (this.credsSaveInFlight === savePromise) this.credsSaveInFlight = undefined;
+    }
+    if (this.credsSaveDirty) await this.flushCreds();
   }
 
   validateRoute(routeId: string, validatedBy: string) {
@@ -589,6 +725,8 @@ export class BotService extends EventEmitter {
     const config = this.configStore.save({ nuclearMode: useNuclearMode, targetDispatchMode });
     this.refreshSocketJidFilterCache(config);
     this.pendingOcrMessages = [];
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.latestRouteImageSequence += 1;
@@ -613,7 +751,10 @@ export class BotService extends EventEmitter {
     this.armedAt = Date.now();
     this.addStatusEvent("armed", `Bot armado em modo ${modeLabel}.`);
     this.startHealthCheck();
-    this.startWarmKeepAlive();
+    const initialWarmup = this.startWarmKeepAlive("armado");
+    if (this.groupState !== "open") {
+      await this.waitForInitialInternalWarmup(initialWarmup);
+    }
     this.logger.success(targetDispatchMode === "ocr" ? "✅ BOT IMAGEM ARMADO. Aguardando foto da rota..." : useNuclearMode ? "✅ Bot NUCLEAR ARMADO. Aguardando abertura do grupo..." : "✅ Bot MANUAL ARMADO. Aguardando abertura do grupo...");
     this.dispatchIfGroupAlreadyOpen("armado");
     this.emitSnapshot();
@@ -664,7 +805,7 @@ export class BotService extends EventEmitter {
     this.armedAt = Date.now();
     this.addStatusEvent("armed", "Bot de teste armado.");
     this.startHealthCheck();
-    this.startWarmKeepAlive();
+    void this.startWarmKeepAlive("armado");
     this.logger.success("✅ TESTE ARMADO - O grupo de teste será ouvido como grupo real.");
     this.emitSnapshot();
     return true;
@@ -673,11 +814,16 @@ export class BotService extends EventEmitter {
   disableMonitoring(): void {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
+    this.invalidateInternalWarmState();
     this.refreshSocketJidFilterCache();
     this.armedAt = undefined;
     this.sendCycleId += 1;
     this.activeSendCycle = undefined;
+    this.activeSendCycleId = undefined;
+    this.activeSendTrigger = undefined;
     this.criticalDispatchInProgress = false;
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.activeTestRunId += 1;
     if (this.testStatus.active) {
       this.testStatus = {
@@ -907,8 +1053,6 @@ export class BotService extends EventEmitter {
   async stop() {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
     if (!this.isRunning()) {
       this.logger.warning("Não é possível parar: o bot ainda não foi iniciado.");
       return;
@@ -920,10 +1064,13 @@ export class BotService extends EventEmitter {
     this.clearHealthCheckTimer();
     this.clearWarmKeepAliveTimer();
     this.reconnectAttempts = 0;
-    this.qrCode = "";
+    this.clearQrCode();
 
     await this.flushCreds().catch((error) => {
       this.logger.warning(`Não consegui salvar credenciais antes de parar: ${this.getErrorMessage(error)}`);
+    });
+    await this.flushAuthState?.().catch((error) => {
+      this.logger.warning(`Não consegui concluir o espelho da sessão: ${this.getErrorMessage(error)}`);
     });
     this.routeStore.flush();
     this.dispatchQueueStore.flush();
@@ -931,8 +1078,10 @@ export class BotService extends EventEmitter {
 
     if (this.sock) {
       try {
+        this.sock.ev.removeAllListeners("creds.update");
         this.sock.ev.removeAllListeners("connection.update");
         this.sock.ev.removeAllListeners("groups.update");
+        this.sock.ev.removeAllListeners("group-participants.update");
         this.sock.ev.removeAllListeners("messages.upsert");
         this.sock.ev.removeAllListeners("messaging-history.set");
         this.sock.end?.(undefined);
@@ -943,12 +1092,22 @@ export class BotService extends EventEmitter {
     }
 
     this.sock = undefined;
+    await this.closeAuthState?.().catch(() => undefined);
+    this.closeAuthState = undefined;
+    this.flushAuthState = undefined;
+    this.destroyAuthState = undefined;
+    this.invalidateInternalWarmState();
     this.groupState = "unknown";
     this.currentUserInTargetGroup = false;
     this.criticalDispatchInProgress = false;
+    this.activeSendCycle = undefined;
+    this.activeSendCycleId = undefined;
+    this.activeSendTrigger = undefined;
     this.pendingReactionBatch = undefined;
     this.reactionProcessingScheduled = false;
     this.pendingOcrMessages = [];
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.processingImageIds.clear();
     this.latestRouteImageSequence += 1;
@@ -970,11 +1129,9 @@ export class BotService extends EventEmitter {
       this.clearReconnectTimer();
       this.clearHealthCheckTimer();
       this.clearWarmKeepAliveTimer();
-      this.pairingCode = "";
-      this.pairingCodeRequested = false;
     }
 
-    this.qrCode = "";
+    this.clearQrCode();
     this.error = "";
     this.logger.info("Bot encerrado. Sessão/auth preservada para a próxima abertura.");
     this.emitSnapshot();
@@ -995,38 +1152,26 @@ export class BotService extends EventEmitter {
 
   async clearSession() {
     await this.logoutAndClearSession();
-    this.qrCode = "";
+    this.clearQrCode();
     this.error = "";
     this.logger.warning("Sessão/auth apagada e logout solicitado. Gerando um novo QR Code.");
     this.emitSnapshot();
     await this.start();
   }
 
-  async requestPairingCode(phoneNumber: string) {
-    const digits = String(phoneNumber || "").replace(/\D/g, "");
-    if (digits.length < 10 || digits.length > 15) {
-      throw new Error("Informe o número completo com DDI e DDD. Exemplo: 5522999999999.");
-    }
+  async refreshQrCode() {
     if (this.status === "connected" || this.sock?.authState?.creds?.registered) {
-      throw new Error("Já existe uma sessão salva. Use Limpar sessão antes de gerar um código para outro aparelho.");
+      throw new Error("O WhatsApp já está conectado.");
     }
-    if (!this.isRunning()) await this.start();
-    if (!this.sock?.requestPairingCode) {
-      throw new Error("A conexão ainda não está pronta. Aguarde o QR aparecer e tente novamente.");
-    }
-
-    this.pairingCodeRequested = true;
-    try {
-      const code = String(await this.sock.requestPairingCode(digits)).replace(/\D/g, "");
-      if (!code) throw new Error("O WhatsApp não retornou um código de pareamento.");
-      this.pairingCode = code.replace(/(.{4})/g, "$1 ").trim();
-      this.logger.info(`Código de pareamento gerado para telefone terminado em ${digits.slice(-4)}.`);
-      this.emitSnapshot();
-    } catch (error) {
-      this.pairingCodeRequested = false;
-      this.pairingCode = "";
-      throw new Error(`Não consegui gerar o código de pareamento: ${this.getErrorMessage(error)}`);
-    }
+    if (this.isRunning()) await this.stop();
+    this.clearPendingCredsSave();
+    this.removeAuthDir();
+    this.clearQrCode();
+    this.error = "";
+    this.reconnectAttempts = 0;
+    this.unknownDisconnects = 0;
+    this.logger.info("Gerando um QR Code novo e descartando tentativas expiradas.");
+    await this.start();
   }
 
   async factoryReset() {
@@ -1053,18 +1198,21 @@ export class BotService extends EventEmitter {
     this.configStore.save(DEFAULT_CONFIG);
     this.refreshSocketJidFilterCache(DEFAULT_CONFIG);
     this.groupState = "unknown";
-    this.qrCode = "";
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
+    this.clearQrCode();
     this.error = "";
     this.reconnectAttempts = 0;
     this.unknownDisconnects = 0;
     this.sendCycleId += 1;
     this.monitoringEnabled = false;
     this.criticalDispatchInProgress = false;
+    this.activeSendCycle = undefined;
+    this.activeSendCycleId = undefined;
+    this.activeSendTrigger = undefined;
     this.pendingReactionBatch = undefined;
     this.reactionProcessingScheduled = false;
     this.pendingOcrMessages = [];
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.processingImageIds.clear();
@@ -1101,6 +1249,7 @@ export class BotService extends EventEmitter {
     this.preparedRelayMessages = [];
     this.preparedRelaySignature = "";
     this.preparedRelayBuiltAt = 0;
+    this.invalidateInternalWarmState(true);
     this.pendingOcrMessages = [];
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
@@ -1110,6 +1259,7 @@ export class BotService extends EventEmitter {
     if (this.sock && this.status === "connected") {
       await this.resolveConfiguredGroup();
     }
+    if (this.monitoringEnabled) void this.startWarmKeepAlive("armado");
 
     this.emitSnapshot();
   }
@@ -1120,6 +1270,9 @@ export class BotService extends EventEmitter {
       ? this.configStore.saveTestGroupById(groupId, groupName || group)
       : this.configStore.saveTestGroup(group);
     this.refreshSocketJidFilterCache(config);
+    if (this.monitoringEnabled && this.monitoringMode === "test") {
+      void this.startWarmKeepAlive("armado");
+    }
     this.logger.success(`Grupo de teste salvo: ${config.grupoTesteNome || config.grupoTesteJid}`);
     this.emitSnapshot();
   }
@@ -1393,7 +1546,7 @@ export class BotService extends EventEmitter {
     const config = this.configStore.save(nextSettings);
     this.refreshRuntimeSettings(config);
     this.prepareSendPlan();
-    if (this.monitoringEnabled) this.startWarmKeepAlive();
+    if (this.monitoringEnabled) void this.startWarmKeepAlive("armado");
     if (changingMode) {
       this.logger.success(config.nuclearMode ? "Modo nuclear ativado." : "Modo nuclear desativado.");
     }
@@ -1433,6 +1586,8 @@ export class BotService extends EventEmitter {
     });
     this.latestRouteImageSequence += 1;
     this.pendingOcrMessages = [];
+    this.pendingOcrReconnectDispatch = undefined;
+    this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.montarMensagens();
@@ -1570,8 +1725,7 @@ export class BotService extends EventEmitter {
   private async connect() {
     const connectionId = ++this.activeConnectionId;
     this.qrReceivedInCurrentConnection = false;
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
+    this.clearQrCode();
     this.estadoInicialDoGrupoCapturado = false;
     this.grupoJaFechouDepoisDoInicio = false;
     this.clearReconnectTimer();
@@ -1580,17 +1734,50 @@ export class BotService extends EventEmitter {
     this.logger.info(this.reconnectAttempts > 0 ? "Tentando reconectar..." : "Bot iniciado.");
 
     await loadBaileys();
-    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    await this.closeAuthState?.().catch(() => undefined);
+    this.closeAuthState = undefined;
+    this.flushAuthState = undefined;
+    this.destroyAuthState = undefined;
+
+    let authSession: any;
+    try {
+      authSession = await useSqliteAuthState(this.authDir, {
+        BufferJSON,
+        proto,
+        useMultiFileAuthState
+      });
+      this.authBackend = "sqlite";
+      this.flushAuthState = authSession.flush;
+      this.closeAuthState = authSession.close;
+      this.destroyAuthState = authSession.destroy;
+      if (authSession.migratedFiles > 0) {
+        this.logger.success(`Sessão migrada para SQLite: ${authSession.migratedFiles} chave(s) importada(s), backup antigo preservado.`);
+      }
+    } catch (error) {
+      this.authBackend = "multi-file";
+      this.logger.warning(`SQLite auth indisponível; usando sessão compatível em arquivos: ${this.getErrorMessage(error)}.`);
+      authSession = await useMultiFileAuthState(this.authDir);
+    }
+    const { state, saveCreds } = authSession;
     this.saveCredsNow = saveCreds;
     const version = await this.getWhatsAppVersion();
+    const socketLogger = P({ level: "silent" });
+    const cachedKeys = makeCacheableSignalKeyStore
+      ? makeCacheableSignalKeyStore(state.keys, socketLogger)
+      : state.keys;
+    const auth = {
+      creds: state.creds,
+      keys: this.profileSignalKeyStore(cachedKeys)
+    };
 
     this.sock = makeWASocket({
-      auth: state,
+      auth,
       version,
-      logger: P({ level: "silent" }),
+      logger: socketLogger,
       connectTimeoutMs: SOCKET_CONNECT_TIMEOUT_MS,
       defaultQueryTimeoutMs: SOCKET_QUERY_TIMEOUT_MS,
       keepAliveIntervalMs: SOCKET_KEEP_ALIVE_INTERVAL_MS,
+      qrTimeout: QR_CODE_LIFETIME_MS,
       emitOwnEvents: true,
       fireInitQueries: true,
       printQRInTerminal: false,
@@ -1609,6 +1796,9 @@ export class BotService extends EventEmitter {
     this.sock.ev.on("groups.update", (updates: any[]) =>
       this.handleGroupsUpdate(updates, connectionId, Date.now())
     );
+    this.sock.ev.on("group-participants.update", (update: any) =>
+      this.handleGroupParticipantsUpdate(update, connectionId)
+    );
     this.sock.ev.on("messages.upsert", ({ messages }: any) => {
       const eventReceivedAt = Date.now();
       // Detecte abertura e inicie o relay antes de procurar documentos auxiliares.
@@ -1618,10 +1808,10 @@ export class BotService extends EventEmitter {
       // Retornos de disparos anteriores são telemetria; uma abertura nova ganha
       // prioridade quando o WhatsApp agrupa ambos no mesmo lote.
       this.recordOutboundGroupEcho(messages || []);
-      setImmediate(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
+      this.deferSecondarySocketTask(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
     });
     this.sock.ev.on("messaging-history.set", ({ messages }: any) => {
-      setImmediate(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
+      this.deferSecondarySocketTask(() => this.cacheRomaneioDocumentCandidates(messages || [], connectionId));
     });
 
   }
@@ -1629,22 +1819,34 @@ export class BotService extends EventEmitter {
   private async handleConnectionUpdate(update: any, connectionId: number) {
     if (connectionId !== this.activeConnectionId) return;
 
-    const { connection, lastDisconnect, qr } = update;
+    const { connection, lastDisconnect, qr, isNewLogin } = update;
 
     if (qr) {
+      const now = Date.now();
       this.unknownDisconnects = 0;
       this.qrReceivedInCurrentConnection = true;
       this.qrCode = qr;
+      this.qrGeneratedAt = new Date(now).toISOString();
+      this.qrExpiresAt = new Date(now + QR_CODE_LIFETIME_MS).toISOString();
+      this.qrAttempt += 1;
       this.setStatus("waiting_qr");
-      this.logger.info("QR Code gerado.");
+      this.logger.info(`QR Code ${this.qrAttempt} gerado com validade ampliada.`);
+    }
+
+    if (isNewLogin) {
+      this.clearQrCode(false);
+      this.setStatus("reconnecting");
+      this.logger.success("QR Code lido pelo WhatsApp. Finalizando a conexão...");
+      await this.flushCreds().catch((error) => {
+        this.logger.warning(`Não consegui salvar imediatamente a nova sessão: ${this.getErrorMessage(error)}`);
+      });
     }
 
     if (connection === "open") {
       this.unknownDisconnects = 0;
       this.reconnectAttempts = 0;
-      this.qrCode = "";
-      this.pairingCode = "";
-      this.pairingCodeRequested = false;
+      this.consecutiveHealthCheckFailures = 0;
+      this.clearQrCode(false);
       this.setStatus("connected");
       this.addStatusEvent("connected", "WhatsApp conectado.");
       this.logger.success("WhatsApp conectado.");
@@ -1653,12 +1855,18 @@ export class BotService extends EventEmitter {
         this.reportPendingDispatchesAfterBoot();
         await this.loadGroups();
         await this.resolveConfiguredGroup();
-        void this.prewarmConnectionSafely("Pré-aquecendo sessão após conexão...");
         if (this.monitoringEnabled) {
           await this.captureInitialGroupState();
           this.startHealthCheck();
+          const reconnectWarmup = this.startWarmKeepAlive("reconexão");
+          if (this.groupState !== "open") {
+            await this.waitForInitialInternalWarmup(reconnectWarmup);
+          }
           this.logger.success("Monitoramento restaurado após reconexão.");
-          this.dispatchIfGroupAlreadyOpen("reconexão");
+          const recoveryHandled = await this.resumeOcrDispatchAfterReconnect();
+          if (!recoveryHandled) this.dispatchIfGroupAlreadyOpen("reconexão");
+        } else {
+          void this.prewarmConnectionSafely("Pré-aquecendo sessão após conexão...");
         }
         this.logger.info("Aguardando abertura do grupo.");
       } catch (error) {
@@ -1670,10 +1878,29 @@ export class BotService extends EventEmitter {
 
     if (connection === "close") {
       const closedSocket = this.sock;
+      const interruptedCycleId = this.activeSendCycleId;
+      if (
+        this.monitoringEnabled &&
+        this.monitoringMode === "target" &&
+        this.preparedTargetDispatchMode === "ocr" &&
+        this.pendingOcrMessages.length &&
+        (!interruptedCycleId || (this.acceptedMessageCountByCycle.get(interruptedCycleId) || 0) === 0)
+      ) {
+        this.deferOcrDispatchUntilReconnect(
+          this.activeSendTrigger === "manual" ? "manual" : "automatic",
+          interruptedCycleId
+        );
+        if (interruptedCycleId && interruptedCycleId === this.sendCycleId) this.sendCycleId += 1;
+      }
       this.sock = undefined;
+      this.invalidateInternalWarmState();
+      this.clearQrCode(false);
       this.clearHealthCheckTimer();
       this.clearWarmKeepAliveTimer();
       this.disposeSocket(closedSocket);
+      await this.flushCreds().catch((error) => {
+        this.logger.warning(`Falha ao persistir sessão ao fechar o socket: ${this.getErrorMessage(error)}`);
+      });
       if (this.stopping) return;
 
       const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
@@ -1730,15 +1957,13 @@ export class BotService extends EventEmitter {
           this.removeAuthDir();
           this.reconnectAttempts = 0;
           this.unknownDisconnects = 0;
-          this.qrCode = "";
-          this.pairingCode = "";
-          this.pairingCodeRequested = false;
+          this.clearQrCode();
           this.scheduleReconnect(true);
           return;
         }
 
         this.failConnectionWithoutReconnect(
-          `Sessão inválida ou logout detectado (${statusCode || "sem código"}). Parei para evitar loop de reconexão. Use Limpar sessão para gerar um novo QR Code/código de pareamento.`
+          `Sessão inválida ou logout detectado (${statusCode || "sem código"}). Parei para evitar loop de reconexão. Use Limpar sessão para gerar um novo QR Code.`
         );
         return;
       }
@@ -1752,7 +1977,7 @@ export class BotService extends EventEmitter {
           this.unknownDisconnects >= 2
         ) {
           this.failConnectionWithoutReconnect(
-            "A sessão local fechou sem motivo claro antes de conectar. Parei para evitar loop de reconexão. Use Limpar sessão para gerar um novo QR Code/código de pareamento."
+            "A sessão local fechou sem motivo claro antes de conectar. Parei para evitar loop de reconexão. Use Limpar sessão para gerar um novo QR Code."
           );
           this.unknownDisconnects = 0;
           return;
@@ -1770,7 +1995,6 @@ export class BotService extends EventEmitter {
     this.clearWarmKeepAliveTimer();
     this.reconnectAttempts = Math.max(this.reconnectAttempts, MAX_RECONNECT_ATTEMPTS);
     this.error = message;
-    this.pairingCodeRequested = false;
     this.setStatus("error");
     this.logger.error(message);
   }
@@ -1862,6 +2086,12 @@ export class BotService extends EventEmitter {
 
       const metadata = await this.refreshGroupMetadata(activeGroup.jid);
       if (!metadata) return;
+      this.lastFullMetadataWarmAt = Date.now();
+
+      await Promise.all([
+        this.prewarmActiveChat(activeGroup.jid),
+        this.prewarmGroupCrypto(metadata)
+      ]);
 
       const isGroupClosed = metadata.announce === true;
       this.groupState = isGroupClosed ? "closed" : "open";
@@ -1976,6 +2206,26 @@ export class BotService extends EventEmitter {
       }
     }
   }
+
+  private handleGroupParticipantsUpdate(update: any, connectionId: number) {
+    if (connectionId !== this.activeConnectionId) return;
+    const groupJid = String(update?.id || "");
+    if (!groupJid || groupJid !== this.preparedTargetJid) return;
+
+    this.groupMetadataCache.delete(groupJid);
+    this.warmedGroupParticipantSignature = "";
+    this.lastGroupCryptoWarmAt = 0;
+    this.warmedGroupDeviceCount = 0;
+    this.lastSenderKeyWarmAt = 0;
+    this.invalidateInternalWarmState();
+
+    if (!this.monitoringEnabled || this.criticalDispatchInProgress || !this.sock) return;
+
+    this.deferSecondarySocketTask(() => {
+      void this.runWarmKeepAlive("timer");
+    });
+  }
+
   private async handleMessages(messages: any[], connectionId: number, eventReceivedAt = Date.now()) {
     if (connectionId !== this.activeConnectionId) return;
     if (!this.monitoringEnabled) {
@@ -2072,8 +2322,7 @@ export class BotService extends EventEmitter {
   }
 
   private scheduleRouteImageProcessing(msg: any, groupJid: string) {
-    const config = this.configStore.load();
-    if (config.targetDispatchMode !== "ocr" || !downloadMediaMessage) return;
+    if (this.preparedTargetDispatchMode !== "ocr" || !downloadMediaMessage) return;
 
     const messageId = String(msg?.key?.id || "");
     if (!messageId || this.processingImageIds.has(messageId)) return;
@@ -2089,7 +2338,8 @@ export class BotService extends EventEmitter {
 
   private async processRouteImage(msg: any, groupJid: string, sequence: number) {
     const config = this.configStore.load();
-    if (config.targetDispatchMode !== "ocr" || !this.sock) return;
+    const analysisSocket = this.sock;
+    if (config.targetDispatchMode !== "ocr" || !analysisSocket) return;
 
     const messageId = String(msg?.key?.id || Date.now());
     const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
@@ -2124,7 +2374,7 @@ export class BotService extends EventEmitter {
         {},
         {
           logger: P({ level: "silent" }),
-          reuploadRequest: this.sock.updateMediaMessage
+          reuploadRequest: analysisSocket.updateMediaMessage
         }
       );
 
@@ -2303,8 +2553,17 @@ export class BotService extends EventEmitter {
     if (!activeGroup.jid || !this.pendingOcrMessages.length) return false;
 
     const analysisId = this.lastOcrInsight?.analysisId;
-    if (trigger === "automatic" && analysisId && this.routeStore.all().some((route) => route.ocr?.analysisId === analysisId)) {
-      this.logger.info("[ROMANEIO] Esta mesma imagem já iniciou um disparo automático. Reenvio duplicado ignorado.");
+    const previousDispatch = trigger === "automatic" && analysisId
+      ? this.routeStore.all().find((route) => route.ocr?.analysisId === analysisId && route.confirmedCount > 0)
+      : undefined;
+    if (previousDispatch) {
+      this.pendingOcrReconnectDispatch = undefined;
+      this.logger.info("[ROMANEIO] Esta imagem já teve mensagem aceita pelo WhatsApp. Recuperação duplicada cancelada.");
+      return false;
+    }
+
+    if (this.status !== "connected" || !this.sock) {
+      this.deferOcrDispatchUntilReconnect(trigger);
       return false;
     }
 
@@ -2324,10 +2583,25 @@ export class BotService extends EventEmitter {
       }
     }
 
-    if (!isOpen) return false;
+    if (!isOpen) {
+      if (this.pendingOcrReconnectDispatch) {
+        this.pendingOcrReconnectDispatch = undefined;
+        this.logger.info("[ROMANEIO] WhatsApp reconectou com o grupo fechado. A rota continua pronta para a próxima abertura.");
+      }
+      return false;
+    }
+    if (this.status !== "connected" || !this.sock) {
+      this.deferOcrDispatchUntilReconnect(trigger);
+      return false;
+    }
     const cycleId = ++this.sendCycleId;
+    const recoveryBeforeDispatch = this.pendingOcrReconnectDispatch;
+    this.pendingOcrReconnectDispatch = undefined;
     const dispatched = this.enviarMensagensRapidas(cycleId, trigger, Date.now(), "image_ready");
     if (!dispatched) {
+      if (!this.pendingOcrReconnectDispatch && recoveryBeforeDispatch) {
+        this.pendingOcrReconnectDispatch = recoveryBeforeDispatch;
+      }
       this.logger.warning("[ROMANEIO] A rota ficou pronta com o grupo aberto, mas outro disparo ainda estava concluindo. Tentarei novamente imediatamente após ele terminar.");
       const activeCycle = this.activeSendCycle;
       if (activeCycle) {
@@ -2342,6 +2616,71 @@ export class BotService extends EventEmitter {
       ? "[ROMANEIO] Grupo já estava aberto: melhor rota enviada imediatamente após a imagem."
       : "[ROMANEIO] Grupo já estava aberto: rota confirmada enviada imediatamente.");
     this.emitSnapshot();
+    return true;
+  }
+
+  private deferOcrDispatchUntilReconnect(
+    trigger: "manual" | "automatic",
+    interruptedCycleId?: number
+  ) {
+    if (!this.pendingOcrMessages.length || !this.monitoringEnabled) return;
+    const alreadyQueued =
+      this.pendingOcrReconnectDispatch?.analysisId === this.lastOcrInsight?.analysisId &&
+      this.pendingOcrReconnectDispatch?.interruptedCycleId === interruptedCycleId;
+    this.pendingOcrReconnectDispatch = {
+      analysisId: this.lastOcrInsight?.analysisId,
+      trigger,
+      interruptedCycleId,
+      queuedAt: new Date().toISOString()
+    };
+    if (!alreadyQueued) {
+      this.logger.warning(
+        "[ROMANEIO] A rota ficou pronta durante uma desconexão. Mantive o bot armado e enviarei após o WhatsApp reconectar."
+      );
+      this.addStatusEvent("reconnecting", "Rota da imagem preservada para envio após reconexão.");
+    }
+    this.ocrRouteSelection = {
+      ...this.ocrRouteSelection,
+      message: "Rota pronta. Aguardando o WhatsApp reconectar para enviar com segurança."
+    };
+    this.emitSnapshot();
+  }
+
+  private async resumeOcrDispatchAfterReconnect() {
+    const recovery = this.pendingOcrReconnectDispatch;
+    if (!recovery) return false;
+    if (!this.monitoringEnabled || !this.pendingOcrMessages.length) {
+      this.pendingOcrReconnectDispatch = undefined;
+      return false;
+    }
+    if (this.status !== "connected" || !this.sock) return true;
+
+    if (this.activeSendCycle) {
+      const activeCycle = this.activeSendCycle;
+      void activeCycle.finally(() => {
+        if (
+          this.activeSendCycle !== activeCycle &&
+          this.pendingOcrReconnectDispatch === recovery &&
+          this.status === "connected"
+        ) {
+          void this.resumeOcrDispatchAfterReconnect();
+        }
+      }).catch(() => undefined);
+      return true;
+    }
+
+    const previousAccepted = recovery.analysisId
+      ? this.routeStore.all().some((route) => route.ocr?.analysisId === recovery.analysisId && route.confirmedCount > 0)
+      : false;
+    if (previousAccepted) {
+      this.pendingOcrReconnectDispatch = undefined;
+      this.logger.success("[ROMANEIO] O WhatsApp confirmou a mensagem anterior; não foi necessário reenviar após reconectar.");
+      return true;
+    }
+
+    this.prepareSendPlan();
+    this.logger.info("[ROMANEIO] WhatsApp reconectado. Retomando a rota preservada da imagem.");
+    await this.dispatchPreparedOcrIfGroupOpen(recovery.trigger);
     return true;
   }
 
@@ -2865,10 +3204,10 @@ export class BotService extends EventEmitter {
       return false;
     }
 
-    // Texto e destino ficam preparados, mas o envelope do WhatsApp precisa nascer
-    // agora. Reutilizar ID/timestamp antigos pode ser aceito pelo socket sem a
-    // mensagem aparecer no grupo.
-    this.rebuildPreparedRelayMessages(this.preparedTargetJid, mensagens);
+    // O envelope precisa nascer agora para ter ID/timestamp novos. Somente a
+    // primeira mensagem entra no caminho crítico; as demais são construídas
+    // depois que a primeira chamada já alcançou o socket.
+    this.rebuildPreparedRelayMessages(this.preparedTargetJid, mensagens, true);
     const sendStartedAt = Date.now();
     const timeline = this.createDispatchTimeline(
       eventDetectedAt,
@@ -2878,6 +3217,10 @@ export class BotService extends EventEmitter {
     );
     this.performanceMetrics.activeQueue = mensagens.length;
     this.criticalDispatchInProgress = true;
+    this.activeSendCycleId = cycleId;
+    this.activeSendTrigger = trigger;
+    this.acceptedMessageCountByCycle.set(cycleId, 0);
+    if (this.monitoringMode === "target") this.activeSignalProfileTimeline = timeline;
     // Inicia o relay antes das gravações de auditoria. A primeira chamada ao
     // WhatsApp ocorre imediatamente; fila e histórico são persistidos ainda
     // neste mesmo ciclo, antes da Promise do relay concluir.
@@ -2895,6 +3238,8 @@ export class BotService extends EventEmitter {
     const trackedSendCycle = sendCycle.finally(() => {
       if (this.activeSendCycle === trackedSendCycle) {
         this.activeSendCycle = undefined;
+        if (this.activeSendCycleId === cycleId) this.activeSendCycleId = undefined;
+        if (this.activeSendTrigger === trigger) this.activeSendTrigger = undefined;
         this.criticalDispatchInProgress = false;
       }
     });
@@ -2918,14 +3263,15 @@ export class BotService extends EventEmitter {
     this.rebuildPreparedRelayMessages(jid, mensagens);
   }
 
-  private rebuildPreparedRelayMessages(jid: string, mensagens: string[]) {
+  private rebuildPreparedRelayMessages(jid: string, mensagens: string[], firstOnly = false) {
     if (!this.sock || !jid) {
       this.preparedRelayMessages = [];
       this.preparedRelaySignature = "";
       this.preparedRelayBuiltAt = 0;
       return;
     }
-    this.preparedRelayMessages = mensagens.map((mensagem) => this.buildRelayTextMessage(this.sock, jid, mensagem));
+    const messagesToBuild = firstOnly ? mensagens.slice(0, 1) : mensagens;
+    this.preparedRelayMessages = messagesToBuild.map((mensagem) => this.buildRelayTextMessage(this.sock, jid, mensagem));
     this.preparedRelaySignature = this.getRelaySignature(jid, mensagens);
     this.preparedRelayBuiltAt = Date.now();
   }
@@ -3090,17 +3436,23 @@ export class BotService extends EventEmitter {
         return;
       }
 
-      const relayMessages = this.preparedRelayMessages && this.preparedRelayMessages.length
-        ? this.preparedRelayMessages
-        : mensagens.map((m) => this.buildRelayTextMessage(sock, jid, m));
-
-      const jobs = relayMessages.map((fullMessage, index) => {
+      const speculativeSecondLane = mensagens.length > 1 && this.shouldUseSpeculativeSecondLane(trigger);
+      timeline.secondLaneMode = speculativeSecondLane ? "speculative" : "ack-gated";
+      let releaseFirstMessageLane = () => undefined;
+      const firstMessageLane = new Promise<void>((resolve) => {
+        releaseFirstMessageLane = resolve;
+      });
+      const jobs = mensagens.map((mensagem, index) => {
         const messageNumber = index + 1;
+        const fullMessage =
+          this.preparedRelayMessages[index] ||
+          this.buildRelayTextMessage(sock, jid, mensagem);
 
         const firstAttempt = (async () => {
           if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
             throw new Error("Ciclo cancelado pelo painel ou por nova abertura.");
           }
+          if (index > 0) await firstMessageLane;
           const baseStaggerMs = trigger === "manual" ? MANUAL_ROUTE_SELECTION_STAGGER_MS : TARGET_PARALLEL_STAGGER_MS;
           // A primeira mensagem decide a corrida e nunca deve esperar. Se o WhatsApp
           // já recusou rajadas, a adaptação protege apenas as mensagens seguintes.
@@ -3117,15 +3469,45 @@ export class BotService extends EventEmitter {
           }
           this.addTimelineEvent(timeline, `Relay ${messageNumber} chamado`, calledAt, "info", String(fullMessage?.key?.id || ""));
           this.trackOutboundRaceMessage(String(fullMessage?.key?.id || ""), cycleId, timeline, calledAt);
-          await this.relayPreparedMessage(sock, jid, fullMessage);
+          const relay = this.relayPreparedMessage(sock, jid, fullMessage);
+          if (index === 0 && speculativeSecondLane) releaseFirstMessageLane();
+          await relay;
           return String(fullMessage?.key?.id || "");
         })();
 
-        const finalPromise = firstAttempt.catch((error) =>
-          this.retryTargetMessageAfterFailure(jid, mensagens[index], messageNumber, cycleId, error, timeline)
-        );
+        const finalPromise = firstAttempt
+          .catch((error) =>
+            this.retryTargetMessageAfterFailure(jid, mensagens[index], messageNumber, cycleId, error, timeline)
+          )
+          .then((messageId) => {
+            if (!messageId) return messageId;
+            const acceptedCount = (this.acceptedMessageCountByCycle.get(cycleId) || 0) + 1;
+            this.acceptedMessageCountByCycle.set(cycleId, acceptedCount);
+            if (this.pendingOcrReconnectDispatch?.interruptedCycleId === cycleId) {
+              this.pendingOcrReconnectDispatch = undefined;
+              this.logger.success(
+                "[ROMANEIO] O WhatsApp aceitou a mensagem antes de concluir a queda. Reenvio após reconexão cancelado."
+              );
+            }
+            const ackAt = Date.now();
+            if (!timeline.firstAckAt) {
+              timeline.firstAckAt = new Date(ackAt).toISOString();
+              timeline.firstAckMs = Math.max(0, ackAt - sendStartedAt);
+              timeline.ackWaitMs = Math.max(0, ackAt - new Date(timeline.firstRelayCalledAt || timeline.sendStartedAt).getTime());
+            }
+            this.appendRouteMessageId(cycleId, messageId);
+            this.addTimelineEvent(timeline, `Mensagem ${messageNumber} confirmada`, ackAt, "success");
+            this.logger.info(`Mensagem alvo ${messageNumber} aceita pelo servidor do WhatsApp. Aguardando retorno no grupo.`);
+            return messageId;
+          });
+        if (index === 0 && !speculativeSecondLane) {
+          void finalPromise.then(releaseFirstMessageLane, releaseFirstMessageLane);
+        }
 
-        const initialPromise = this.withTimeout(firstAttempt, TARGET_ACK_TIMEOUT_MS).then(
+        const timedInitialAttempt = index === 0
+          ? this.withTimeout(firstAttempt, TARGET_ACK_TIMEOUT_MS)
+          : firstMessageLane.then(() => this.withTimeout(firstAttempt, TARGET_ACK_TIMEOUT_MS));
+        const initialPromise = timedInitialAttempt.then(
           () => ({ status: "acked" as const, messageNumber }),
           (error) => {
             const message = this.getErrorMessage(error);
@@ -3173,6 +3555,7 @@ export class BotService extends EventEmitter {
       this.updateAdaptiveOpeningSettle(timeline);
       this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length, timeline, trigger, mode: this.monitoringMode });
       this.stopMonitoringAfterTargetDispatch(cycleId);
+      if (this.activeSignalProfileTimeline === timeline) this.activeSignalProfileTimeline = undefined;
     }
   }
 
@@ -3191,15 +3574,6 @@ export class BotService extends EventEmitter {
       const messageNumber = index + 1;
       if (result.status === "fulfilled" && result.value) {
         confirmed += 1;
-        const ackAt = Date.now();
-        if (!input.timeline.firstAckAt) {
-          input.timeline.firstAckAt = new Date(ackAt).toISOString();
-          input.timeline.firstAckMs = Math.max(0, ackAt - input.sendStartedAt);
-          input.timeline.ackWaitMs = Math.max(0, ackAt - new Date(input.timeline.firstRelayCalledAt || input.timeline.sendStartedAt).getTime());
-        }
-        this.appendRouteMessageId(input.cycleId, typeof result.value === "string" ? result.value : undefined);
-        this.addTimelineEvent(input.timeline, `Mensagem ${messageNumber} confirmada`, ackAt, "success");
-        this.logger.info(`Mensagem alvo ${messageNumber} aceita pelo servidor do WhatsApp. Aguardando retorno no grupo.`);
         return;
       }
 
@@ -3233,6 +3607,8 @@ export class BotService extends EventEmitter {
     this.addStatusEvent("dispatch", `${triggerLabelForEvent(input.trigger)} confirmado: ${confirmed}/${input.total}.`);
     this.activeRouteByCycle.delete(input.cycleId);
     this.routeMessageIdsByCycle.delete(input.cycleId);
+    this.acceptedMessageCountByCycle.delete(input.cycleId);
+    if (this.activeSignalProfileTimeline === input.timeline) this.activeSignalProfileTimeline = undefined;
   }
 
   private async retryTargetMessageAfterFailure(
@@ -3244,6 +3620,14 @@ export class BotService extends EventEmitter {
     timeline: RouteDispatchTimeline
   ): Promise<string | false> {
     const firstMessage = this.getErrorMessage(error);
+    if (this.isConnectionUnavailableError(firstMessage)) {
+      this.deferOcrDispatchUntilReconnect(
+        this.activeSendTrigger === "manual" ? "manual" : "automatic",
+        cycleId
+      );
+      if (cycleId === this.sendCycleId) this.sendCycleId += 1;
+      return false;
+    }
     if (!this.isRetryableSendError(firstMessage)) throw error;
 
     timeline.retryUsed = true;
@@ -3299,9 +3683,15 @@ export class BotService extends EventEmitter {
     if (this.targetSimulationCycles.has(cycleId)) return;
     if (this.monitoringMode !== "target") return;
     if (!this.monitoringEnabled) return;
+    if (this.pendingOcrReconnectDispatch?.interruptedCycleId === cycleId) {
+      this.logger.warning("[ROMANEIO] Disparo interrompido pela conexão. Bot continua armado aguardando reconexão.");
+      this.emitSnapshot();
+      return;
+    }
 
     this.monitoringEnabled = false;
     this.armedAt = undefined;
+    this.invalidateInternalWarmState();
     this.clearHealthCheckTimer();
     this.clearWarmKeepAliveTimer();
     this.logger.warning("Disparo no grupo alvo finalizado. Bot parado automaticamente para evitar mensagens duplicadas.");
@@ -3543,6 +3933,19 @@ export class BotService extends EventEmitter {
     );
   }
 
+  private isConnectionUnavailableError(errorMessage: string) {
+    const normalizedMessage = errorMessage.toLowerCase();
+    return (
+      normalizedMessage.includes("connection closed") ||
+      normalizedMessage.includes("connection is closed") ||
+      normalizedMessage.includes("socket closed") ||
+      normalizedMessage.includes("socket is closed") ||
+      normalizedMessage.includes("websocket") ||
+      normalizedMessage.includes("not connected") ||
+      normalizedMessage.includes("não há conexão ativa")
+    );
+  }
+
   private isNotAcceptableError(errorMessage: string) {
     return errorMessage.toLowerCase().includes("not-acceptable");
   }
@@ -3565,6 +3968,25 @@ export class BotService extends EventEmitter {
     }
   }
 
+  private shouldUseSpeculativeSecondLane(trigger: RouteDispatch["trigger"]) {
+    if (
+      trigger !== "automatic" ||
+      this.monitoringMode !== "target" ||
+      this.getCurrentInternalWarmState() !== "ready"
+    ) {
+      return false;
+    }
+
+    const recent = this.telemetryStore.all()
+      .filter((event) => event.mode === "target" && event.total > 1)
+      .slice(0, 5);
+    if (recent.length < 3) return false;
+    return recent.every((event) =>
+      event.confirmed === event.total &&
+      event.notAcceptableCount === 0
+    );
+  }
+
   private maybeAlertNotAcceptable(count: number) {
     if (count < NOT_ACCEPTABLE_ALERT_THRESHOLD) return;
     const now = Date.now();
@@ -3583,61 +4005,177 @@ export class BotService extends EventEmitter {
     }, HEALTH_CHECK_INTERVAL_MS);
   }
 
-  private startWarmKeepAlive() {
+  private startWarmKeepAlive(reason: "armado" | "reconexão" = "armado") {
     this.clearWarmKeepAliveTimer();
     const config = this.configStore.load();
-    if (!config.alwaysWarmMode) return;
+    const mandatoryTargetWarm = this.monitoringEnabled && this.monitoringMode === "target";
+    if (!config.alwaysWarmMode && !mandatoryTargetWarm) return Promise.resolve(false);
 
     const intervalMs = this.getWarmKeepAliveIntervalMs(config);
     this.warmKeepAliveIntervalMs = intervalMs;
     this.warmKeepAliveTimer = setInterval(() => {
-      void this.runWarmKeepAlive("timer");
+      void this.runWarmKeepAlive("timer", config);
     }, intervalMs);
 
-    void this.runWarmKeepAlive("armado");
+    const initialWarmup = this.runWarmKeepAlive(reason, config);
+    void initialWarmup.catch(() => undefined);
+    return initialWarmup;
   }
 
-  private async runWarmKeepAlive(reason: "timer" | "armado" = "timer") {
-    const config = this.configStore.load();
-    if (!config.alwaysWarmMode || !this.monitoringEnabled || this.status !== "connected" || !this.sock) return false;
+  private async runWarmKeepAlive(
+    reason: "timer" | "armado" | "reconexão" = "timer",
+    config = this.configStore.load()
+  ) {
+    const mandatoryTargetWarm = this.monitoringEnabled && this.monitoringMode === "target";
+    if (
+      (!config.alwaysWarmMode && !mandatoryTargetWarm) ||
+      !this.monitoringEnabled ||
+      this.status !== "connected" ||
+      !this.sock
+    ) return false;
     if (this.criticalDispatchInProgress || this.activeSendCycle) return false;
+    if (reason === "timer" && (this.processingImageIds.size > 0 || this.ocrRouteSelection.status === "analyzing")) {
+      return false;
+    }
     const nextInterval = this.getWarmKeepAliveIntervalMs(config);
     if (this.warmKeepAliveIntervalMs && nextInterval !== this.warmKeepAliveIntervalMs) {
-      this.startWarmKeepAlive();
+      void this.startWarmKeepAlive(reason === "timer" ? "armado" : reason);
       return true;
     }
 
     const startedAt = Date.now();
+    const forceFullWarm = reason !== "timer";
+    if (forceFullWarm) {
+      this.internalWarmState = "warming";
+      this.emitSnapshot();
+    }
     try {
       const activeGroup = this.getActiveMonitoringGroup(config);
-      if (!activeGroup.jid) return false;
+      if (!activeGroup.jid) {
+        this.internalWarmState = "cold";
+        return false;
+      }
 
-      await this.prewarmActiveChat(activeGroup.jid);
+      let metadata = this.groupMetadataCache.get(activeGroup.jid);
       const shouldRefreshFullMetadata =
-        reason === "armado" ||
-        !this.groupMetadataCache.has(activeGroup.jid) ||
+        forceFullWarm ||
+        !metadata ||
         Date.now() - this.lastFullMetadataWarmAt >= FULL_METADATA_KEEP_ALIVE_INTERVAL_MS;
 
       if (shouldRefreshFullMetadata) {
-        await this.refreshGroupMetadata(activeGroup.jid);
+        metadata = await this.refreshGroupMetadata(activeGroup.jid);
         this.lastFullMetadataWarmAt = Date.now();
       }
+      if (this.criticalDispatchInProgress || this.activeSendCycle) {
+        this.internalWarmState = "cold";
+        this.emitSnapshot();
+        return false;
+      }
+      const shouldWarmActiveChat =
+        forceFullWarm ||
+        Date.now() - this.lastActiveChatWarmAt >= ACTIVE_CHAT_KEEP_ALIVE_INTERVAL_MS;
+      const shouldWarmCrypto =
+        forceFullWarm ||
+        Date.now() - this.lastGroupCryptoWarmAt >= CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS;
+      const shouldWarmSenderKey =
+        forceFullWarm ||
+        Date.now() - this.lastSenderKeyWarmAt >= SENDER_KEY_KEEP_ALIVE_INTERVAL_MS;
+      const shouldMeasureSocketRtt =
+        forceFullWarm ||
+        Date.now() - this.lastSocketRttAt >= SOCKET_RTT_KEEP_ALIVE_INTERVAL_MS;
+      const cryptoSupported =
+        typeof this.sock.getUSyncDevices === "function" &&
+        typeof this.sock.assertSessions === "function";
+      let cryptoReady =
+        !cryptoSupported ||
+        (
+          this.lastGroupCryptoWarmAt > 0 &&
+          Date.now() - this.lastGroupCryptoWarmAt < CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS
+        );
+      let senderKeyReady =
+        this.lastSenderKeyWarmAt > 0 &&
+        Date.now() - this.lastSenderKeyWarmAt < SENDER_KEY_KEEP_ALIVE_INTERVAL_MS;
+      const warmJobs: Promise<unknown>[] = [];
+      if (shouldWarmActiveChat) {
+        warmJobs.push(this.prewarmActiveChat(activeGroup.jid).then(() => {
+          this.lastActiveChatWarmAt = Date.now();
+        }));
+      }
+      if (shouldWarmCrypto && cryptoSupported) {
+        warmJobs.push(this.prewarmGroupCrypto(metadata, forceFullWarm).then((ready) => {
+          cryptoReady = ready;
+        }));
+      }
+      if (shouldWarmSenderKey) {
+        warmJobs.push(this.prewarmGroupSenderKeyMemory(activeGroup.jid).then((ready) => {
+          senderKeyReady = ready;
+        }));
+      }
+      if (shouldMeasureSocketRtt) void this.measureSocketRtt();
+      if (!warmJobs.length) return this.getCurrentInternalWarmState() === "ready";
+      await Promise.all(warmJobs);
+
+      if (this.criticalDispatchInProgress || this.activeSendCycle || !cryptoReady || !senderKeyReady) {
+        this.internalWarmState = "cold";
+        this.emitSnapshot();
+        return false;
+      }
       this.prepareSendPlan();
-      this.lastKeepAliveAt = new Date().toISOString();
+      const finishedAt = Date.now();
+      this.lastKeepAliveAt = new Date(finishedAt).toISOString();
       this.lastKeepAliveDurationMs = Date.now() - startedAt;
+      this.lastInternalWarmAt = this.lastKeepAliveAt;
+      this.lastInternalWarmDurationMs = this.lastKeepAliveDurationMs;
+      this.internalWarmState = "ready";
       this.keepAliveCount += 1;
-      this.emitSnapshot();
+      if (forceFullWarm) {
+        this.logger.info(
+          `Preparação interna concluída em ${this.lastInternalWarmDurationMs}ms: ` +
+          `${this.warmedGroupDeviceCount} dispositivo(s) prontos, sem enviar mensagem.`
+        );
+      }
+      if (forceFullWarm) this.emitSnapshot();
       return true;
     } catch (error) {
       this.lastKeepAliveDurationMs = Date.now() - startedAt;
+      this.lastInternalWarmDurationMs = this.lastKeepAliveDurationMs;
+      this.internalWarmState = "cold";
+      if (forceFullWarm) {
+        this.logger.warning(`Preparação interna incompleta: ${this.getErrorMessage(error)}.`);
+      }
+      this.emitSnapshot();
       return false;
     }
+  }
+
+  private async waitForInitialInternalWarmup(warmup: Promise<boolean>) {
+    return Promise.race([
+      warmup,
+      this.delay(INITIAL_INTERNAL_WARM_WAIT_MS).then(() => false)
+    ]);
   }
 
   private getWarmKeepAliveIntervalMs(config = this.configStore.load()) {
     const configuredInterval = Math.max(15000, config.keepAliveIntervalMs || DEFAULT_KEEP_ALIVE_INTERVAL_MS);
     if (this.monitoringMode !== "target") return Math.max(60000, configuredInterval);
     return Math.min(configuredInterval, this.isCriticalWarmWindow() ? CRITICAL_KEEP_ALIVE_INTERVAL_MS : RACE_KEEP_ALIVE_INTERVAL_MS);
+  }
+
+  private invalidateInternalWarmState(clearCaches = false) {
+    this.internalWarmState = "cold";
+    if (!clearCaches) return;
+    this.lastInternalWarmAt = undefined;
+    this.lastInternalWarmDurationMs = 0;
+    this.lastActiveChatWarmAt = 0;
+    this.lastFullMetadataWarmAt = 0;
+    this.warmedGroupParticipantSignature = "";
+    this.lastGroupCryptoWarmAt = 0;
+    this.lastGroupCryptoWarmDurationMs = 0;
+    this.warmedGroupDeviceCount = 0;
+    this.lastSenderKeyWarmAt = 0;
+    this.lastSenderKeyWarmDurationMs = 0;
+    this.lastSocketRttAt = 0;
+    this.lastSocketRttMs = undefined;
   }
 
   private isCriticalWarmWindow(date = new Date()) {
@@ -3669,10 +4207,25 @@ export class BotService extends EventEmitter {
 
     try {
       this.performanceMetrics.eventLoopLagMs = await this.measureEventLoopLag();
-      await this.prewarmConnection();
+      // O aquecimento dedicado já mantém o alvo pronto. Evite repetir leitura de
+      // configuração, metadados e envelopes em outro timer durante a corrida.
+      if (this.monitoringMode === "target") {
+        if (this.sock?.ws && this.sock.ws.isOpen === false) {
+          throw new Error("WebSocket do WhatsApp não está aberto.");
+        }
+      } else {
+        await this.prewarmConnection();
+      }
+      this.consecutiveHealthCheckFailures = 0;
     } catch (error) {
-      this.logger.warning(`Health check falhou: ${this.getErrorMessage(error)}. Reiniciando conexão.`);
-      await this.restart();
+      this.consecutiveHealthCheckFailures += 1;
+      const detail = this.getErrorMessage(error);
+      if (this.consecutiveHealthCheckFailures === 1 || this.consecutiveHealthCheckFailures % 3 === 0) {
+        this.logger.warning(
+          `Verificação de aquecimento falhou ${this.consecutiveHealthCheckFailures}x: ${detail}. ` +
+          "Mantive a sessão ativa; a reconexão ocorrerá somente se o WhatsApp fechar o socket."
+        );
+      }
     }
   }
 
@@ -3691,7 +4244,14 @@ export class BotService extends EventEmitter {
     if (message) this.logger.info(message);
 
     this.syncMessagesFromConfig();
-    const metadata = await this.refreshGroupMetadata(activeGroup.jid);
+    const cachedMetadata = this.groupMetadataCache.get(activeGroup.jid);
+    const shouldRefreshFullMetadata =
+      !cachedMetadata ||
+      Date.now() - this.lastFullMetadataWarmAt >= FULL_METADATA_KEEP_ALIVE_INTERVAL_MS;
+    const metadata = shouldRefreshFullMetadata
+      ? await this.refreshGroupMetadata(activeGroup.jid)
+      : cachedMetadata;
+    if (shouldRefreshFullMetadata) this.lastFullMetadataWarmAt = Date.now();
     if (metadata?.announce === true) {
       this.groupState = "closed";
     } else if (metadata?.announce === false) {
@@ -3713,7 +4273,12 @@ export class BotService extends EventEmitter {
 
     this.currentUserInTargetGroup = true;
     this.prepareSendPlan();
-    await this.prewarmActiveChat(activeGroup.jid);
+    if (shouldRefreshFullMetadata) {
+      await Promise.all([
+        this.prewarmActiveChat(activeGroup.jid),
+        this.prewarmGroupCrypto(metadata)
+      ]);
+    }
     return true;
   }
 
@@ -3751,6 +4316,114 @@ export class BotService extends EventEmitter {
     ]).catch(() => undefined);
   }
 
+  private deferSecondarySocketTask(task: () => void) {
+    if (this.criticalDispatchInProgress || (this.monitoringEnabled && this.monitoringMode === "target")) {
+      const timer = setTimeout(task, this.criticalDispatchInProgress ? 1500 : 150);
+      timer.unref?.();
+      return;
+    }
+    setImmediate(task);
+  }
+
+  isCriticalDispatchActive() {
+    return this.criticalDispatchInProgress;
+  }
+
+  private async prewarmGroupCrypto(metadata: any, force = false) {
+    if (!this.sock || !metadata?.id || !Array.isArray(metadata.participants)) return false;
+    if (typeof this.sock.getUSyncDevices !== "function" || typeof this.sock.assertSessions !== "function") return false;
+
+    const participantJids = metadata.participants
+      .map((participant: any) => String(participant?.id || ""))
+      .filter(Boolean)
+      .sort();
+    if (!participantJids.length) return false;
+
+    const signature = `${metadata.id}::${participantJids.join("|")}`;
+    const isFresh = signature === this.warmedGroupParticipantSignature &&
+      Date.now() - this.lastGroupCryptoWarmAt < CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS;
+    if (!force && isFresh) return true;
+    if (this.groupCryptoWarmInFlight) return this.groupCryptoWarmInFlight;
+
+    const startedAt = Date.now();
+    const warmPromise = (async () => {
+      try {
+        // Ao armar/reconectar, consulte uma lista realmente fresca. Nos ciclos
+        // periódicos, use o cache do Baileys para não criar tráfego desnecessário.
+        const devices = await this.sock.getUSyncDevices(participantJids, !force, false);
+        const deviceJids = (devices || [])
+          .map((device: any) => String(device?.jid || ""))
+          .filter(Boolean);
+        if (deviceJids.length) await this.sock.assertSessions(deviceJids, false);
+        this.warmedGroupParticipantSignature = signature;
+        this.lastGroupCryptoWarmAt = Date.now();
+        this.lastGroupCryptoWarmDurationMs = this.lastGroupCryptoWarmAt - startedAt;
+        this.warmedGroupDeviceCount = deviceJids.length;
+        if (force) {
+          this.logger.info(`Criptografia do grupo pré-aquecida: ${participantJids.length} participante(s), ${deviceJids.length} dispositivo(s), ${this.lastGroupCryptoWarmDurationMs}ms.`);
+        }
+        return true;
+      } catch (error) {
+        this.lastGroupCryptoWarmDurationMs = Date.now() - startedAt;
+        this.logger.warning(`Pré-aquecimento criptográfico não concluído: ${this.getErrorMessage(error)}.`);
+        return false;
+      }
+    })();
+
+    this.groupCryptoWarmInFlight = warmPromise;
+    try {
+      return await warmPromise;
+    } finally {
+      if (this.groupCryptoWarmInFlight === warmPromise) this.groupCryptoWarmInFlight = undefined;
+    }
+  }
+
+  private async prewarmGroupSenderKeyMemory(jid: string) {
+    const keys = this.sock?.authState?.keys;
+    if (!jid || typeof keys?.get !== "function") {
+      this.lastSenderKeyWarmAt = Date.now();
+      this.lastSenderKeyWarmDurationMs = 0;
+      return true;
+    }
+
+    const startedAt = Date.now();
+    try {
+      await keys.get("sender-key-memory", [jid]);
+      this.lastSenderKeyWarmAt = Date.now();
+      this.lastSenderKeyWarmDurationMs = this.lastSenderKeyWarmAt - startedAt;
+      return true;
+    } catch (error) {
+      this.lastSenderKeyWarmDurationMs = Date.now() - startedAt;
+      this.logger.warning(`Memória criptográfica do grupo não foi aquecida: ${this.getErrorMessage(error)}.`);
+      return false;
+    }
+  }
+
+  private async measureSocketRtt() {
+    this.lastSocketRttAt = Date.now();
+    if (!this.sock || typeof this.sock.query !== "function" || typeof this.sock.generateMessageTag !== "function") {
+      return;
+    }
+
+    const startedAt = process.hrtime.bigint();
+    try {
+      const query = this.sock.query({
+        tag: "iq",
+        attrs: {
+          id: this.sock.generateMessageTag(),
+          to: "s.whatsapp.net",
+          type: "get",
+          xmlns: "w:p"
+        },
+        content: [{ tag: "ping", attrs: {} }]
+      });
+      await this.withTimeout(query, 1_500);
+      this.lastSocketRttMs = roundMetric(Number(process.hrtime.bigint() - startedAt) / 1_000_000);
+    } catch {
+      this.lastSocketRttMs = undefined;
+    }
+  }
+
   private getReadinessChecks(): BotReadinessCheck[] {
     const config = this.configStore.load();
     const activeGroup = this.getActiveMonitoringGroup(config);
@@ -3785,6 +4458,11 @@ export class BotService extends EventEmitter {
         id: "group_state",
         label: "Estado do grupo validado",
         ok: this.groupState !== "unknown"
+      },
+      {
+        id: "internal_warm",
+        label: "Preparação interna aquecida",
+        ok: this.getCurrentInternalWarmState() === "ready"
       },
       {
         id: "armed",
@@ -3891,8 +4569,10 @@ export class BotService extends EventEmitter {
   private disposeSocket(socket: any) {
     if (!socket) return;
     try {
+      socket.ev?.removeAllListeners?.("creds.update");
       socket.ev?.removeAllListeners?.("connection.update");
       socket.ev?.removeAllListeners?.("groups.update");
+      socket.ev?.removeAllListeners?.("group-participants.update");
       socket.ev?.removeAllListeners?.("messages.upsert");
       socket.ev?.removeAllListeners?.("messaging-history.set");
       socket.end?.(undefined);
@@ -3916,7 +4596,10 @@ export class BotService extends EventEmitter {
   }
 
   private hasAuthSession() {
-    return fs.existsSync(path.join(this.authDir, "creds.json"));
+    return (
+      fs.existsSync(path.join(this.authDir, "auth.sqlite")) ||
+      fs.existsSync(path.join(this.authDir, "creds.json"))
+    );
   }
 
   private async logoutAndClearSession() {
@@ -3941,8 +4624,7 @@ export class BotService extends EventEmitter {
       this.clearWarmKeepAliveTimer();
     }
 
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
+    this.clearQrCode();
     this.removeAuthDir();
     this.groupState = "unknown";
     this.currentUserInTargetGroup = false;
@@ -4020,6 +4702,10 @@ export class BotService extends EventEmitter {
 
   private removeAuthDir() {
     try {
+      this.destroyAuthState?.();
+      this.destroyAuthState = undefined;
+      this.closeAuthState = undefined;
+      this.flushAuthState = undefined;
       if (fs.existsSync(this.authDir)) {
         fs.rmSync(this.authDir, { recursive: true, force: true });
       }
@@ -4033,7 +4719,15 @@ export class BotService extends EventEmitter {
       clearTimeout(this.pendingCredsSave);
       this.pendingCredsSave = undefined;
     }
+    this.credsSaveDirty = false;
     this.saveCredsNow = undefined;
+  }
+
+  private clearQrCode(resetAttempt = true) {
+    this.qrCode = "";
+    this.qrGeneratedAt = undefined;
+    this.qrExpiresAt = undefined;
+    if (resetAttempt) this.qrAttempt = 0;
   }
 
   private resetPartialQrAuth() {
@@ -4042,9 +4736,7 @@ export class BotService extends EventEmitter {
     this.reconnectAttempts = 0;
     this.unknownDisconnects = 0;
     this.qrReceivedInCurrentConnection = false;
-    this.qrCode = "";
-    this.pairingCode = "";
-    this.pairingCodeRequested = false;
+    this.clearQrCode();
     this.setStatus("reconnecting");
   }
 
@@ -4160,4 +4852,8 @@ export class BotService extends EventEmitter {
   private normalizePhone(value: string) {
     return String(value || "").split("@")[0].split(":")[0].replace(/\D/g, "");
   }
+}
+
+function roundMetric(value: number) {
+  return Math.round(value * 1000) / 1000;
 }

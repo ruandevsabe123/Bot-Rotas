@@ -84,6 +84,18 @@ export type BotPerformanceMetrics = {
   lastKeepAliveAt?: string;
   lastKeepAliveDurationMs?: number;
   keepAliveCount?: number;
+  internalWarmState?: "cold" | "warming" | "ready";
+  lastInternalWarmAt?: string;
+  lastInternalWarmDurationMs?: number;
+  internalWarmAgeMs?: number;
+  lastDispatchWasWarm?: boolean;
+  lastGroupCryptoWarmDurationMs?: number;
+  warmedGroupDeviceCount?: number;
+  lastSenderKeyWarmDurationMs?: number;
+  authBackend?: "sqlite" | "multi-file";
+  socketRttMs?: number;
+  workerProcessId?: number;
+  workerRestartCount?: number;
   telemetryCount?: number;
   averageFirstRelayMs?: number;
   p95FirstRelayMs?: number;
@@ -124,6 +136,16 @@ export type RouteDispatchTimeline = {
   notAcceptableCount: number;
   mode: "normal" | "race";
   openingSignal?: "group_update" | "opening_message" | "already_open" | "image_ready" | "manual" | "simulation";
+  internalWarmState?: "cold" | "warming" | "ready";
+  internalWarmAgeMs?: number;
+  authBackend?: "sqlite" | "multi-file";
+  warmedDeviceCount?: number;
+  socketRttMs?: number;
+  signalKeyReadMs?: number;
+  signalKeyWriteMs?: number;
+  signalKeyReadOps?: number;
+  signalKeyWriteOps?: number;
+  secondLaneMode?: "ack-gated" | "speculative";
   events: RouteDispatchTimelineEvent[];
 };
 
@@ -185,7 +207,9 @@ export type BotSnapshot = {
   status: BotStatus;
   groupState: BotGroupState;
   qrCode: string;
-  pairingCode?: string;
+  qrGeneratedAt?: string;
+  qrExpiresAt?: string;
+  qrAttempt?: number;
   config: BotConfig;
   groups: BotGroup[];
   readinessChecks: BotReadinessCheck[];
@@ -258,11 +282,31 @@ export type AdminImageUsageSnapshot = {
 
 export type PanelUserRole = "client" | "admin";
 
+export type AppReleaseChange = {
+  title: string;
+  description: string;
+};
+
+export type AppRelease = {
+  id: string;
+  version: string;
+  publishedAt: string;
+  title: string;
+  summary: string;
+  changes: AppReleaseChange[];
+};
+
+export type ReleaseNotice = {
+  release: AppRelease;
+  shouldShow: boolean;
+};
+
 export type PanelUser = {
   email: string;
   role: PanelUserRole;
   blocked?: boolean;
   color?: string;
+  impersonatedBy?: string;
 };
 
 export type LeaderContact = {
@@ -590,7 +634,7 @@ export type DesktopApi = {
   stopBot: () => Promise<BotSnapshot>;
   restartBot: () => Promise<BotSnapshot>;
   clearSession: () => Promise<BotSnapshot>;
-  requestPairingCode: (payload: { phoneNumber: string }) => Promise<BotSnapshot>;
+  refreshQrCode: () => Promise<BotSnapshot>;
   factoryReset: () => Promise<BotSnapshot>;
   clearLogs: () => Promise<BotSnapshot>;
   refreshGroups: () => Promise<BotSnapshot>;

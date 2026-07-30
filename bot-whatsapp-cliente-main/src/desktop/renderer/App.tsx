@@ -42,6 +42,7 @@ import {
   AdminUserDetail,
   AdminUserSummary,
   AdminUsersSnapshot,
+  AppRelease,
   BotSnapshot,
   MonitoredRoute,
   OcrRouteOption,
@@ -62,13 +63,16 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminCommandCenter } from "./admin/AdminCommandCenter";
 import { enableWebPushNotifications } from "./pushNotifications";
 import {
+  acknowledgeRelease,
   botApi,
   clearAdminMaintenance,
   confirmRomaneio,
+  enterClientMode,
   getRomaneio,
   getAdminMonitor,
   getAdminUserDetail,
   getPanelMe,
+  getReleaseNotice,
   getPanelToken,
   getPanelUserEmail,
   getPanelUserRole,
@@ -77,6 +81,7 @@ import {
   markSupportMessageRead,
   panelLogin,
   rejectAdminRoute,
+  returnToAdminMode,
   saveAdminUser,
   saveRomaneioSettings,
   sendSupportMessage,
@@ -576,9 +581,14 @@ function PerformanceStrip({ snapshot }: { snapshot: BotSnapshot }) {
   const metrics = snapshot.performanceMetrics || emptySnapshot.performanceMetrics!;
   const healthLabel = metrics.raceHealth === "excellent" ? "excelente" : metrics.raceHealth === "good" ? "boa" : metrics.raceHealth === "poor" ? "atenção" : metrics.raceHealth === "critical" ? "crítica" : "sem teste";
   const healthTone = metrics.raceHealth === "excellent" || metrics.raceHealth === "good" ? "green" : metrics.raceHealth === "unknown" ? "blue" : "yellow";
+  const warmLabel = metrics.internalWarmState === "ready"
+    ? "aquecido"
+    : metrics.internalWarmState === "warming"
+    ? "aquecendo"
+    : "frio";
   return (
     <section className="performance-strip">
-      <AdminMetric Icon={Zap} tone={healthTone} title="Saúde da corrida" value={healthLabel} detail={`loop ${metrics.eventLoopLagMs || 0}ms`} />
+      <AdminMetric Icon={Zap} tone={healthTone} title="Saúde da corrida" value={healthLabel} detail={`${warmLabel} · loop ${metrics.eventLoopLagMs || 0}ms`} />
       <AdminMetric Icon={Gauge} tone="green" title="ACK P95" value={`${metrics.p95FirstAckMs || 0}ms`} detail={`relay ${metrics.p95FirstRelayMs || 0}ms`} />
       <AdminMetric Icon={Activity} tone={(metrics.notAcceptableCount || 0) ? "yellow" : "blue"} title="Retorno do grupo" value={metrics.lastFirstGroupEchoMs === undefined ? "—" : `${metrics.lastFirstGroupEchoMs}ms`} detail={(metrics.notAcceptableCount || 0) ? `${metrics.notAcceptableCount} recusas` : "sem recusa"} />
       <AdminMetric Icon={Wifi} tone={snapshot.status === "connected" ? "green" : "yellow"} title="Conexão" value={snapshot.status === "connected" ? "online" : "atenção"} detail={snapshot.monitoringEnabled ? `armado há ${formatDuration(metrics.armedIdleMs || 0)}` : "aguardando operação"} />
@@ -2677,6 +2687,59 @@ function OcrRouteApprovalPanel({
   );
 }
 
+function ReleaseDialog({
+  release,
+  busy,
+  error,
+  onAcknowledge
+}: {
+  release: AppRelease;
+  busy: boolean;
+  error?: string;
+  onAcknowledge: () => void;
+}) {
+  const publishedAt = new Date(release.publishedAt);
+  const publishedLabel = Number.isNaN(publishedAt.getTime())
+    ? ""
+    : publishedAt.toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" });
+
+  return (
+    <div className="modal-backdrop release-backdrop" role="presentation">
+      <section className="release-dialog" role="dialog" aria-modal="true" aria-labelledby="release-title">
+        <div className="release-heading">
+          <span className="release-icon" aria-hidden="true"><Sparkles size={24} /></span>
+          <div>
+            <p className="panel-label">Nova versão disponível</p>
+            <h2 id="release-title">{release.title}</h2>
+          </div>
+        </div>
+        <div className="release-meta">
+          <strong>Versão {release.version}</strong>
+          {publishedLabel ? <span>{publishedLabel}</span> : null}
+        </div>
+        <p className="release-summary">{release.summary}</p>
+        <div className="release-change-list">
+          {release.changes.map((change) => (
+            <div className="release-change" key={change.title}>
+              <CheckCircle2 size={19} aria-hidden="true" />
+              <span>
+                <strong>{change.title}</strong>
+                <small>{change.description}</small>
+              </span>
+            </div>
+          ))}
+        </div>
+        {error ? <p className="login-error">{error}</p> : null}
+        <div className="confirmation-actions">
+          <button className="button primary" disabled={busy} type="button" onClick={onAcknowledge}>
+            {busy ? "Salvando..." : "Entendi, continuar"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<BotSnapshot>(emptySnapshot);
   const [busy, setBusy] = useState(false);
@@ -2689,6 +2752,7 @@ export default function App() {
   const [authenticated, setAuthenticated] = useState(Boolean(window.botApi || getPanelToken()));
   const [userEmail, setUserEmail] = useState(getPanelUserEmail());
   const [userRole, setUserRole] = useState<PanelUserRole>(getPanelUserRole());
+  const [impersonatedBy, setImpersonatedBy] = useState("");
   const [sessionChecked, setSessionChecked] = useState(Boolean(window.botApi || !getPanelToken()));
   const [loginError, setLoginError] = useState("");
   const [alertFlash, setAlertFlash] = useState(false);
@@ -2704,6 +2768,9 @@ export default function App() {
   const [incidentReason, setIncidentReason] = useState("");
   const [incidentClock, setIncidentClock] = useState(Date.now());
   const [notificationStatus, setNotificationStatus] = useState("");
+  const [releaseNotice, setReleaseNotice] = useState<AppRelease>();
+  const [releaseAcknowledgeBusy, setReleaseAcknowledgeBusy] = useState(false);
+  const [releaseError, setReleaseError] = useState("");
   const connectionSectionRef = useRef<HTMLElement | null>(null);
 
   function showActionToast(message: string, tone?: ActionToast["tone"]) {
@@ -2725,6 +2792,7 @@ export default function App() {
     setPanelPassword("");
     setUserEmail("");
     setUserRole("client");
+    setImpersonatedBy("");
     setAuthenticated(false);
     setSessionChecked(true);
     if (message) setLoginError(message);
@@ -2739,6 +2807,7 @@ export default function App() {
         if (!mounted) return;
         setUserEmail(user.email);
         setUserRole(user.role);
+        setImpersonatedBy(user.impersonatedBy || "");
         setSessionChecked(true);
         setLoginError("");
       })
@@ -2817,6 +2886,21 @@ export default function App() {
       document.removeEventListener("visibilitychange", refreshAfterBackground);
       window.removeEventListener("focus", refreshAfterBackground);
       window.removeEventListener("pageshow", refreshAfterBackground);
+    };
+  }, [authenticated, userRole]);
+
+  useEffect(() => {
+    if (!authenticated || window.botApi) return;
+    let mounted = true;
+    getReleaseNotice()
+      .then((notice) => {
+        if (!mounted || !notice.shouldShow) return;
+        setReleaseNotice(notice.release);
+        setReleaseError("");
+      })
+      .catch(() => undefined);
+    return () => {
+      mounted = false;
     };
   }, [authenticated, userRole]);
 
@@ -3357,6 +3441,51 @@ export default function App() {
     }
   }
 
+  async function handleAcknowledgeRelease() {
+    if (!releaseNotice) return;
+    setReleaseAcknowledgeBusy(true);
+    setReleaseError("");
+    try {
+      await acknowledgeRelease(releaseNotice.id);
+      setReleaseNotice(undefined);
+    } catch (error) {
+      setReleaseError(error instanceof Error ? error.message : "Não consegui confirmar a leitura. Tente novamente.");
+    } finally {
+      setReleaseAcknowledgeBusy(false);
+    }
+  }
+
+  async function handleEnterClientMode(email: string) {
+    const user = await enterClientMode(email);
+    setUserEmail(user.email);
+    setUserRole(user.role);
+    setImpersonatedBy(user.impersonatedBy || "");
+    setReleaseNotice(undefined);
+    setActiveTab("home");
+  }
+
+  async function handleReturnToAdminMode() {
+    setBusy(true);
+    try {
+      const user = await returnToAdminMode();
+      setUserEmail(user.email);
+      setUserRole(user.role);
+      setImpersonatedBy("");
+      setReleaseNotice(undefined);
+      setLoginError("");
+    } catch (error) {
+      setConfirmation({
+        title: "Não consegui voltar ao admin",
+        message: error instanceof Error ? error.message : "A sessão de teste não pôde ser encerrada.",
+        details: ["Saia da conta e entre novamente com o usuário administrador se o problema continuar."],
+        confirmLabel: "Fechar",
+        onConfirm: () => undefined
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function snoozePendingClientIncident() {
     if (!pendingClientIncident || !pendingIncidentSnoozeDelay) return;
     await runAction(() => botApi.snoozeRouteIncident({ routeId: pendingClientIncident.id }));
@@ -3375,6 +3504,7 @@ export default function App() {
       const user = await panelLogin(email, password);
       setUserEmail(user.email);
       setUserRole(user.role);
+      setImpersonatedBy("");
       setSessionChecked(true);
       setAuthenticated(true);
       setLoginError("");
@@ -3395,10 +3525,21 @@ export default function App() {
 
   if (userRole === "admin") {
     return (
-      <AdminCommandCenter
-        userEmail={userEmail}
-        onLogout={() => logout("Entre novamente para continuar.")}
-      />
+      <>
+        <AdminCommandCenter
+          userEmail={userEmail}
+          onLogout={() => logout("Entre novamente para continuar.")}
+          onEnterClientMode={handleEnterClientMode}
+        />
+        {releaseNotice ? (
+          <ReleaseDialog
+            release={releaseNotice}
+            busy={releaseAcknowledgeBusy}
+            error={releaseError}
+            onAcknowledge={() => void handleAcknowledgeRelease()}
+          />
+        ) : null}
+      </>
     );
   }
 
@@ -3409,6 +3550,18 @@ export default function App() {
           <p className="eyebrow">Central operacional</p>
           <h1>Bot Rotas</h1>
         </div>
+        {impersonatedBy ? (
+          <div className="client-mode-banner">
+            <span>
+              <small>Modo cliente de teste</small>
+              <strong>{userEmail}</strong>
+            </span>
+            <button className="button" disabled={busy} type="button" onClick={() => void handleReturnToAdminMode()}>
+              <LogOut size={17} />
+              Voltar ao admin
+            </button>
+          </div>
+        ) : null}
         <div className="group-pill">
           <span>{snapshot.monitoringMode === "test" ? "Teste ativo" : "Grupo alvo"}</span>
           <strong>{snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel}</strong>
@@ -3448,9 +3601,11 @@ export default function App() {
               <QrCodeBox
                 qrCode={snapshot.qrCode}
                 status={snapshot.status}
-                pairingCode={snapshot.pairingCode}
+                qrGeneratedAt={snapshot.qrGeneratedAt}
+                qrExpiresAt={snapshot.qrExpiresAt}
+                qrAttempt={snapshot.qrAttempt}
                 busy={busy}
-                onRequestPairingCode={(phoneNumber) => runAction(() => botApi.requestPairingCode({ phoneNumber }))}
+                onRefreshQrCode={() => runAction(botApi.refreshQrCode)}
               />
             ) : null}
           </section>
@@ -3690,6 +3845,14 @@ export default function App() {
       </nav>
 
       {actionToast ? <div className={["action-toast", actionToast.tone ? `tone-${actionToast.tone}` : ""].filter(Boolean).join(" ")}>{actionToast.message}</div> : null}
+      {releaseNotice ? (
+        <ReleaseDialog
+          release={releaseNotice}
+          busy={releaseAcknowledgeBusy}
+          error={releaseError}
+          onAcknowledge={() => void handleAcknowledgeRelease()}
+        />
+      ) : null}
       {groupEditor ? (
         <div className="modal-backdrop" role="presentation">
           <section className="sheet-dialog" role="dialog" aria-modal="true" aria-labelledby="group-editor-title">
