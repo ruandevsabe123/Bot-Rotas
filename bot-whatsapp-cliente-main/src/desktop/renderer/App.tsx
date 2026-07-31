@@ -589,9 +589,9 @@ function PerformanceStrip({ snapshot }: { snapshot: BotSnapshot }) {
   return (
     <section className="performance-strip">
       <AdminMetric Icon={Zap} tone={healthTone} title="Saúde da corrida" value={healthLabel} detail={`${warmLabel} · loop ${metrics.eventLoopLagMs || 0}ms`} />
-      <AdminMetric Icon={Gauge} tone="green" title="ACK P95" value={`${metrics.p95FirstAckMs || 0}ms`} detail={`relay ${metrics.p95FirstRelayMs || 0}ms`} />
-      <AdminMetric Icon={Activity} tone={(metrics.notAcceptableCount || 0) ? "yellow" : "blue"} title="Retorno do grupo" value={metrics.lastFirstGroupEchoMs === undefined ? "—" : `${metrics.lastFirstGroupEchoMs}ms`} detail={(metrics.notAcceptableCount || 0) ? `${metrics.notAcceptableCount} recusas` : "sem recusa"} />
-      <AdminMetric Icon={Wifi} tone={snapshot.status === "connected" ? "green" : "yellow"} title="Conexão" value={snapshot.status === "connected" ? "online" : "atenção"} detail={snapshot.monitoringEnabled ? `armado há ${formatDuration(metrics.armedIdleMs || 0)}` : "aguardando operação"} />
+      <AdminMetric Icon={Gauge} tone="green" title="ACK médio" value={`${metrics.averageFirstAckMs || 0}ms`} detail={`P95 ${metrics.p95FirstAckMs || 0}ms · relay ${metrics.averageFirstRelayMs || 0}ms`} />
+      <AdminMetric Icon={Activity} tone={(metrics.notAcceptableCount || 0) ? "yellow" : "blue"} title="Retorno no grupo" value={`${metrics.averageFirstGroupEchoMs || 0}ms`} detail={(metrics.notAcceptableCount || 0) ? `${metrics.notAcceptableCount} recusas` : `P95 ${metrics.p95FirstGroupEchoMs || 0}ms`} />
+      <AdminMetric Icon={Wifi} tone={snapshot.status === "connected" ? "green" : "yellow"} title="Confirmação média" value={`${metrics.averageTotalDurationMs || 0}ms`} detail={`P95 ${metrics.p95TotalDurationMs || 0}ms · ${metrics.dispatchSuccessRate || 0}% entregue`} />
     </section>
   );
 }

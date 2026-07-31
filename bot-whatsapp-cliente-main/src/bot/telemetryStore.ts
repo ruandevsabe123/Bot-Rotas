@@ -12,7 +12,11 @@ export type DispatchTelemetryEvent = {
   total: number;
   firstRelayMs?: number;
   firstAckMs?: number;
+  firstGroupEchoMs?: number;
   totalDurationMs?: number;
+  internalWarmState?: "cold" | "warming" | "ready";
+  timeoutUsed: boolean;
+  retryUsed: boolean;
   notAcceptableCount: number;
 };
 
@@ -22,6 +26,15 @@ export type DispatchTelemetrySummary = {
   p95FirstRelayMs: number;
   averageFirstAckMs: number;
   p95FirstAckMs: number;
+  averageFirstGroupEchoMs: number;
+  p95FirstGroupEchoMs: number;
+  averageTotalDurationMs: number;
+  p95TotalDurationMs: number;
+  successRate: number;
+  warmDispatchCount: number;
+  coldDispatchCount: number;
+  timeoutCount: number;
+  retryCount: number;
   notAcceptableCount: number;
   lastNotAcceptableAt?: string;
 };
@@ -58,7 +71,11 @@ export class TelemetryStore {
       total: input.total,
       firstRelayMs: input.timeline?.firstRelayCallMs,
       firstAckMs: input.timeline?.firstAckMs,
+      firstGroupEchoMs: input.timeline?.firstGroupEchoMs,
       totalDurationMs: input.timeline?.totalDurationMs,
+      internalWarmState: input.timeline?.internalWarmState,
+      timeoutUsed: Boolean(input.timeline?.timeoutUsed),
+      retryUsed: Boolean(input.timeline?.retryUsed),
       notAcceptableCount: input.timeline?.notAcceptableCount || 0
     };
 
@@ -67,11 +84,13 @@ export class TelemetryStore {
     return event;
   }
 
-  summary(windowMs = 1000 * 60 * 60 * 24 * 30): DispatchTelemetrySummary {
+  summary(windowMs = 1000 * 60 * 60 * 24 * 7): DispatchTelemetrySummary {
     const cutoff = Date.now() - windowMs;
     const events = this.getEvents().filter((event) => new Date(event.timestamp).getTime() >= cutoff);
     const firstRelay = events.map((event) => event.firstRelayMs).filter((value): value is number => Number.isFinite(value));
     const firstAck = events.map((event) => event.firstAckMs).filter((value): value is number => Number.isFinite(value));
+    const firstGroupEcho = events.map((event) => event.firstGroupEchoMs).filter((value): value is number => Number.isFinite(value));
+    const totalDuration = events.map((event) => event.totalDurationMs).filter((value): value is number => Number.isFinite(value));
     const notAcceptableEvents = events.filter((event) => event.notAcceptableCount > 0);
 
     return {
@@ -80,6 +99,15 @@ export class TelemetryStore {
       p95FirstRelayMs: percentile(firstRelay, 95),
       averageFirstAckMs: average(firstAck),
       p95FirstAckMs: percentile(firstAck, 95),
+      averageFirstGroupEchoMs: average(firstGroupEcho),
+      p95FirstGroupEchoMs: percentile(firstGroupEcho, 95),
+      averageTotalDurationMs: average(totalDuration),
+      p95TotalDurationMs: percentile(totalDuration, 95),
+      successRate: rate(events.reduce((total, event) => total + event.confirmed, 0), events.reduce((total, event) => total + event.total, 0)),
+      warmDispatchCount: events.filter((event) => event.internalWarmState === "ready").length,
+      coldDispatchCount: events.filter((event) => event.internalWarmState === "cold" || event.internalWarmState === "warming").length,
+      timeoutCount: events.filter((event) => event.timeoutUsed).length,
+      retryCount: events.filter((event) => event.retryUsed).length,
       notAcceptableCount: events.reduce((total, event) => total + event.notAcceptableCount, 0),
       lastNotAcceptableAt: notAcceptableEvents[0]?.timestamp
     };
@@ -119,7 +147,13 @@ export class TelemetryStore {
       total: Number(input.total || 0),
       firstRelayMs: Number.isFinite(Number(input.firstRelayMs)) ? Number(input.firstRelayMs) : undefined,
       firstAckMs: Number.isFinite(Number(input.firstAckMs)) ? Number(input.firstAckMs) : undefined,
+      firstGroupEchoMs: Number.isFinite(Number(input.firstGroupEchoMs)) ? Number(input.firstGroupEchoMs) : undefined,
       totalDurationMs: Number.isFinite(Number(input.totalDurationMs)) ? Number(input.totalDurationMs) : undefined,
+      internalWarmState: input.internalWarmState === "ready" || input.internalWarmState === "warming" || input.internalWarmState === "cold"
+        ? input.internalWarmState
+        : undefined,
+      timeoutUsed: Boolean(input.timeoutUsed),
+      retryUsed: Boolean(input.retryUsed),
       notAcceptableCount: Number(input.notAcceptableCount || 0)
     };
   }
@@ -154,4 +188,9 @@ function percentile(values: number[], pct: number) {
   const sorted = [...values].sort((a, b) => a - b);
   const index = Math.min(sorted.length - 1, Math.ceil((pct / 100) * sorted.length) - 1);
   return Math.round(sorted[index] || 0);
+}
+
+function rate(numerator: number, denominator: number) {
+  if (!denominator) return 0;
+  return Math.round((numerator / denominator) * 100);
 }

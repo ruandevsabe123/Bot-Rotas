@@ -101,6 +101,15 @@ export type BotPerformanceMetrics = {
   p95FirstRelayMs?: number;
   averageFirstAckMs?: number;
   p95FirstAckMs?: number;
+  averageFirstGroupEchoMs?: number;
+  p95FirstGroupEchoMs?: number;
+  averageTotalDurationMs?: number;
+  p95TotalDurationMs?: number;
+  dispatchSuccessRate?: number;
+  warmDispatchCount?: number;
+  coldDispatchCount?: number;
+  timeoutCount?: number;
+  retryCount?: number;
   notAcceptableCount?: number;
   lastNotAcceptableAt?: string;
   criticalWarmMode?: boolean;

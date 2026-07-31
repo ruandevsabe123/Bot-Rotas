@@ -18,7 +18,7 @@ function createBot() {
   return { bot, directory };
 }
 
-test("dispara imediatamente ao armar se o grupo já estiver aberto", () => {
+test("ao armar com grupo aberto espera o próximo ciclo antes do automático", () => {
   const { bot, directory } = createBot();
   try {
     bot.monitoringEnabled = true;
@@ -35,9 +35,8 @@ test("dispara imediatamente ao armar se o grupo já estiver aberto", () => {
       return true;
     };
 
-    assert.equal(bot.dispatchIfGroupAlreadyOpen("armado"), true);
-    assert.equal(called[1], "automatic");
-    assert.equal(called[3], "already_open");
+    assert.equal(bot.dispatchIfGroupAlreadyOpen("armado"), false);
+    assert.equal(called, undefined);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

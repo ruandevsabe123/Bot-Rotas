@@ -346,6 +346,15 @@ export class BotService extends EventEmitter {
         p95FirstRelayMs: telemetry.p95FirstRelayMs,
         averageFirstAckMs: telemetry.averageFirstAckMs,
         p95FirstAckMs: telemetry.p95FirstAckMs,
+        averageFirstGroupEchoMs: telemetry.averageFirstGroupEchoMs,
+        p95FirstGroupEchoMs: telemetry.p95FirstGroupEchoMs,
+        averageTotalDurationMs: telemetry.averageTotalDurationMs,
+        p95TotalDurationMs: telemetry.p95TotalDurationMs,
+        dispatchSuccessRate: telemetry.successRate,
+        warmDispatchCount: telemetry.warmDispatchCount,
+        coldDispatchCount: telemetry.coldDispatchCount,
+        timeoutCount: telemetry.timeoutCount,
+        retryCount: telemetry.retryCount,
         notAcceptableCount: telemetry.notAcceptableCount,
         lastNotAcceptableAt: telemetry.lastNotAcceptableAt,
         criticalWarmMode: this.isCriticalWarmWindow(),
@@ -2125,6 +2134,13 @@ export class BotService extends EventEmitter {
 
   private dispatchIfGroupAlreadyOpen(reason: "armado" | "reconexão") {
     if (!this.monitoringEnabled || this.monitoringMode !== "target" || this.groupState !== "open") return false;
+    if (reason === "armado") {
+      // Ao iniciar o automático com o grupo já aberto, aguarda um ciclo novo.
+      // Isso evita entrar em uma abertura que começou antes de o bot ser armado.
+      this.grupoJaFechouDepoisDoInicio = false;
+      this.logger.info("Grupo já estava aberto ao armar o bot. Aguardando fechar e abrir novamente para enviar automaticamente.");
+      return false;
+    }
     if (this.preparedTargetDispatchMode === "ocr" && !this.pendingOcrMessages.length) {
       this.logger.info(`Grupo já está aberto após ${reason}. O bot imagem enviará assim que uma rota segura estiver pronta.`);
       return false;
