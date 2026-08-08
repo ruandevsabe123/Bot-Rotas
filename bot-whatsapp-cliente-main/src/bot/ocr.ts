@@ -821,12 +821,17 @@ function extractOnlyGaiolaCode(text: string) {
 function collectGaiolaCodes(text: string) {
   const matches = [...text.matchAll(/\b([a-z])\s*[-.:]?\s*(\d{1,2})\b/gi)];
   return matches
-    .map((match) => `${match[1].toUpperCase()}-${match[2]}`)
+    .map((match) => `${match[1] === "l" ? "I" : match[1].toUpperCase()}-${match[2]}`)
     .filter((code) => !/^AT-\d/i.test(code));
 }
 
 function extractMisreadLeadingICode(text: string) {
-  const match = normalizeOcrToken(text).match(/^\s*[|1il]\s*-\s*(\d{1,2})\b/i);
+  const normalized = String(text || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[()[\]{}]/g, " ")
+    .trim();
+  const match = normalized.match(/^\s*[|1il]\s*-\s*(\d{1,2})\b/i);
   return match ? `I-${match[1]}` : "";
 }
 

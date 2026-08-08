@@ -232,6 +232,21 @@ test("mantém Parque Guarus configurado quando I-24 é lido como 1-24", () => {
   assert.equal(result[0].safeForAutomatic, true);
 });
 
+test("normaliza I-1 lido como 1-1 ou l-1 sem transformar H-1 real", () => {
+  const readings = ["1-1", "l-1", "|-1", "H-1"].map((code) => ({
+    text: `${code} AT202607177TESTE 80 Campos dos Goytacazes Centro`,
+    source: `codigo-${code}`,
+    lines: [ocrLine(`${code} AT202607177TESTE 80 Campos dos Goytacazes Centro`, 10, 40)]
+  }));
+
+  assert.deepEqual(readings.map((reading) => findAllGaiolaCodesFromOcr(reading)[0]?.code), [
+    "I-1",
+    "I-1",
+    "I-1",
+    "H-1"
+  ]);
+});
+
 test("não confunde Parque Rodoviário com Rosário", () => {
   const line = ocrLine("H-20 AT202607177TESTE 80 Campos dos Goytacazes Rosário", 10, 40);
   const reading = { text: line.text, source: "foto-real", lines: [line] };

@@ -20,6 +20,7 @@ import {
   RefreshCw,
   RotateCcw,
   Search,
+  Send,
   Settings,
   ShieldCheck,
   Trash2,
@@ -69,7 +70,7 @@ type AdminCommandCenterProps = {
   onEnterClientMode: (email: string) => void | Promise<void>;
 };
 
-type AdminPage = "today" | "dashboard" | "clients" | "validations" | "reactions" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
+type AdminPage = "today" | "operations" | "dashboard" | "clients" | "validations" | "reactions" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
 type DatePreset = "today" | "7d" | "30d" | "all";
 type DecisionFilter = "all" | "pending" | "validated" | "rejected" | "leader" | "removed";
 type ModeFilter = "all" | "target" | "test" | "manual" | "automatic" | "ocr" | "warmup" | "simulation";
@@ -83,6 +84,7 @@ type UserEditorState = {
   role: PanelUserRole;
   blocked: boolean;
   color: string;
+  dispatchPriorityLevel: number;
 };
 
 type RejectRequest = {
@@ -110,7 +112,8 @@ const emptyEditor: UserEditorState = {
   password: "",
   role: "client",
   blocked: false,
-  color: "#38bdf8"
+  color: "#38bdf8",
+  dispatchPriorityLevel: 0
 };
 
 const REAL_VALIDATION_GROUP = "MOTORISTAS - CAMPOS DOS GOYTACAZES";
@@ -259,7 +262,7 @@ function isRealValidationRoute(route: RouteDispatch) {
   const groupName = normalizeAdminText(route.groupName);
   const groupJid = normalizeAdminText(route.groupJid);
   const sentInRealGroup = groupName === targetGroup || groupName.includes(targetGroup) || groupJid.includes(targetGroup);
-  return (sentInRealGroup || Boolean(route.ocr)) && route.mode === "target" && !["warmup", "simulation", "target-simulation"].includes(route.trigger);
+  return sentInRealGroup && route.mode === "target" && !["warmup", "simulation", "target-simulation"].includes(route.trigger);
 }
 
 function needsRealReview(route: RouteDispatch) {
@@ -354,6 +357,17 @@ function UserEditor({
       <label className="adminx-check">
         <input type="checkbox" checked={value.blocked} onChange={(event) => onChange({ ...value, blocked: event.target.checked })} />
         Bloqueado
+      </label>
+      <label className="adminx-field">
+        <span>Prioridade</span>
+        <input
+          aria-label="Prioridade de disparo"
+          min={0}
+          max={5}
+          type="number"
+          value={value.dispatchPriorityLevel}
+          onChange={(event) => onChange({ ...value, dispatchPriorityLevel: Number(event.target.value) })}
+        />
       </label>
       <input type="color" value={value.color} onChange={(event) => onChange({ ...value, color: event.target.value })} />
       <button className="button" type="button" onClick={onCancel}>Cancelar</button>
@@ -769,6 +783,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   );
 
   const realValidationRoutes = visibleRoutes.filter(isRealValidationRoute);
+  const otherHistoryRoutes = visibleRoutes.filter((route) => !isRealValidationRoute(route));
   const validationReviewRoutes = visibleRoutes.filter((route) => needsRealReview(route) && !route.ocr);
   const validationPendingRoutes = realValidationRoutes.filter((route) => routeDecision(route) === "pending" && !route.ocr);
   const reactedImageRoutes = visibleRoutes.filter((route) => Boolean(route.ocr) && hasAnyReaction(route));
@@ -806,9 +821,48 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     ...(support.unread ? [{ id: "support", title: "Mensagens de suporte", detail: `${support.unread} mensagem(ns) ainda não foram lidas.`, target: "support" as AdminPage }] : []),
     ...logs.filter((log) => log.level === "error" && Date.now() - new Date(log.timestamp).getTime() < 24 * 60 * 60 * 1000).slice(-5).reverse().map((log) => ({ id: `error-${log.id}`, title: "Erro recente no bot", detail: `${log.clientEmail}: ${log.message}`, target: "logs" as AdminPage }))
   ].slice(0, 10);
+  const leaderPhones = useMemo(() => new Set(leaders.map((leader) => normalizeAdminText(leader.phone).replace(/\D/g, ""))), [leaders]);
+  const leaderCandidates = useMemo(() => {
+    const candidates = new Map<string, { phone: string; name: string; count: number; lastAt: string }>();
+    routes.routes.forEach((route) => {
+      route.reactions.forEach((reaction) => {
+        const phone = String(reaction.senderPhone || reaction.senderIdentifiers?.[0] || "").replace(/\D/g, "");
+        if (!phone || leaderPhones.has(phone) || reaction.isAdmin) return;
+        const current = candidates.get(phone);
+        const name = reaction.leaderName || `Contato ${phone.slice(-4)}`;
+        const lastAt = reaction.timestamp || route.updatedAt || route.createdAt;
+        candidates.set(phone, {
+          phone,
+          name: current?.name || name,
+          count: (current?.count || 0) + 1,
+          lastAt: !current || new Date(lastAt).getTime() > new Date(current.lastAt).getTime() ? lastAt : current.lastAt
+        });
+      });
+    });
+    return Array.from(candidates.values())
+      .sort((a, b) => b.count - a.count || new Date(b.lastAt).getTime() - new Date(a.lastAt).getTime())
+      .slice(0, 8);
+  }, [leaderPhones, routes.routes]);
   const onlineClients = clients.filter((client) => client.presenceStatus === "online").length;
   const connectedBots = clients.filter((client) => ["connected", "connecting", "waiting_qr", "reconnecting"].includes(client.botStatus || "")).length;
   const activeBots = clients.filter((client) => client.monitoringEnabled).length;
+  const liveClients = clients
+    .map((client) => {
+      const clientRoutes = routes.routes.filter((route) => route.clientEmail === client.email);
+      const latestRoute = clientRoutes[0];
+      const recentErrors = logs.filter((log) => log.clientEmail === client.email && log.level === "error").slice(0, 3);
+      const lastSeenMs = client.lastSeenAt ? new Date(client.lastSeenAt).getTime() : 0;
+      const stale = !client.blocked && (!lastSeenMs || Date.now() - lastSeenMs > 1000 * 60 * 30);
+      const needsAttention = Boolean(
+        client.blocked ||
+        stale ||
+        recentErrors.length ||
+        (client.monitoringEnabled && client.botStatus !== "connected")
+      );
+      const statusRank = needsAttention ? 0 : client.monitoringEnabled ? 1 : client.presenceStatus === "online" ? 2 : 3;
+      return { client, latestRoute, recentErrors, stale, needsAttention, statusRank };
+    })
+    .sort((a, b) => a.statusRank - b.statusRank || a.client.email.localeCompare(b.client.email));
   const validatedCount = visibleRoutes.filter((route) => routeDecision(route) === "validated").length;
   const validationRate = visibleRoutes.length ? Math.round((validatedCount / visibleRoutes.length) * 100) : 0;
   const ocrRoutes = visibleRoutes.filter((route) => Boolean(route.ocr));
@@ -1131,9 +1185,13 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
 
   async function saveLeader(event: FormEvent) {
     event.preventDefault();
+    await saveLeaderContact(leaderDraft);
+  }
+
+  async function saveLeaderContact(contact: LeaderContact) {
     setBusy(true);
     try {
-      const response = await saveAdminLeader(leaderDraft);
+      const response = await saveAdminLeader(contact);
       setLeaders(response.leaders);
       setLeaderDraft({ name: "", phone: "" });
       showToast("Líder salvo.");
@@ -1187,6 +1245,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
 
   const pages: Array<{ id: AdminPage; label: string; Icon: typeof Activity; badge?: number }> = [
     { id: "today", label: "Hoje", Icon: Clock3, badge: todayRoutes.length },
+    { id: "operations", label: "Ao vivo", Icon: Activity, badge: liveClients.filter((item) => item.needsAttention).length },
     { id: "dashboard", label: "Dashboard", Icon: Gauge },
     { id: "clients", label: "Clientes", Icon: Users, badge: onlineClients },
     { id: "validations", label: "Validações", Icon: ShieldCheck, badge: validationReviewRoutes.length },
@@ -1370,6 +1429,65 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
           </section>
         ) : null}
 
+        {page === "operations" ? (
+          <section className="adminx-page">
+            <div className="adminx-metrics">
+              <MetricCard Icon={Wifi} tone="green" title="Conectados" value={connectedBots} detail={`${onlineClients} painel(is) online`} />
+              <MetricCard Icon={Bot} tone="blue" title="Armados" value={activeBots} detail="monitorando agora" />
+              <MetricCard Icon={AlertTriangle} tone={liveClients.some((item) => item.needsAttention) ? "red" : "green"} title="Atenção" value={liveClients.filter((item) => item.needsAttention).length} detail="clientes para olhar" />
+              <MetricCard Icon={Send} tone="yellow" title="Últimas 24h" value={todayRoutes.length} detail={`${todayValidationRoutes.length} motoristas`} />
+            </div>
+
+            <section className="adminx-ops-grid">
+              <article className="adminx-panel adminx-panel-wide">
+                <div className="adminx-panel-head">
+                  <div><p>Operação ao vivo</p><h2>Clientes e bots agora</h2></div>
+                  <button className="button" type="button" onClick={refresh}>Atualizar</button>
+                </div>
+                <div className="adminx-ops-client-grid">
+                  {liveClients.map(({ client, latestRoute, recentErrors, stale, needsAttention }) => (
+                    <button className={needsAttention ? "adminx-ops-client attention" : "adminx-ops-client"} key={client.email} type="button" onClick={() => openClient(client.email)} style={colorStyle(client.color)}>
+                      <span className="adminx-client-dot" />
+                      <div>
+                        <strong>{client.email}</strong>
+                        <small>{client.monitoringEnabled ? "Armado" : "Parado"} · {client.botStatus || "bot fechado"} · {client.presenceStatus}</small>
+                        <em>{latestRoute ? `${latestRoute.groupName || latestRoute.groupJid} · ${latestRoute.confirmedCount}/${latestRoute.totalCount}` : "Sem disparos recentes"}</em>
+                      </div>
+                      <StatusPill tone={needsAttention ? "red" : client.monitoringEnabled ? "green" : "muted"}>
+                        {client.blocked ? "Bloqueado" : stale ? "Ausente" : recentErrors.length ? "Erro" : client.monitoringEnabled ? "Ao vivo" : "Ok"}
+                      </StatusPill>
+                    </button>
+                  ))}
+                  {!liveClients.length ? <p className="adminx-empty-text">Nenhum cliente cadastrado.</p> : null}
+                </div>
+              </article>
+
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Eventos recentes</p><h2>Últimos logs críticos</h2></div>
+                  <button className="button" type="button" onClick={() => setPage("logs")}>Logs</button>
+                </div>
+                <LogList logs={logs.filter((log) => log.level === "error" || /not-acceptable|desconect|falh/i.test(log.message)).slice(0, 12)} />
+              </article>
+
+              <article className="adminx-panel">
+                <div className="adminx-panel-head">
+                  <div><p>Fila quente</p><h2>O que decidir</h2></div>
+                </div>
+                <div className="adminx-alert-list">
+                  {importantNotifications.map((item) => (
+                    <button className="adminx-alert-row adminx-alert-yellow" key={`ops-${item.id}`} type="button" onClick={() => setPage(item.target)}>
+                      <strong>{item.title}</strong>
+                      <span>{item.detail}</span>
+                    </button>
+                  ))}
+                  {!importantNotifications.length ? <p className="adminx-empty-text">Sem pendência operacional agora.</p> : null}
+                </div>
+              </article>
+            </section>
+          </section>
+        ) : null}
+
         {page === "dashboard" ? (
           <section className="adminx-page">
             <div className="adminx-metrics">
@@ -1452,7 +1570,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
               <button className="button" type="button" onClick={() => exportRoutes("csv")}><Download size={18} />Exportar rotas</button>
             </div>
             {editor ? <UserEditor value={editor} busy={busy} onChange={setEditor} onCancel={() => setEditor(undefined)} onSave={() => saveUser()} /> : null}
-            <ClientsTable users={users.users} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color })} />
+            <ClientsTable users={users.users} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: user.dispatchPriorityLevel })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: user.dispatchPriorityLevel })} />
           </section>
         ) : null}
 
@@ -1611,11 +1729,31 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
         {page === "history" ? (
           <section className="adminx-page">
             <RouteFilters decisionFilter={decisionFilter} modeFilter={modeFilter} onDecision={setDecisionFilter} onMode={setModeFilter} />
+            <div className="adminx-metrics">
+              <MetricCard Icon={ShieldCheck} tone="yellow" title="Motoristas" value={realValidationRoutes.length} detail="disparos importantes" />
+              <MetricCard Icon={History} tone="blue" title="Outros grupos" value={otherHistoryRoutes.length} detail="também visíveis" />
+              <MetricCard Icon={Send} tone="green" title="Total" value={visibleRoutes.length} detail="todos os disparos" />
+            </div>
             <div className="adminx-page-actions">
               <button className="button" type="button" onClick={() => exportRoutes("csv")}><Download size={18} />CSV</button>
               <button className="button" type="button" onClick={() => exportRoutes("json")}><FileJson size={18} />JSON</button>
             </div>
-            <RouteTable routes={visibleRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+            <section className="adminx-history-split">
+              <article className="adminx-panel adminx-panel-wide adminx-important-panel">
+                <div className="adminx-panel-head">
+                  <div><p>{REAL_VALIDATION_GROUP}</p><h2>Disparos importantes</h2></div>
+                  <StatusPill tone="yellow">{realValidationRoutes.length} registro(s)</StatusPill>
+                </div>
+                <RouteTable routes={realValidationRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+              </article>
+              <article className="adminx-panel adminx-panel-wide">
+                <div className="adminx-panel-head">
+                  <div><p>Demais grupos</p><h2>Todos os outros disparos</h2></div>
+                  <StatusPill tone="blue">{otherHistoryRoutes.length} registro(s)</StatusPill>
+                </div>
+                <RouteTable routes={otherHistoryRoutes} selectedRoutes={selectedRoutes} onSelect={toggleSelected} onOpen={setRouteDetail} onValidate={(id) => decideRoute(id, "validate")} onReject={(id) => requestReject([id])} />
+              </article>
+            </section>
           </section>
         ) : null}
 
@@ -1737,6 +1875,24 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                     Adicionar líder
                   </button>
                 </form>
+                <div className="adminx-leader-candidates">
+                  <div className="adminx-section-title">
+                    <strong>Candidatos detectados</strong>
+                    <span>Telefones que reagiram em rotas e ainda não estão salvos como líderes.</span>
+                  </div>
+                  {leaderCandidates.map((candidate) => (
+                    <article key={candidate.phone}>
+                      <div>
+                        <strong>{candidate.name}</strong>
+                        <span>{candidate.phone} · {candidate.count} reação(ões) · {formatShort(candidate.lastAt)}</span>
+                      </div>
+                      <button className="button primary" disabled={busy} type="button" onClick={() => saveLeaderContact({ name: candidate.name, phone: candidate.phone })}>
+                        Adicionar
+                      </button>
+                    </article>
+                  ))}
+                  {!leaderCandidates.length ? <p className="adminx-empty-text">Nenhum candidato novo detectado.</p> : null}
+                </div>
                 <div className="adminx-leader-list">
                   {leaders.map((leader) => (
                     <article key={leader.phone}>
@@ -1860,6 +2016,7 @@ function RouteTable({
             <th>Cliente</th>
             <th>Modo</th>
             <th>Trigger</th>
+            <th>Grupo</th>
             <th>Mensagens</th>
             <th>Status Final da Reação</th>
             <th>Validação</th>
@@ -1870,11 +2027,17 @@ function RouteTable({
         </thead>
         <tbody>
           {routes.map((route) => (
-            <tr className={`adminx-route-${routeAgeState(route)}`} key={route.id} style={colorStyle(route.clientColor)}>
+            <tr className={`${isRealValidationRoute(route) ? "adminx-route-important" : ""} adminx-route-${routeAgeState(route)}`} key={route.id} style={colorStyle(route.clientColor)}>
               {!readOnly ? <td data-label="Selecionar"><input type="checkbox" checked={selectedRoutes.includes(route.id)} onChange={() => onSelect(route.id)} /></td> : null}
               <td data-label="Cliente"><span className="adminx-client-dot" />{route.clientEmail}</td>
               <td data-label="Modo">{route.ocr ? <StatusPill tone="blue">Imagem</StatusPill> : <StatusPill tone={route.mode === "test" ? "yellow" : "green"}>{route.mode}</StatusPill>}</td>
               <td data-label="Trigger">{triggerLabel(route)}</td>
+              <td data-label="Grupo">
+                <div className="adminx-group-cell">
+                  {isRealValidationRoute(route) ? <StatusPill tone="yellow">Motoristas</StatusPill> : null}
+                  <span>{route.groupName || route.groupJid || "Sem grupo"}</span>
+                </div>
+              </td>
               <td data-label="Mensagens"><button className="adminx-link-cell" type="button" onClick={() => onOpen(route)}>{route.messages.join(" | ") || "Sem mensagem"}</button></td>
               <td data-label="Reação final">
                 <StatusPill tone={route.lastReactionState?.status === "removed" ? "yellow" : route.reactions.length ? "green" : "muted"}>{reactionFinalLabel(route)}</StatusPill>
@@ -1893,7 +2056,7 @@ function RouteTable({
             </tr>
           ))}
           {!routes.length ? (
-            <tr><td colSpan={readOnly ? 9 : 10}><p className="adminx-empty-text">Nenhuma rota encontrada.</p></td></tr>
+            <tr><td colSpan={readOnly ? 10 : 11}><p className="adminx-empty-text">Nenhuma rota encontrada.</p></td></tr>
           ) : null}
         </tbody>
       </table>
@@ -1922,6 +2085,7 @@ function ClientsTable({
             <th>Painel</th>
             <th>Bot</th>
             <th>Monitoramento</th>
+            <th>Prioridade</th>
             <th>Último visto</th>
             <th>Uso</th>
             <th>Ações</th>
@@ -1935,6 +2099,7 @@ function ClientsTable({
               <td data-label="Painel"><StatusPill tone={user.blocked ? "red" : user.presenceStatus === "online" ? "green" : user.presenceStatus === "recent" ? "yellow" : "muted"}>{user.blocked ? "bloqueado" : user.presenceStatus}</StatusPill></td>
               <td data-label="Bot">{user.botStatus || "fechado"}</td>
               <td data-label="Monitoramento">{user.monitoringEnabled ? <StatusPill tone="green">ativo</StatusPill> : <StatusPill tone="muted">parado</StatusPill>}</td>
+              <td data-label="Prioridade">Nível {user.dispatchPriorityLevel}</td>
               <td data-label="Último visto">{formatShort(user.lastSeenAt)}</td>
               <td data-label="Uso">{formatDuration(user.totalUsageMs)}</td>
               <td data-label="Ações">

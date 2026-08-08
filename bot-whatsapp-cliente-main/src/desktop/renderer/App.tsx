@@ -26,6 +26,7 @@ import {
   Send,
   Settings,
   ShieldCheck,
+  Skull,
   Sparkles,
   SlidersHorizontal,
   TestTube2,
@@ -298,13 +299,22 @@ function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: st
 
   return (
     <main className="login-shell">
+      <ParticleBackdrop />
+      <div className="bot-ambient" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
       <form className="login-panel" onSubmit={submit}>
         <div className="brand-logo" aria-hidden="true">
-          <Bot size={31} />
-          <span>BR</span>
+          <img src="/br-skull-icon-192-v6.png" alt="" />
+          <span>RX</span>
         </div>
-        <p className="panel-label">Bot Manager</p>
-        <h1>Bot Rotas</h1>
+        <div className="login-heading">
+          <p className="panel-label">Acesso seguro</p>
+          <h1>Bot Rotas</h1>
+          <span>Central dark de operação e monitoramento</span>
+        </div>
         <div className="login-field">
           <Mail size={18} />
           <input
@@ -343,6 +353,7 @@ function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: st
           </section>
         ) : error ? <p className="login-error">{error}</p> : null}
         <button className="button primary" disabled={!email.trim() || !password} type="submit">
+          <LockKeyhole size={18} />
           Entrar
         </button>
       </form>
@@ -355,7 +366,7 @@ function LoadingScreen() {
     <main className="loading-shell">
       <section className="loading-panel">
         <div className="brand-logo" aria-hidden="true">
-          <Bot size={31} />
+          <img src="/br-skull-icon-192-v6.png" alt="" />
           <span>BR</span>
         </div>
         <span className="loading-spinner" aria-hidden="true" />
@@ -572,6 +583,133 @@ function CockpitPanel({
           title="Disparo"
           detail={armed ? `Última abertura: ${lastOpening}` : `${confirmed} mensagem(ns) confirmadas`}
         />
+      </div>
+    </section>
+  );
+}
+
+function ParticleBackdrop() {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    const context = canvas.getContext("2d");
+    if (!context) return undefined;
+
+    let width = 0;
+    let height = 0;
+    let frame = 0;
+    let compact = false;
+    let maxDistance = 142;
+    let nodes: Array<{ x: number; y: number; vx: number; vy: number; r: number }> = [];
+
+    function createNodes() {
+      compact = window.innerWidth < 720;
+      const count = compact ? 74 : 128;
+      maxDistance = compact ? 112 : 164;
+      const speed = compact ? 1.55 : 1.7;
+      nodes = Array.from({ length: count }, () => ({
+        x: Math.random(),
+        y: Math.random(),
+        vx: (Math.random() - 0.5) * speed,
+        vy: (Math.random() - 0.5) * speed,
+        r: compact ? Math.random() * 0.95 + 0.5 : Math.random() * 1.25 + 0.65
+      }));
+    }
+
+    function resize() {
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const wasCompact = compact;
+      width = window.innerWidth;
+      height = window.innerHeight;
+      canvas.width = Math.floor(width * ratio);
+      canvas.height = Math.floor(height * ratio);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      if (!nodes.length || wasCompact !== window.innerWidth < 720) createNodes();
+    }
+
+    function draw() {
+      context.clearRect(0, 0, width, height);
+      const accent = [255, 32, 48];
+      const secondary = [255, 92, 105];
+
+      nodes.forEach((node, index) => {
+        node.x += node.vx / Math.max(width, 1);
+        node.y += node.vy / Math.max(height, 1);
+        if (node.x < 0 || node.x > 1) node.vx *= -1;
+        if (node.y < 0 || node.y > 1) node.vy *= -1;
+
+        const x = node.x * width;
+        const y = node.y * height;
+        context.beginPath();
+        context.arc(x, y, node.r, 0, Math.PI * 2);
+        context.fillStyle = `rgba(${accent.join(",")},${compact ? 0.62 : 0.7})`;
+        context.fill();
+
+        for (let nextIndex = index + 1; nextIndex < nodes.length; nextIndex += 1) {
+          const next = nodes[nextIndex];
+          const nx = next.x * width;
+          const ny = next.y * height;
+          const distance = Math.hypot(x - nx, y - ny);
+          if (distance > maxDistance) continue;
+          const opacity = (1 - distance / maxDistance) * (compact ? 0.28 : 0.34);
+          context.beginPath();
+          context.moveTo(x, y);
+          context.lineTo(nx, ny);
+          context.strokeStyle = `rgba(${index % 3 === 0 ? secondary.join(",") : accent.join(",")},${opacity})`;
+          context.lineWidth = 0.7;
+          context.stroke();
+        }
+      });
+
+      frame = window.requestAnimationFrame(draw);
+    }
+
+    createNodes();
+    resize();
+    draw();
+    window.addEventListener("resize", resize);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
+
+  return <canvas className="bot-particle-field" ref={canvasRef} aria-hidden="true" />;
+}
+
+function EngineVisualPanel({ snapshot }: { snapshot: BotSnapshot }) {
+  const metrics = snapshot.performanceMetrics || emptySnapshot.performanceMetrics!;
+  const armed = Boolean(snapshot.monitoringEnabled);
+  const connected = snapshot.status === "connected";
+  const warm = metrics.internalWarmState === "ready";
+  const engineTone = armed ? "live" : connected ? "ready" : "idle";
+
+  return (
+    <section className={`engine-visual-panel engine-${engineTone}`} aria-label="Motor visual do bot">
+      <div className="engine-core">
+        <span className="engine-ring" />
+        <span className="engine-pulse" />
+        <Skull size={28} />
+      </div>
+      <div className="engine-copy">
+        <p className="panel-label">Engine</p>
+        <h2>{armed ? "Monitoramento em tempo real" : connected ? "Motor pronto para largar" : "Motor em espera"}</h2>
+        <div className="engine-readouts">
+          <span><b>{connected ? "online" : snapshot.status}</b> conexão</span>
+          <span><b>{warm ? "quente" : metrics.internalWarmState || "frio"}</b> sessão</span>
+          <span><b>{metrics.averageFirstRelayMs || 0}ms</b> relay médio</span>
+          <span><b>{metrics.dispatchSuccessRate || 0}%</b> entrega</span>
+        </div>
+      </div>
+      <div className="engine-wave" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+        <i />
       </div>
     </section>
   );
@@ -910,6 +1048,7 @@ type UserEditorState = {
   role: PanelUserRole;
   blocked: boolean;
   color: string;
+  dispatchPriorityLevel: number;
 };
 
 const emptyUserEditor: UserEditorState = {
@@ -917,7 +1056,8 @@ const emptyUserEditor: UserEditorState = {
   password: "",
   role: "client",
   blocked: false,
-  color: "#3b82f6"
+  color: "#3b82f6",
+  dispatchPriorityLevel: 0
 };
 
 function UserEditor({
@@ -962,6 +1102,18 @@ function UserEditor({
       <label className="toggle-row">
         <input type="checkbox" checked={value.blocked} onChange={(event) => onChange({ ...value, blocked: event.target.checked })} />
         Bloqueado
+      </label>
+      <label className="login-field">
+        <Gauge size={18} />
+        <input
+          aria-label="Prioridade de disparo"
+          min={0}
+          max={5}
+          placeholder="Prioridade 0-5"
+          type="number"
+          value={value.dispatchPriorityLevel}
+          onChange={(event) => onChange({ ...value, dispatchPriorityLevel: Number(event.target.value) })}
+        />
       </label>
       <label className="color-picker-row" title="Cor do usuário no histórico">
         <span className="color-orb" style={{ background: value.color }} />
@@ -1011,6 +1163,7 @@ function AdminUserRow({
         <div className="route-meta">
           <span>Último login: {formatDate(user.lastLoginAt)}</span>
           <span>{getBotOpenCopy(user)}</span>
+          <span>Prioridade: nível {user.dispatchPriorityLevel}</span>
           <span>Uso: {formatDuration(user.totalUsageMs)}</span>
           <span>{user.loginCount} login(s)</span>
         </div>
@@ -1671,6 +1824,12 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
 
   return (
     <main className="app-shell admin-shell admin-mobile-shell">
+      <ParticleBackdrop />
+      <div className="bot-ambient" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
       <section className="admin-mobile-header">
         <span className="admin-app-icon">{activeAdminTab === "validations" ? <ShieldCheck size={25} /> : <Activity size={24} />}</span>
         <div>
@@ -2167,8 +2326,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                   key={user.email}
                   user={user}
                   onDetails={() => openDetails(user.email)}
-                  onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color })}
-                  onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color })}
+                  onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: user.dispatchPriorityLevel })}
+                  onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: user.dispatchPriorityLevel })}
                 />
               ))}
             </div>
@@ -2272,8 +2431,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                 key={user.email}
                 user={user}
                 onDetails={() => openDetails(user.email)}
-                onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color })}
-                onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color })}
+                onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: user.dispatchPriorityLevel })}
+                onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: user.dispatchPriorityLevel })}
               />
             ))}
           </div>
@@ -3545,6 +3704,12 @@ export default function App() {
 
   return (
     <main className={alertFlash ? "app-shell alert-flash" : "app-shell"}>
+      <ParticleBackdrop />
+      <div className="bot-ambient" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
       <section className="topbar app-topbar">
         <div>
           <p className="eyebrow">Central operacional</p>
@@ -3570,6 +3735,8 @@ export default function App() {
 
       {activeTab === "home" ? (
         <section className="mobile-home">
+          <EngineVisualPanel snapshot={snapshot} />
+
           <CockpitPanel snapshot={snapshot} groupLabel={snapshot.monitoringMode === "test" ? testGroupLabel : groupLabel} />
 
           <LaunchReviewPanel
@@ -3592,7 +3759,7 @@ export default function App() {
             groupState={snapshot.groupState}
           />
 
-          <LogsPanel logs={snapshot.logs.filter((log) => isHomeOperationLog(log.message)).slice(-30)} />
+          <LogsPanel logs={snapshot.logs.filter((log) => !isImageOperationLog(log.message)).slice(-80)} />
 
           <PerformanceStrip snapshot={snapshot} />
 
@@ -3800,18 +3967,14 @@ export default function App() {
 
       {activeTab === "settings" ? (
         <section className="tab-stack">
-          <LogsPanel logs={snapshot.logs.filter((log) => !isImageOperationLog(log.message))} />
-          <PerformanceStrip snapshot={snapshot} />
           <SettingsPanel
             config={snapshot.config}
             busy={busy}
             monitoringEnabled={Boolean(snapshot.monitoringEnabled)}
             userEmail={userEmail}
-            onClearLogs={confirmClearLogs}
             onFactoryReset={confirmFactoryReset}
             onEnableNotifications={handleEnableNotifications}
             notificationStatus={notificationStatus}
-            onSaveGeneralSettings={saveGeneralSettings}
             onLogout={() => {
               logout();
             }}

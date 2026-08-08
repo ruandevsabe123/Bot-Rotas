@@ -17,7 +17,7 @@ import { useSqliteAuthState } from "./sqliteAuthState";
 import { DEFAULT_LEADER_CONTACTS } from "./leaderDefaults";
 import { RomaneioStore } from "../services/romaneio/romaneioStore";
 import { isPreferredImageCity, PREFERRED_IMAGE_CITY, rankImageRouteOptions } from "../services/romaneio/rankImageRoutes";
-import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, LeaderContact, OcrRouteOption, OcrRouteSelectionState, RomaneioCandidate, RomaneioLocateResult, RomaneioRankedRoute, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, DispatchPriorityProfile, LeaderContact, OcrRouteOption, OcrRouteSelectionState, RomaneioCandidate, RomaneioLocateResult, RomaneioRankedRoute, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -76,6 +76,7 @@ export type BotServiceOptions = {
   logStorePath?: string;
   romaneioDir?: string;
   clientEmail?: string;
+  dispatchPriorityLevel?: number;
   adminPhoneNumbers?: string[];
   leaderContacts?: LeaderContact[];
   terminalMode?: boolean;
@@ -108,8 +109,10 @@ export const QR_CODE_LIFETIME_MS = 60_000;
 const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
 // A primeira rota ganha acesso exclusivo ao socket; a segunda sai logo depois.
-const TARGET_PARALLEL_STAGGER_MS = 18;
+const TARGET_PARALLEL_STAGGER_MS = 12;
 const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
+const DISPATCH_PRIORITY_STEP_MS = 35;
+const MAX_DISPATCH_PRIORITY_LEVEL = 5;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
 // Maior que o keep-alive crítico (5s), evitando reconstrução no exato evento de abertura.
@@ -226,6 +229,7 @@ export class BotService extends EventEmitter {
   private statusEventsPath: string;
   private statusEvents: BotStatusEvent[] = [];
   private clientEmail = "";
+  private dispatchPriorityLevel = 0;
   private adminPhoneNumbers = new Set<string>();
   private extraAdminPhoneNumbers: string[] = [];
   private leaderContacts = new Map<string, string>();
@@ -288,6 +292,7 @@ export class BotService extends EventEmitter {
     this.statusEventsPath = path.join(path.dirname(options.routeStorePath || path.resolve(process.cwd(), "route_history.json")), "status_events.json");
     this.statusEvents = this.loadStatusEvents();
     this.clientEmail = options.clientEmail || "";
+    this.dispatchPriorityLevel = this.normalizeDispatchPriorityLevel(options.dispatchPriorityLevel);
     const initialLeaders = options.leaderContacts?.length ? options.leaderContacts : DEFAULT_LEADER_CONTACTS;
     this.extraAdminPhoneNumbers = (options.adminPhoneNumbers || []).map((item) => this.normalizePhone(item)).filter(Boolean);
     this.leaderContacts = new Map(initialLeaders.map((item) => [this.normalizePhone(item.phone), item.name]));
@@ -341,6 +346,7 @@ export class BotService extends EventEmitter {
         authBackend: this.authBackend,
         socketRttMs: this.lastSocketRttMs,
         activeQueue: Math.max(this.performanceMetrics.activeQueue, this.dispatchQueueStore.pending().length),
+        dispatchPriority: this.getDispatchPriorityProfile(),
         telemetryCount: telemetry.count,
         averageFirstRelayMs: telemetry.averageFirstRelayMs,
         p95FirstRelayMs: telemetry.p95FirstRelayMs,
@@ -378,6 +384,24 @@ export class BotService extends EventEmitter {
   private getTestStatus(): BotTestStatus {
     this.refreshRuntimeSettings();
     return { ...this.testStatus };
+  }
+
+  private normalizeDispatchPriorityLevel(value: unknown) {
+    const numberValue = Number(value);
+    if (!Number.isFinite(numberValue)) return 0;
+    return Math.min(MAX_DISPATCH_PRIORITY_LEVEL, Math.max(0, Math.floor(numberValue)));
+  }
+
+  private getDispatchPriorityProfile(): DispatchPriorityProfile {
+    const level = this.normalizeDispatchPriorityLevel(this.dispatchPriorityLevel);
+    return {
+      level,
+      delayMs: level * DISPATCH_PRIORITY_STEP_MS
+    };
+  }
+
+  private shouldApplyDispatchPriorityDelay(trigger: RouteDispatch["trigger"]) {
+    return this.monitoringMode === "target" && (trigger === "automatic" || trigger === "manual");
   }
 
   private recordDispatchMetrics(input: {
@@ -504,6 +528,8 @@ export class BotService extends EventEmitter {
       signalKeyWriteMs: 0,
       signalKeyReadOps: 0,
       signalKeyWriteOps: 0,
+      dispatchPriority: this.getDispatchPriorityProfile(),
+      priorityDelayMs: 0,
       events: [
         {
           id: `event-${eventDetectedAt}`,
@@ -1579,6 +1605,13 @@ export class BotService extends EventEmitter {
         ? "Bot imagem configurado para aprovação manual de rotas."
         : "Bot imagem configurado para escolher e enviar a melhor rota automaticamente.");
     }
+    this.emitSnapshot();
+  }
+
+  setDispatchPriorityLevel(level: number) {
+    const nextLevel = this.normalizeDispatchPriorityLevel(level);
+    if (nextLevel === this.dispatchPriorityLevel) return;
+    this.dispatchPriorityLevel = nextLevel;
     this.emitSnapshot();
   }
 
@@ -2746,9 +2779,10 @@ export class BotService extends EventEmitter {
     if (!this.romaneioStore) return fallback();
 
     try {
-      const exactGaiolaOptions = this.romaneioStore
-        .rankForDetected({ gaiola: detected.code, bairro: detected.bairro })
-        .filter((route) => this.ocrRouteLooksCompatible(route, detected));
+      const detectedCodes = getOcrGaiolaCodeCandidates(detected.code);
+      const exactGaiolaOptions = detectedCodes
+        .flatMap((code) => this.romaneioStore!.rankForDetected({ gaiola: code, bairro: detected.bairro })
+          .filter((route) => this.ocrRouteLooksCompatible(route, { ...detected, code })));
 
       const matched = exactGaiolaOptions
         .slice(0, 8)
@@ -2969,11 +3003,19 @@ export class BotService extends EventEmitter {
       };
 
       if (this.routeStore.recordReactionEvent(String(reactedMessageId), routeReaction, action)) {
+        const validatedByLeader = action === "add" && routeReaction.isAdmin && isThumbsUpReaction(emoji) && this.routeStore.validateBySentMessageId(String(reactedMessageId), routeReaction.leaderName || senderPhone || "lider", {
+          source: "leader_reaction_1h",
+          reason: "Validada automaticamente por reação de joia do líder.",
+          reactionAt: timestamp,
+          leaderName: routeReaction.leaderName
+        });
         this.logger.info(
           action === "remove"
             ? `Reação removida ${routeReaction.isAdmin ? `pelo líder ${routeReaction.leaderName || senderPhone}` : `por ${senderPhone || "remetente desconhecido"}`}. Mantive o evento para auditoria.`
             : routeReaction.isAdmin
-            ? `Reação do líder ${routeReaction.leaderName || senderPhone} foi encontrada. O admin pode decidir agora; se permanecer ativa por 1 hora, a rota será validada automaticamente.`
+            ? validatedByLeader
+              ? `Rota validada automaticamente pela joia do líder ${routeReaction.leaderName || senderPhone}.`
+              : `Reação do líder ${routeReaction.leaderName || senderPhone} foi encontrada.`
             : `Reação recebida em rota enviada (${senderPhone || "remetente desconhecido"}). IDs: ${senderIdentifiers.join(" / ") || "nenhum"}`
         );
         if (action === "remove" && routeReaction.isAdmin) {
@@ -3463,6 +3505,17 @@ export class BotService extends EventEmitter {
         this.recordDispatchMetrics({ eventDetectedAt, sendStartedAt, sendFinishedAt: Date.now(), confirmed: 0, total: mensagens.length, timeline, trigger, mode: this.monitoringMode });
         this.stopMonitoringAfterTargetDispatch(cycleId);
         return;
+      }
+
+      const priority = this.getDispatchPriorityProfile();
+      timeline.dispatchPriority = priority;
+      if (this.shouldApplyDispatchPriorityDelay(trigger) && priority.delayMs > 0) {
+        timeline.priorityDelayMs = priority.delayMs;
+        this.addTimelineEvent(timeline, "Prioridade de corrida aplicada", Date.now(), "info", `Nível ${priority.level}: ${priority.delayMs}ms`);
+        await this.delay(priority.delayMs);
+        if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
+          throw new Error("Ciclo cancelado durante prioridade de corrida.");
+        }
       }
 
       const speculativeSecondLane = mensagens.length > 1 && this.shouldUseSpeculativeSecondLane(trigger);
@@ -4010,7 +4063,7 @@ export class BotService extends EventEmitter {
     }
 
     // A conexão já está aquecida: não aguarde três corridas anteriores para
-    // liberar a segunda rota. Ela sai 18ms depois da primeira chamada; qualquer
+    // liberar a segunda rota. Ela sai logo depois da primeira chamada; qualquer
     // recusa continua coberta pelo retry, sem atrasar a rota que abriu a corrida.
     return true;
   }
@@ -4876,4 +4929,16 @@ export class BotService extends EventEmitter {
 
 function roundMetric(value: number) {
   return Math.round(value * 1000) / 1000;
+}
+
+function getOcrGaiolaCodeCandidates(code: string) {
+  const normalized = String(code || "").trim().toUpperCase();
+  if (!normalized) return [];
+  const candidates = [normalized];
+  if (/^H-1$/i.test(normalized)) candidates.push("I-1");
+  return [...new Set(candidates)];
+}
+
+function isThumbsUpReaction(emoji: string) {
+  return /^👍(?:🏻|🏼|🏽|🏾|🏿)?$/u.test(String(emoji || "").trim());
 }

@@ -27,6 +27,7 @@ const ALLOWED_METHODS = new Set([
   "setMessageCodes",
   "setMessageSettings",
   "setWarmupMessageSettings",
+  "setDispatchPriorityLevel",
   "saveRoutePreset",
   "deleteRoutePreset",
   "setGeneralSettings",

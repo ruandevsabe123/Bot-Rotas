@@ -54,6 +54,11 @@ export type BotConfig = {
   ocrManualRouteSelection: boolean;
 };
 
+export type DispatchPriorityProfile = {
+  level: number;
+  delayMs: number;
+};
+
 export type MonitoredRoute = {
   cidade: string;
   bairro: string;
@@ -116,6 +121,7 @@ export type BotPerformanceMetrics = {
   lastFirstGroupEchoMs?: number;
   eventLoopLagMs?: number;
   raceHealth?: "excellent" | "good" | "poor" | "critical" | "unknown";
+  dispatchPriority?: DispatchPriorityProfile;
 };
 
 export type RouteDispatchTimelineEvent = {
@@ -155,6 +161,8 @@ export type RouteDispatchTimeline = {
   signalKeyReadOps?: number;
   signalKeyWriteOps?: number;
   secondLaneMode?: "ack-gated" | "speculative";
+  dispatchPriority?: DispatchPriorityProfile;
+  priorityDelayMs?: number;
   events: RouteDispatchTimelineEvent[];
 };
 
@@ -315,6 +323,7 @@ export type PanelUser = {
   role: PanelUserRole;
   blocked?: boolean;
   color?: string;
+  dispatchPriorityLevel?: number;
   impersonatedBy?: string;
 };
 
@@ -337,6 +346,7 @@ export type AdminUserSummary = {
   role: PanelUserRole;
   blocked: boolean;
   color: string;
+  dispatchPriorityLevel: number;
   presenceStatus: UserPresenceStatus;
   panelOnline: boolean;
   botOpen: boolean;

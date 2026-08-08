@@ -6,19 +6,25 @@
   "scope": "/",
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
-  "background_color": "#030405",
-  "theme_color": "#050607",
+  "background_color": "#050000",
+  "theme_color": "#0a0102",
   "orientation": "portrait",
   "categories": ["productivity", "business"],
   "icons": [
     {
-      "src": "/bot-icon-512.png",
+      "src": "/br-skull-icon-192-v6.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/br-skull-icon-512-v6.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/bot-icon-maskable-512.png",
+      "src": "/br-skull-icon-maskable-512-v6.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"

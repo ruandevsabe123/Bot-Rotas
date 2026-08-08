@@ -1,5 +1,5 @@
-const CACHE_NAME = "bot-rotas-shell-v4";
-const SHELL_ASSETS = ["/manifest.webmanifest", "/bot-icon-512.png", "/bot-icon-maskable-512.png"];
+const CACHE_NAME = "bot-rotas-shell-v6";
+const SHELL_ASSETS = ["/manifest.webmanifest", "/br-skull-icon-192-v6.png", "/br-skull-icon-512-v6.png", "/br-skull-icon-maskable-512-v6.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -37,8 +37,8 @@ self.addEventListener("push", (event) => {
   }
   event.waitUntil(self.registration.showNotification(data.title || "Bot Rotas", {
     body: data.body || "Existe um aviso importante no painel.",
-    icon: data.icon || "/bot-icon-512.png",
-    badge: data.badge || "/bot-icon-maskable-512.png",
+    icon: data.icon || "/br-skull-icon-512-v6.png",
+    badge: data.badge || "/br-skull-icon-maskable-512-v6.png",
     tag: data.tag || "bot-rotas-important",
     renotify: true,
     requireInteraction: Boolean(data.requireInteraction),

@@ -90,6 +90,10 @@ test("admin recebe novidades, entra no cliente de teste e volta com segurança",
     assert.equal(clientMe.data.role, "client");
     assert.equal(clientMe.data.impersonatedBy, "admin@teste.com");
 
+    const clientRelease = await request(baseUrl, "/api/release", { headers: clientHeaders });
+    assert.equal(clientRelease.status, 200);
+    assert.equal(clientRelease.data.shouldShow, false);
+
     const forbidden = await request(baseUrl, "/api/admin/impersonate", {
       method: "POST",
       headers: clientHeaders,

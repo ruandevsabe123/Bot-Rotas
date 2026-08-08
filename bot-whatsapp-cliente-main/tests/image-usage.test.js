@@ -107,6 +107,24 @@ test("reação permanece pendente até decisão manual do admin", () => {
   assert.equal(store.all()[0].decisionSource, "admin_manual");
 });
 
+test("valida rota enviada quando líder reage com joia", () => {
+  const store = new RouteStore(tempFile("routes-leader-thumbs.json"));
+  createPendingRoute(store, "rota-joia");
+
+  assert.equal(store.validateBySentMessageId("mensagem-1", "Líder Teste", {
+    source: "leader_reaction_1h",
+    reason: "Validada automaticamente por reação de joia do líder.",
+    reactionAt: "2026-07-18T12:00:00.000Z",
+    leaderName: "Líder Teste"
+  }), true);
+
+  const route = store.all()[0];
+  assert.equal(route.decisionStatus, "validated");
+  assert.equal(route.validatedBy, "Líder Teste");
+  assert.equal(route.validationLeaderName, "Líder Teste");
+  assert.equal(route.validationReactionAt, "2026-07-18T12:00:00.000Z");
+});
+
 test("admin pode rejeitar manualmente uma rota reagida", () => {
   const store = new RouteStore(tempFile("routes-override.json"));
   createPendingRoute(store, "rota-override");

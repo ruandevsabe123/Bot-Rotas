@@ -8,11 +8,11 @@ import qrcodeTerminal from "qrcode-terminal";
 import { BotProcessProxy } from "./bot/botProcessProxy";
 import { DEFAULT_LEADER_CONTACTS } from "./bot/leaderDefaults";
 import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderStore";
-import { defaultUserColor, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
+import { defaultUserColor, normalizeDispatchPriorityLevel, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
 import { ImageUsageStore } from "./imageUsageStore";
 import { PushNotificationStore } from "./pushNotificationStore";
-import { getCurrentRelease } from "./releaseNotes";
+import { getCurrentRelease, shouldShowCurrentReleaseToClients } from "./releaseNotes";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
@@ -59,6 +59,7 @@ type PanelUserRecord = {
   role: PanelUserRole;
   blocked: boolean;
   color: string;
+  dispatchPriorityLevel: number;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -87,6 +88,7 @@ function createUserRecord(email: string, password: string, role: PanelUserRole, 
     role,
     blocked: false,
     color: defaultUserColor(email),
+    dispatchPriorityLevel: 0,
     createdAt: now,
     updatedAt: now,
     totalUsageMs: 0,
@@ -99,12 +101,13 @@ function parsePanelUsers(envUsers: string | undefined, adminEmails: Set<string>)
   const users = new Map<string, PanelUserRecord>();
   const raw = String(envUsers || "").trim();
   for (const part of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
-    const [email, password, role, color] = part.split(":").map((item) => item.trim());
+    const [email, password, role, color, dispatchPriorityLevel] = part.split(":").map((item) => item.trim());
     if (!email || !password) continue;
     const normalizedEmail = email.toLowerCase();
     const userRole: PanelUserRole = role === "admin" || adminEmails.has(normalizedEmail) ? "admin" : "client";
     users.set(normalizedEmail, createUserRecord(normalizedEmail, password, userRole, {
-      color: normalizeUserColor(color, normalizedEmail)
+      color: normalizeUserColor(color, normalizedEmail),
+      dispatchPriorityLevel: normalizeDispatchPriorityLevel(dispatchPriorityLevel)
     }));
   }
   return users;
@@ -281,6 +284,7 @@ function getBotForEmail(email: string) {
   const userLogStorePath = path.join(userDir, "bot_logs.json");
   const userTelemetryPath = path.join(userDir, "dispatch_telemetry.json");
   const userRomaneioDir = path.join(userDir, "romaneio");
+  const panelUser = panelUsers.get(normalizedEmail);
 
   if (normalizedEmail === primaryPanelEmail) {
     const legacyAuthDir = path.join(dataDir, "auth_info");
@@ -304,6 +308,7 @@ function getBotForEmail(email: string) {
     logStorePath: userLogStorePath,
     romaneioDir: userRomaneioDir,
     clientEmail: normalizedEmail,
+    dispatchPriorityLevel: panelUser?.dispatchPriorityLevel || 0,
     adminPhoneNumbers,
     leaderContacts: leaderStore.all(),
     autoClearInvalidSession: true,
@@ -538,6 +543,7 @@ function toUserSummary(email: string, user: PanelUserRecord) {
     role: user.role,
     blocked: user.blocked,
     color: user.color || defaultUserColor(email),
+    dispatchPriorityLevel: normalizeDispatchPriorityLevel(user.dispatchPriorityLevel),
     presenceStatus,
     panelOnline: presenceStatus === "online",
     botOpen: Boolean(botSnapshot && ["connected", "connecting", "waiting_qr", "reconnecting"].includes(botSnapshot.status)),
@@ -703,6 +709,30 @@ function presentAiTerminology(message: string) {
   return String(message || "").replace(/\bOCR\b/g, "IA");
 }
 
+function sanitizeTimelineForClient(timeline: any) {
+  if (!timeline || typeof timeline !== "object") return timeline;
+  const { dispatchPriority, priorityDelayMs, ...safeTimeline } = timeline;
+  safeTimeline.events = Array.isArray(timeline.events)
+    ? timeline.events.filter((event: any) => event?.label !== "Prioridade de corrida aplicada")
+    : timeline.events;
+  return safeTimeline;
+}
+
+function sanitizeClientSnapshot(snapshot: BotSnapshot): BotSnapshot {
+  const performanceMetrics = snapshot.performanceMetrics
+    ? (({ dispatchPriority, ...safeMetrics }) => safeMetrics)(snapshot.performanceMetrics as any)
+    : undefined;
+  const routeDispatches = snapshot.routeDispatches?.map((route) => ({
+    ...route,
+    dispatchTimeline: sanitizeTimelineForClient(route.dispatchTimeline)
+  }));
+  return {
+    ...snapshot,
+    performanceMetrics,
+    routeDispatches
+  };
+}
+
 function getAdminMonitorSnapshot(): AdminMonitorSnapshot {
   return {
     routes: getAdminRoutesSnapshot(),
@@ -715,7 +745,7 @@ function getAdminMonitorSnapshot(): AdminMonitorSnapshot {
 }
 
 function getClientSnapshot(email: string) {
-  const snapshot = getBotForEmail(email).getSnapshot();
+  const snapshot = sanitizeClientSnapshot(getBotForEmail(email).getSnapshot());
   return {
     ...snapshot,
     logs: snapshot.logs.map((log) => ({ ...log, message: presentAiTerminology(log.message) })),
@@ -1233,9 +1263,10 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/release") {
       const user = panelUsers.get(authorizedEmail);
+      const showToRole = user?.role === "admin" || shouldShowCurrentReleaseToClients();
       sendJson(response, 200, {
         release: currentRelease,
-        shouldShow: Boolean(user && user.lastSeenReleaseId !== currentRelease.id)
+        shouldShow: Boolean(user && showToRole && user.lastSeenReleaseId !== currentRelease.id)
       });
       return;
     }
@@ -1499,9 +1530,11 @@ const server = http.createServer(async (request, response) => {
         password: String(body.password || ""),
         role: body.role === "admin" ? "admin" : "client",
         blocked: Boolean(body.blocked),
-        color: normalizeUserColor(String(body.color || ""), String(body.email || ""))
+        color: normalizeUserColor(String(body.color || ""), String(body.email || "")),
+        dispatchPriorityLevel: normalizeDispatchPriorityLevel(body.dispatchPriorityLevel)
       });
       syncPanelUser(user);
+      await bots.get(user.email)?.setDispatchPriorityLevel(user.dispatchPriorityLevel);
       sendJson(response, 200, getAdminUsersSnapshot());
       return;
     }
@@ -1528,9 +1561,11 @@ const server = http.createServer(async (request, response) => {
         password: typeof body.password === "string" && body.password.trim() ? body.password : currentUser.password,
         role: body.role === "admin" ? "admin" : "client",
         blocked: Boolean(body.blocked),
-        color: normalizeUserColor(String(body.color || currentUser.color || ""), nextEmail)
+        color: normalizeUserColor(String(body.color || currentUser.color || ""), nextEmail),
+        dispatchPriorityLevel: normalizeDispatchPriorityLevel(body.dispatchPriorityLevel ?? currentUser.dispatchPriorityLevel)
       });
       syncPanelUser(user);
+      await bots.get(user.email)?.setDispatchPriorityLevel(user.dispatchPriorityLevel);
       sendJson(response, 200, getAdminUsersSnapshot());
       return;
     }

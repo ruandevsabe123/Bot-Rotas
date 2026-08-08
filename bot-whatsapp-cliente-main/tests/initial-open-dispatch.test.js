@@ -343,6 +343,53 @@ test("faixa especulativa libera a segunda mensagem sem esperar o ACK da primeira
   }
 });
 
+test("prioridade de cliente atrasa discretamente o primeiro relay do grupo alvo", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const calls = [];
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 131;
+    bot.dispatchPriorityLevel = 1;
+    bot.sock = {
+      relayMessage: async (_jid, _message, options) => {
+        calls.push({ id: options.messageId, at: Date.now() });
+      }
+    };
+    bot.preparedRelayMessages = [
+      { key: { id: "first" }, message: { conversation: "Cliente A-1" } }
+    ];
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const startedAt = Date.now();
+    const timeline = bot.createDispatchTimeline(startedAt, startedAt, "race", "group_update");
+    const dispatch = bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1"],
+      131,
+      startedAt,
+      startedAt,
+      "automatic",
+      timeline
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.equal(calls.length, 0);
+
+    await dispatch;
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].at - startedAt >= 30);
+    assert.equal(timeline.dispatchPriority.level, 1);
+    assert.equal(timeline.priorityDelayMs, 35);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("conexão aquecida libera a faixa paralela sem histórico de três disparos", () => {
   const { bot, directory } = createBot();
   try {

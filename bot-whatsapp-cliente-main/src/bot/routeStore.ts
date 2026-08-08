@@ -80,6 +80,33 @@ export class RouteStore {
     return changed;
   }
 
+  validateBySentMessageId(messageId: string, validatedBy: string, options: { source?: RouteDispatch["decisionSource"]; reason?: string; reactionAt?: string; leaderName?: string } = {}) {
+    let changed = false;
+    const now = new Date().toISOString();
+    this.routes =
+      this.getRoutes().map((route) => {
+        if (!route.sentMessageIds.includes(messageId)) return route;
+        if ((route.decisionStatus || (route.validated ? "validated" : "pending")) === "validated") return route;
+        changed = true;
+        return {
+          ...route,
+          validated: true,
+          decisionStatus: "validated",
+          validatedAt: route.validatedAt || now,
+          validatedBy,
+          decisionSource: options.source || "admin_manual",
+          decisionReason: options.reason?.trim() || undefined,
+          validationReactionAt: options.reactionAt,
+          validationLeaderName: options.leaderName,
+          rejectedAt: undefined,
+          rejectedBy: undefined,
+          updatedAt: now
+        };
+      });
+    if (changed) this.scheduleSave();
+    return changed;
+  }
+
   reject(id: string, rejectedBy: string, reason?: string) {
     let changed = false;
     const now = new Date().toISOString();

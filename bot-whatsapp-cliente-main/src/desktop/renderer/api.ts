@@ -237,6 +237,7 @@ export function saveAdminUser(payload: {
   role: PanelUserRole;
   blocked: boolean;
   color: string;
+  dispatchPriorityLevel: number;
 }) {
   const isEdit = Boolean(payload.originalEmail);
   return fetchJson<AdminUsersSnapshot>(

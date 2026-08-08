@@ -8,6 +8,7 @@ export type StoredPanelUser = {
   role: PanelUserRole;
   blocked: boolean;
   color: string;
+  dispatchPriorityLevel: number;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -34,6 +35,7 @@ export class PanelUserStore {
     role?: PanelUserRole;
     blocked?: boolean;
     color?: string;
+    dispatchPriorityLevel?: number;
   }) {
     const email = input.email.trim().toLowerCase();
     if (!email) throw new Error("Email obrigatório.");
@@ -46,6 +48,7 @@ export class PanelUserStore {
       if (input.role) existing.role = input.role;
       if (input.blocked !== undefined) existing.blocked = input.blocked;
       if (input.color !== undefined) existing.color = normalizeUserColor(input.color, existing.email);
+      if (input.dispatchPriorityLevel !== undefined) existing.dispatchPriorityLevel = normalizeDispatchPriorityLevel(input.dispatchPriorityLevel);
       existing.updatedAt = now;
       this.save(users);
       return existing;
@@ -59,6 +62,7 @@ export class PanelUserStore {
       role: input.role || "client",
       blocked: Boolean(input.blocked),
       color: normalizeUserColor(input.color, email),
+      dispatchPriorityLevel: normalizeDispatchPriorityLevel(input.dispatchPriorityLevel),
       createdAt: now,
       updatedAt: now,
       totalUsageMs: 0,
@@ -162,6 +166,7 @@ export class PanelUserStore {
       role: input.role === "admin" ? "admin" : "client",
       blocked: Boolean(input.blocked),
       color: normalizeUserColor(input.color, input.email),
+      dispatchPriorityLevel: normalizeDispatchPriorityLevel(input.dispatchPriorityLevel),
       createdAt: typeof input.createdAt === "string" ? input.createdAt : now,
       updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : now,
       lastLoginAt: typeof input.lastLoginAt === "string" ? input.lastLoginAt : undefined,
@@ -192,4 +197,10 @@ export function defaultUserColor(email: string) {
 export function normalizeUserColor(value: string | undefined, email: string) {
   const color = String(value || "").trim();
   return /^#[0-9a-f]{6}$/i.test(color) ? color.toLowerCase() : defaultUserColor(email);
+}
+
+export function normalizeDispatchPriorityLevel(value: unknown) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return 0;
+  return Math.min(5, Math.max(0, Math.floor(numberValue)));
 }

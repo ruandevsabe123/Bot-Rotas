@@ -1,4 +1,4 @@
-import { Bell, HelpCircle, LogOut, MessageCircle, RotateCcw, Trash2 } from "lucide-react";
+import { Bell, HelpCircle, LogOut, MessageCircle, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { BotConfig } from "../../../shared/types";
 import { sendSupportMessage } from "../api";
@@ -8,15 +8,13 @@ type Props = {
   busy: boolean;
   monitoringEnabled: boolean;
   userEmail?: string;
-  onClearLogs: () => void;
   onFactoryReset: () => void;
   onEnableNotifications?: () => void | Promise<void>;
   notificationStatus?: string;
-  onSaveGeneralSettings?: (settings: { alwaysWarmMode?: boolean; keepAliveIntervalMs?: number }) => unknown;
   onLogout?: () => void;
 };
 
-export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onClearLogs, onFactoryReset, onEnableNotifications, notificationStatus, onSaveGeneralSettings, onLogout }: Props) {
+export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onFactoryReset, onEnableNotifications, notificationStatus, onLogout }: Props) {
   const [supportMessage, setSupportMessage] = useState("");
   const [supportStatus, setSupportStatus] = useState("");
 
@@ -84,36 +82,6 @@ export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onCl
 
       <article className="panel option-panel">
         <div>
-          <p className="panel-label">Desempenho opcional</p>
-          <h2>Manter conexão aquecida</h2>
-          <p>A velocidade principal funciona mesmo desligada. Esta opção apenas reforça a conexão durante longos períodos de espera.</p>
-          <label className="field-label">
-            Intervalo
-            <select
-              disabled={busy || !config.alwaysWarmMode || !onSaveGeneralSettings}
-              value={config.keepAliveIntervalMs}
-              onChange={(event) => void onSaveGeneralSettings?.({ keepAliveIntervalMs: Number(event.target.value) })}
-            >
-              <option value={60000}>1 minuto</option>
-              <option value={180000}>3 minutos</option>
-              <option value={300000}>5 minutos</option>
-              <option value={480000}>8 minutos</option>
-              <option value={600000}>10 minutos</option>
-            </select>
-          </label>
-        </div>
-        <button
-          className={config.alwaysWarmMode ? "button primary" : "button"}
-          disabled={busy || !onSaveGeneralSettings}
-          type="button"
-          onClick={() => void onSaveGeneralSettings?.({ alwaysWarmMode: !config.alwaysWarmMode })}
-        >
-          {config.alwaysWarmMode ? "Ligado" : "Desligado"}
-        </button>
-      </article>
-
-      <article className="panel option-panel">
-        <div>
           <p className="panel-label">Alertas importantes</p>
           <h2>Notificações em segundo plano</h2>
           <p>Receba avisos quando a IA exigir uma decisão, o WhatsApp desconectar ou o bot precisar de atenção.</p>
@@ -122,18 +90,6 @@ export function SettingsPanel({ config, busy, monitoringEnabled, userEmail, onCl
         <button className="button primary" disabled={busy || !onEnableNotifications} type="button" onClick={onEnableNotifications}>
           <Bell size={18} />
           Ativar alertas
-        </button>
-      </article>
-
-      <article className="panel option-panel">
-        <div>
-          <p className="panel-label">Histórico local</p>
-          <h2>Limpar avisos</h2>
-          <p>Remove apenas os logs exibidos no painel. Não apaga grupos nem mensagens.</p>
-        </div>
-        <button className="button danger" disabled={busy} type="button" onClick={onClearLogs}>
-          <Trash2 size={18} />
-          Limpar
         </button>
       </article>
 
