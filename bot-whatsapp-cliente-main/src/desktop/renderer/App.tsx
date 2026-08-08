@@ -2931,6 +2931,7 @@ export default function App() {
   const [releaseAcknowledgeBusy, setReleaseAcknowledgeBusy] = useState(false);
   const [releaseError, setReleaseError] = useState("");
   const connectionSectionRef = useRef<HTMLElement | null>(null);
+  const homeLogsAutoClearArmedRef = useRef(true);
 
   function showActionToast(message: string, tone?: ActionToast["tone"]) {
     setActionToast({ message, tone });
@@ -3138,11 +3139,23 @@ export default function App() {
   }, [pendingClientIncident]);
 
   const pendingIncidentSnoozeDelay = pendingClientIncident ? getIncidentSnoozeDelayMinutes(pendingClientIncident) : undefined;
+  const homeTimelineLogs = useMemo(() => snapshot.logs.filter((log) => !isImageOperationLog(log.message)), [snapshot.logs]);
+  const visibleHomeTimelineLogs = useMemo(() => homeTimelineLogs.slice(0, 80), [homeTimelineLogs]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setIncidentClock(Date.now()), 10_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (homeTimelineLogs.length < 80) {
+      homeLogsAutoClearArmedRef.current = true;
+      return;
+    }
+    if (!homeLogsAutoClearArmedRef.current || busy) return;
+    homeLogsAutoClearArmedRef.current = false;
+    void clearHomeLogsAutomatically();
+  }, [busy, homeTimelineLogs.length]);
 
   useEffect(() => {
     if (!pendingClientIncident) {
@@ -3205,6 +3218,16 @@ export default function App() {
       return snapshot;
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function clearHomeLogsAutomatically() {
+    try {
+      const nextSnapshot = await botApi.clearLogs();
+      setSnapshot(nextSnapshot);
+    } catch (error) {
+      homeLogsAutoClearArmedRef.current = true;
+      if (isAuthError(error)) logout(error instanceof Error ? error.message : "Entre novamente para continuar.");
     }
   }
 
@@ -3759,7 +3782,7 @@ export default function App() {
             groupState={snapshot.groupState}
           />
 
-          <LogsPanel logs={snapshot.logs.filter((log) => !isImageOperationLog(log.message)).slice(-80)} />
+          <LogsPanel logs={visibleHomeTimelineLogs} clearDisabled={busy} onClear={confirmClearLogs} />
 
           <PerformanceStrip snapshot={snapshot} />
 
