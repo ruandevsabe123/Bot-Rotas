@@ -7,8 +7,29 @@ const {
   findNeighborhoodInOcrLine,
   findAllGaiolaCodesFromOcr,
   extractNeighborhoodAfterCity,
-  selectConsensusDetection
+  selectConsensusDetection,
+  canUseFastOcrResult
 } = require("../dist/bot/ocr.js");
+
+function plainReading(text, source) {
+  return { text, lines: [], source };
+}
+
+test("encerra cedo quando três leituras encontram as mesmas gaiolas com consenso", () => {
+  assert.equal(canUseFastOcrResult([
+    plainReading("F-14 Cabo Frio\nH-20 Centro", "a"),
+    plainReading("F-14 Cabo Frio\nH-20 Centro", "b"),
+    plainReading("F-14 Cabo Frio\nH-20 Centro", "c")
+  ]), true);
+});
+
+test("mantém análise completa quando as leituras rápidas divergem", () => {
+  assert.equal(canUseFastOcrResult([
+    plainReading("F-14 Cabo Frio", "a"),
+    plainReading("F-14 Cabo Frio", "b"),
+    plainReading("H-20 Centro", "c")
+  ]), false);
+});
 
 function detection(code, confidence = 90) {
   return {

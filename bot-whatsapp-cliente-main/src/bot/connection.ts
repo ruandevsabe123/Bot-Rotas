@@ -2452,7 +2452,11 @@ export class BotService extends EventEmitter {
       );
 
       await fs.promises.writeFile(imagePath, buffer);
-      const ocr = await readRouteImageOcrWithoutBlockingSocket(imagePath, { maxReadings: 6 });
+      const fastFirst = this.groupState === "open";
+      this.logger.info(fastFirst
+        ? "[ROMANEIO] Grupo aberto: usando análise progressiva rápida com consenso."
+        : "[ROMANEIO] Grupo fechado: usando análise completa da imagem.");
+      const ocr = await readRouteImageOcrWithoutBlockingSocket(imagePath, { maxReadings: 6, fastFirst });
       if (sequence !== this.latestRouteImageSequence) {
         this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;

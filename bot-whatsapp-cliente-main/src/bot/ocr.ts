@@ -59,32 +59,38 @@ export function readImageText(imagePath: string) {
   return readRouteImageOcr(imagePath).then((result) => result.text);
 }
 
-export async function readRouteImageOcr(imagePath: string, options: { maxReadings?: number } = {}) {
+export async function readRouteImageOcr(imagePath: string, options: { maxReadings?: number; fastFirst?: boolean } = {}) {
   const variants = await createPreprocessedImages(imagePath);
   const maxReadings = Math.max(1, Math.min(variants.length, options.maxReadings || variants.length));
 
   try {
     const selectedVariants = variants.slice(0, maxReadings);
-    const attempts = await mapWithConcurrency(selectedVariants, 3, async (variant) => {
+    const runVariants = (items: typeof selectedVariants) => mapWithConcurrency(items, 3, async (variant) => {
       try {
         return { reading: await readSingleRouteImageOcr(variant.path, variant.label, variant.psm) };
       } catch (error) {
         return { error: error instanceof Error ? error.message : String(error) };
       }
     });
-    const readings = attempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
-    const errors = attempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
+    const fastReadingCount = options.fastFirst ? Math.min(3, selectedVariants.length) : selectedVariants.length;
+    const attempts = await runVariants(selectedVariants.slice(0, fastReadingCount));
+    let readings = attempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
+    let errors = attempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
+
+    if (options.fastFirst && fastReadingCount < selectedVariants.length && canUseFastOcrResult(readings)) {
+      return combineOcrReadings(readings);
+    }
+
+    if (fastReadingCount < selectedVariants.length) {
+      const remainingAttempts = await runVariants(selectedVariants.slice(fastReadingCount));
+      readings = [...readings, ...remainingAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : [])];
+      errors = [...errors, ...remainingAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : [])];
+    }
 
     if (!readings.length) {
       throw new Error(errors[0] || "Nenhuma versão da imagem pôde ser analisada.");
     }
-
-    const primary = readings[0];
-    return {
-      ...primary,
-      source: readings.map((reading) => reading.source).join(" + "),
-      variants: readings
-    };
+    return combineOcrReadings(readings);
   } finally {
     for (const variant of variants) {
       if (!variant.generated) continue;
@@ -95,6 +101,27 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
       }
     }
   }
+}
+
+function combineOcrReadings(readings: RouteOcrResult[]): RouteOcrResult {
+  const primary = readings[0];
+  return {
+    ...primary,
+    source: readings.map((reading) => reading.source).join(" + "),
+    variants: readings
+  };
+}
+
+export function canUseFastOcrResult(readings: RouteOcrResult[]) {
+  if (readings.length < 3) return false;
+  const signatures = readings.map((reading) => findAllGaiolaCodesFromOcr(reading)
+    .map((route) => normalizeOcrText(route.code))
+    .filter(Boolean)
+    .sort()
+    .join("|"));
+  if (!signatures[0] || signatures.some((signature) => signature !== signatures[0])) return false;
+  const detected = findAllGaiolaCodesFromOcr(combineOcrReadings(readings));
+  return detected.length > 0 && detected.every((route) => route.safeForAutomatic);
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>) {

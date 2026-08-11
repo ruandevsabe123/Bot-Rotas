@@ -2,7 +2,7 @@ import { ChildProcess, fork } from "child_process";
 import path from "path";
 import { readRouteImageOcr, RouteOcrResult } from "./ocr";
 
-type OcrOptions = { maxReadings?: number };
+type OcrOptions = { maxReadings?: number; fastFirst?: boolean };
 type PendingRequest = {
   resolve: (result: RouteOcrResult) => void;
   reject: (error: Error) => void;
