@@ -64,6 +64,7 @@ import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminCommandCenter } from "./admin/AdminCommandCenter";
 import { enableWebPushNotifications } from "./pushNotifications";
+import { rankRoutes } from "../../services/romaneio/rankRoutes";
 import {
   acknowledgeRelease,
   botApi,
@@ -3918,7 +3919,7 @@ export default function App() {
                 <div>
                   <p className="panel-label">Rotas para pegar dormindo</p>
                   <h2>Gaiolas desejadas</h2>
-                  <p className="approval-message">Selecione quantas quiser. A lista acompanha o romaneio carregado hoje.</p>
+                  <p className="approval-message">Selecione quantas quiser. As melhores aparecem primeiro conforme os filtros e a prioridade do romaneio.</p>
                 </div>
                 <span className="mini-badge ok">{snapshot.config.ocrDesiredCages.length} selecionada(s)</span>
               </div>
@@ -3941,7 +3942,7 @@ export default function App() {
                 </button>
               </div>
               <div className="ocr-option-grid desired-cages-grid">
-                {Array.from(new Map(romaneio.routes.map((route) => [route.gaiola.toUpperCase(), route])).values()).map((route) => {
+                {Array.from(new Map(rankRoutes(romaneio.routes, {}, romaneioSettingsDraft).map((route) => [route.gaiola.toUpperCase(), route])).values()).map((route, index) => {
                   const selected = snapshot.config.ocrDesiredCages.some((gaiola) => gaiola.toUpperCase() === route.gaiola.toUpperCase());
                   return (
                     <button
@@ -3951,9 +3952,15 @@ export default function App() {
                       type="button"
                       onClick={() => toggleDesiredCage(route.gaiola)}
                     >
-                      <strong>{route.gaiola}</strong>
+                      <strong>#{index + 1} · {route.gaiola}</strong>
                       <span>{route.cidade || "Cidade não identificada"} · {route.bairros.slice(0, 3).map((bairro) => bairro.nome).join(", ")}</span>
                       {selected ? <b className="send-order-badge">Vai enviar</b> : null}
+                      <div className="route-row-metrics">
+                        <span>{route.distanciaKm > 0 ? `${route.distanciaKm.toFixed(3)} km` : "km não informado"}</span>
+                        <span>{route.pacotes} pacotes</span>
+                        <span>{route.paradas} paradas</span>
+                      </div>
+                      {!route.passedFilters && route.reasons.length ? <small>{route.reasons.join(" ")}</small> : null}
                     </button>
                   );
                 })}
