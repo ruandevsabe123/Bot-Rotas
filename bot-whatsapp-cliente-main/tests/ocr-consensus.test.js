@@ -16,6 +16,16 @@ function plainReading(text, source) {
   return { text, lines: [], source };
 }
 
+test("caminho rápido exige duas leituras independentes iguais", () => {
+  assert.equal(canUseFastOcrResult([
+    plainReading("F-14 Cabo Frio\nH-20 Centro", "contraste"),
+    plainReading("F-14 Cabo Frio\nH-20 Centro", "preto-e-branco")
+  ]), true);
+  assert.equal(canUseFastOcrResult([
+    plainReading("F-14 Cabo Frio", "contraste")
+  ]), false);
+});
+
 test("encerra cedo quando três leituras encontram as mesmas gaiolas com consenso", () => {
   assert.equal(canUseFastOcrResult([
     plainReading("F-14 Cabo Frio\nH-20 Centro", "a"),

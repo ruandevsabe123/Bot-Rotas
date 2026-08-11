@@ -67,7 +67,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
       const cageVariants = await createPreprocessedImages(imagePath, true, "cage");
       variants.push(...cageVariants);
       const maxReadings = Math.max(1, options.maxReadings || 6);
-      const firstVariants = cageVariants.slice(0, Math.min(3, maxReadings));
+      const firstVariants = cageVariants.slice(0, Math.min(2, maxReadings));
       const firstAttempts = await runOcrVariants(firstVariants);
       const firstReadings = firstAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
       const firstErrors = firstAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
@@ -143,7 +143,7 @@ function combineOcrReadings(readings: RouteOcrResult[]): RouteOcrResult {
 }
 
 export function canUseFastOcrResult(readings: RouteOcrResult[]) {
-  if (readings.length < 3) return false;
+  if (readings.length < 2) return false;
   const signatures = readings.map((reading) => findAllGaiolaCodesFromOcr(reading)
     .map((route) => normalizeOcrText(route.code))
     .filter(Boolean)
@@ -180,11 +180,12 @@ function readSingleRouteImageOcr(imagePath: string, label: string, psm = 6) {
 
 function readRouteImageOcrWithBinary(imagePath: string, label: string, psm: number) {
   return new Promise<RouteOcrResult>((resolve, reject) => {
-    const tesseractArgs = [imagePath, "stdout", "-l", "por", "--oem", "1", "--psm", String(psm), "tsv"];
-    const command = process.platform === "win32" ? "tesseract" : "nice";
-    const commandArgs = process.platform === "win32" ? tesseractArgs : ["-n", "5", "tesseract", ...tesseractArgs];
+    const cageOptions = label.startsWith("coluna-gaiola")
+      ? ["-c", "tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"]
+      : [];
+    const commandArgs = [imagePath, "stdout", "-l", "por", "--oem", "1", "--psm", String(psm), ...cageOptions, "tsv"];
     execFile(
-      command,
+      "tesseract",
       commandArgs,
       { timeout: 15000, maxBuffer: 1024 * 1024 * 4 },
       (error, stdout, stderr) => {
@@ -302,8 +303,8 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     ];
     const cageColumnVariants = [
       { path: cageEnhancedPath, label: "coluna-gaiola", generated: true, psm: 6 },
-      { path: cageEnhancedPath, label: "coluna-gaiola-esparsa", generated: false, psm: 11 },
       { path: cageThresholdPath, label: "coluna-gaiola-pb", generated: true, psm: 6 },
+      { path: cageEnhancedPath, label: "coluna-gaiola-esparsa", generated: false, psm: 11 },
     ];
     const originalVariant = [
       { path: imagePath, label: "original", generated: false, psm: 11 }
