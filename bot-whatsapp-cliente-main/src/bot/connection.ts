@@ -742,6 +742,12 @@ export class BotService extends EventEmitter {
   }
 
   async enableImageMonitoring(): Promise<boolean> {
+    const config = this.configStore.load();
+    if (config.ocrSelectionMode === "cages" && !config.ocrDesiredCages.length) {
+      this.logger.warning("Selecione pelo menos uma gaiola desejada antes de iniciar o automático por gaiolas.");
+      this.emitSnapshot();
+      return false;
+    }
     return this.enableTargetMonitoring(false, "ocr");
   }
 
@@ -1578,7 +1584,7 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean }) {
+  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean; ocrSelectionMode?: BotConfig["ocrSelectionMode"]; ocrDesiredCages?: string[] }) {
     const currentConfig = this.configStore.load();
     const changingMode = Boolean(settings.nuclearMode) !== currentConfig.nuclearMode;
     if (this.monitoringEnabled && changingMode) {
@@ -1593,6 +1599,11 @@ export class BotService extends EventEmitter {
     if (settings.alwaysWarmMode !== undefined) nextSettings.alwaysWarmMode = Boolean(settings.alwaysWarmMode);
     if (settings.keepAliveIntervalMs !== undefined) nextSettings.keepAliveIntervalMs = settings.keepAliveIntervalMs;
     if (settings.ocrManualRouteSelection !== undefined) nextSettings.ocrManualRouteSelection = Boolean(settings.ocrManualRouteSelection);
+    if (settings.ocrSelectionMode !== undefined) {
+      nextSettings.ocrSelectionMode = settings.ocrSelectionMode;
+      nextSettings.ocrManualRouteSelection = settings.ocrSelectionMode === "manual";
+    }
+    if (settings.ocrDesiredCages !== undefined) nextSettings.ocrDesiredCages = settings.ocrDesiredCages;
     const config = this.configStore.save(nextSettings);
     this.refreshRuntimeSettings(config);
     this.prepareSendPlan();
@@ -2505,8 +2516,7 @@ export class BotService extends EventEmitter {
 
       const unrankedOptions = detectedRoutes
         .flatMap((route) => this.buildOcrRouteOptions(route))
-        .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index)
-        .slice(0, 100);
+        .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index);
       const options = rankImageRouteOptions(
         unrankedOptions,
         this.romaneioStore?.getSettings().prioridade || "equilibrio_geral"
@@ -2538,20 +2548,33 @@ export class BotService extends EventEmitter {
         preferredCityFound: detectedRoutes.some((route) => isPreferredImageCity(route.line)) || options.some((option) => isPreferredImageCity(option.cidade)),
         message: `Imagem analisada. ${detectedRoutes.length} rota(s) encontrada(s) na foto e listada(s) pelo romaneio.`
       } as const;
-      if (!config.ocrManualRouteSelection) {
-        const bestEligibleOption = options.find((option) => option.passedFilters && option.romaneioMatch !== false);
-        if (!bestEligibleOption) {
+      if (config.ocrSelectionMode !== "manual") {
+        const eligibleOptions = options.filter((option) =>
+          option.romaneioMatch !== false && (config.ocrSelectionMode === "cages" || option.passedFilters));
+        const desiredCages = new Set(config.ocrDesiredCages.map((gaiola) => normalizarTexto(gaiola)));
+        const automaticOptions = config.ocrSelectionMode === "cages"
+          ? eligibleOptions.filter((option, index, all) =>
+              desiredCages.has(normalizarTexto(option.gaiola)) &&
+              all.findIndex((item) => normalizarTexto(item.gaiola) === normalizarTexto(option.gaiola)) === index)
+          : eligibleOptions.slice(0, 1);
+        if (!automaticOptions.length) {
           this.ocrRouteSelection = {
             ...readySelection,
-            message: "Rotas identificadas, mas nenhuma respeita todos os filtros configurados e possui correspondência no romaneio. Envio bloqueado."
+            message: config.ocrSelectionMode === "cages"
+              ? "Imagem analisada, mas nenhuma das gaiolas desejadas apareceu. O bot continua aguardando."
+              : "Rotas identificadas, mas nenhuma respeita todos os filtros configurados e possui correspondência no romaneio. Envio bloqueado."
           };
-          this.logger.warning("[ROMANEIO] Envio automático bloqueado: nenhuma rota identificada passou por todos os filtros configurados.");
+          this.logger.info(config.ocrSelectionMode === "cages"
+            ? "[ROMANEIO] Nenhuma gaiola desejada foi encontrada nesta imagem."
+            : "[ROMANEIO] Envio automático bloqueado: nenhuma rota identificada passou por todos os filtros configurados.");
           this.emitSnapshot();
           return;
         }
         this.ocrRouteSelection = readySelection;
-        this.applyOcrRouteSelection([bestEligibleOption], "automatic");
-        this.logger.success(`[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s); melhor opção selecionada automaticamente.`);
+        this.applyOcrRouteSelection(automaticOptions, "automatic");
+        this.logger.success(config.ocrSelectionMode === "cages"
+          ? `[ROMANEIO] ${automaticOptions.length} gaiola(s) desejada(s) encontrada(s) e preparada(s) para envio.`
+          : `[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s); melhor opção selecionada automaticamente.`);
         const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
         if (!sentImmediately) {
           this.logger.info("[ROMANEIO] Melhor rota escolhida automaticamente e preparada para quando o grupo abrir.");
@@ -2748,6 +2771,7 @@ export class BotService extends EventEmitter {
 
   private applyOcrRouteSelection(selected: OcrRouteOption[], mode: "manual" | "automatic") {
     const config = this.configStore.load();
+    const desiredCagesMode = mode === "automatic" && config.ocrSelectionMode === "cages";
     const messages = selected
       .map((option) => `${config.nomeEnvio} ${option.gaiola}`.trim())
       .filter(Boolean);
@@ -2766,10 +2790,14 @@ export class BotService extends EventEmitter {
       preparedMessages: messages,
       message: mode === "manual"
         ? "Rotas confirmadas. O bot enviará quando o grupo abrir."
+        : desiredCagesMode
+        ? `${messages.length} gaiola(s) desejada(s) pronta(s) para envio automático.`
         : "Modo automático: melhor rota escolhida pelo bot."
     };
     this.logger.success(mode === "manual"
       ? `[ROMANEIO] Cliente confirmou ${selected.length} rota(s): ${messages.join(" | ")}.`
+      : desiredCagesMode
+      ? `[ROMANEIO] Bot preparou ${selected.length} gaiola(s) desejada(s): ${messages.join(" | ")}.`
       : `[ROMANEIO] Bot escolheu automaticamente a melhor rota: ${messages.join(" | ")}.`);
   }
 
@@ -3257,7 +3285,7 @@ export class BotService extends EventEmitter {
 
     let mensagens = [...this.preparedMessages];
 
-    if (this.monitoringMode === "target" && mensagens.length > MAX_OUTGOING_MESSAGES) {
+    if (this.monitoringMode === "target" && this.preparedTargetDispatchMode !== "ocr" && mensagens.length > MAX_OUTGOING_MESSAGES) {
       mensagens = mensagens.slice(0, MAX_OUTGOING_MESSAGES);
       this.logger.warning(
         `Limite máximo de ${MAX_OUTGOING_MESSAGES} mensagens ativo. Enviando apenas as duas primeiras.`
@@ -3923,7 +3951,7 @@ export class BotService extends EventEmitter {
       : []
       : [...this.mensagensProntasAlvo];
 
-    if (this.monitoringMode === "target" && this.preparedMessages.length > MAX_OUTGOING_MESSAGES) {
+    if (this.monitoringMode === "target" && config.targetDispatchMode !== "ocr" && this.preparedMessages.length > MAX_OUTGOING_MESSAGES) {
       this.preparedMessages = this.preparedMessages.slice(0, MAX_OUTGOING_MESSAGES);
       this.logger.warning(
         `Limite máximo de ${MAX_OUTGOING_MESSAGES} mensagens ativo. As duas primeiras mensagens serão preparadas para envio.`

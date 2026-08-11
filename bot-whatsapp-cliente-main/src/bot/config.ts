@@ -21,7 +21,9 @@ export const DEFAULT_CONFIG: BotConfig = {
   minSendDelayMs: 0,
   alwaysWarmMode: true,
   keepAliveIntervalMs: 300000,
-  ocrManualRouteSelection: true
+  ocrManualRouteSelection: true,
+  ocrSelectionMode: "manual",
+  ocrDesiredCages: []
 };
 
 export class ConfigStore {
@@ -122,7 +124,20 @@ export class ConfigStore {
       minSendDelayMs: this.clampNumber(input.minSendDelayMs, 0, 5000, DEFAULT_CONFIG.minSendDelayMs),
       alwaysWarmMode: typeof input.alwaysWarmMode === "boolean" ? input.alwaysWarmMode : DEFAULT_CONFIG.alwaysWarmMode,
       keepAliveIntervalMs: this.clampNumber(input.keepAliveIntervalMs, 60000, 600000, DEFAULT_CONFIG.keepAliveIntervalMs),
-      ocrManualRouteSelection: typeof input.ocrManualRouteSelection === "boolean" ? input.ocrManualRouteSelection : DEFAULT_CONFIG.ocrManualRouteSelection,
+      ocrManualRouteSelection: input.ocrSelectionMode === "manual"
+        ? true
+        : input.ocrSelectionMode === "best" || input.ocrSelectionMode === "cages"
+        ? false
+        : typeof input.ocrManualRouteSelection === "boolean" ? input.ocrManualRouteSelection : DEFAULT_CONFIG.ocrManualRouteSelection,
+      ocrSelectionMode: input.ocrSelectionMode === "best" || input.ocrSelectionMode === "cages" || input.ocrSelectionMode === "manual"
+        ? input.ocrSelectionMode
+        : input.ocrManualRouteSelection === false ? "best" : DEFAULT_CONFIG.ocrSelectionMode,
+      ocrDesiredCages: Array.isArray(input.ocrDesiredCages)
+        ? Array.from(new Set(input.ocrDesiredCages
+            .filter((item): item is string => typeof item === "string")
+            .map((item) => item.trim().toUpperCase())
+            .filter(Boolean)))
+        : [],
       // support legacy `codigosMensagens` if present
       codigosMensagensAlvo: Array.isArray(input.codigosMensagensAlvo)
         ? input.codigosMensagensAlvo.filter((item) => typeof item === "string" && item.trim())

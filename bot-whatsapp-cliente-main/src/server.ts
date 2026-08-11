@@ -984,7 +984,9 @@ async function handleAction(bot: BotProcessProxy, action: string, body: any) {
         nuclearMode: Boolean(body.nuclearMode),
         alwaysWarmMode: body.alwaysWarmMode,
         keepAliveIntervalMs: body.keepAliveIntervalMs,
-        ocrManualRouteSelection: body.ocrManualRouteSelection
+        ocrManualRouteSelection: body.ocrManualRouteSelection,
+        ocrSelectionMode: body.ocrSelectionMode,
+        ocrDesiredCages: Array.isArray(body.ocrDesiredCages) ? body.ocrDesiredCages : undefined
       });
       break;
     case "confirm-ocr-routes":

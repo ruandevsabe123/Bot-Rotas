@@ -44,6 +44,7 @@ import {
   AdminUserSummary,
   AdminUsersSnapshot,
   AppRelease,
+  BotConfig,
   BotSnapshot,
   MonitoredRoute,
   OcrRouteOption,
@@ -143,7 +144,9 @@ const emptySnapshot: BotSnapshot = {
     minSendDelayMs: 0,
     alwaysWarmMode: true,
     keepAliveIntervalMs: 300000,
-    ocrManualRouteSelection: true
+    ocrManualRouteSelection: true,
+    ocrSelectionMode: "manual",
+    ocrDesiredCages: []
   },
   groups: [],
   readinessChecks: [],
@@ -3358,15 +3361,17 @@ export default function App() {
   function confirmStartImageMonitoring() {
     const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
     const hasName = Boolean(snapshot.config.nomeEnvio);
+    const needsDesiredCages = snapshot.config.ocrSelectionMode === "cages" && !snapshot.config.ocrDesiredCages.length;
 
-    if (!hasGroup || !hasName) {
+    if (!hasGroup || !hasName || needsDesiredCages) {
       setGroupEditor("image");
       setConfirmation({
         title: "Revise o bot imagem",
-        message: "Falta configurar grupo, nome ou bairro para leitura de foto.",
+        message: "Falta concluir a configuração do bot imagem.",
         details: [
           hasGroup ? `Grupo: ${groupLabel}` : "Grupo alvo ainda não configurado.",
           hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",
+          needsDesiredCages ? "Selecione pelo menos uma gaiola desejada." : "Estratégia de escolha configurada.",
           "Todas as rotas encontradas na imagem serão analisadas."
         ],
         confirmLabel: "Entendi",
@@ -3381,7 +3386,9 @@ export default function App() {
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Nome: ${snapshot.config.nomeEnvio}`,
-        "Ranking definido pelo romaneio e pelos filtros."
+        snapshot.config.ocrSelectionMode === "cages"
+          ? `${snapshot.config.ocrDesiredCages.length} gaiola(s) desejada(s): ${snapshot.config.ocrDesiredCages.join(", ")}`
+          : "Ranking definido pelo romaneio e pelos filtros."
       ],
       confirmLabel: "Iniciar imagem",
       onConfirm: async () => {
@@ -3484,34 +3491,46 @@ export default function App() {
     });
   }
 
-  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean }) {
+  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean; ocrSelectionMode?: BotConfig["ocrSelectionMode"]; ocrDesiredCages?: string[] }) {
     return runAction(() => botApi.saveGeneralSettings({
       nuclearMode: settings.nuclearMode ?? snapshot.config.nuclearMode,
       alwaysWarmMode: settings.alwaysWarmMode ?? snapshot.config.alwaysWarmMode,
       keepAliveIntervalMs: settings.keepAliveIntervalMs ?? snapshot.config.keepAliveIntervalMs,
-      ocrManualRouteSelection: settings.ocrManualRouteSelection ?? snapshot.config.ocrManualRouteSelection
+      ocrManualRouteSelection: settings.ocrManualRouteSelection ?? snapshot.config.ocrManualRouteSelection,
+      ocrSelectionMode: settings.ocrSelectionMode ?? snapshot.config.ocrSelectionMode,
+      ocrDesiredCages: settings.ocrDesiredCages ?? snapshot.config.ocrDesiredCages
     }));
   }
 
-  function confirmOcrSelectionMode(nextManualMode: boolean) {
+  function confirmOcrSelectionMode(mode: BotConfig["ocrSelectionMode"]) {
+    const manual = mode === "manual";
+    const cages = mode === "cages";
     setConfirmation({
-      title: nextManualMode ? "Ligar escolha manual" : "Desligar escolha manual",
-      message: nextManualMode
+      title: manual ? "Ligar escolha manual" : cages ? "Ligar automático por gaiolas" : "Ligar melhor rota automática",
+      message: manual
         ? "Com essa opção ligada, você terá que escolher a rota que vai pegar antes do bot preparar o envio."
-        : "Com essa opção desligada, o bot vai analisar a imagem e enviar a mensagem por conta própria com a melhor rota do ranking.",
-      details: nextManualMode
+        : cages
+        ? "O bot enviará sozinho uma mensagem para cada gaiola desejada que aparecer na imagem."
+        : "O bot vai analisar a imagem e enviar por conta própria a melhor rota do ranking.",
+      details: manual
         ? ["O painel abrirá a tela de ranking para seleção manual.", "Nada será enviado até confirmar uma ou mais rotas."]
-        : ["Útil quando o líder envia a imagem e não fecha o grupo.", "Se o grupo já estiver aberto, o bot tenta enviar a melhor rota o mais rápido possível."],
-      confirmLabel: nextManualMode ? "Ligar escolha" : "Desligar escolha",
-      tone: nextManualMode ? "manual" : "auto",
+        : cages
+        ? ["Você poderá selecionar qualquer quantidade de gaiolas do romaneio.", "Cada coincidência gera uma mensagem separada com o nome já configurado."]
+        : ["O bot escolherá somente a primeira rota elegível.", "Se o grupo já estiver aberto, tentará enviar imediatamente."],
+      confirmLabel: "Ativar modo",
+      tone: manual ? "manual" : "auto",
       onConfirm: async () => {
-        await saveGeneralSettings({ ocrManualRouteSelection: nextManualMode });
-        showActionToast(
-          nextManualMode ? "Modo seleção manual ligado." : "Modo automático ligado.",
-          nextManualMode ? "manual" : "auto"
-        );
+        await saveGeneralSettings({ ocrSelectionMode: mode, ocrManualRouteSelection: manual });
+        showActionToast(manual ? "Modo seleção manual ligado." : cages ? "Automático por gaiolas ligado." : "Melhor rota automática ligada.", manual ? "manual" : "auto");
       }
     });
+  }
+
+  async function toggleDesiredCage(gaiola: string) {
+    const current = snapshot.config.ocrDesiredCages || [];
+    const selected = current.some((item) => item.toUpperCase() === gaiola.toUpperCase());
+    const next = selected ? current.filter((item) => item.toUpperCase() !== gaiola.toUpperCase()) : [...current, gaiola];
+    await saveGeneralSettings({ ocrDesiredCages: next });
   }
 
   async function handleLocateRomaneio() {
@@ -3852,37 +3871,96 @@ export default function App() {
             messages={["Ranking automático pelo romaneio", "Sem filtro de bairros preferidos"]}
             onOpen={() => setGroupEditor("image")}
           /> : null}
-          <section className={snapshot.config.ocrManualRouteSelection ? "quick-panel ocr-mode-panel tone-manual" : "quick-panel ocr-mode-panel tone-auto"}>
+          <section className={snapshot.config.ocrSelectionMode === "manual" ? "quick-panel ocr-mode-panel tone-manual" : "quick-panel ocr-mode-panel tone-auto"}>
             <div className="panel-heading">
               <div>
                 <p className="panel-label">Escolha da rota</p>
-                <h2>{snapshot.config.ocrManualRouteSelection ? "Manual" : "Automática"}</h2>
+                <h2>{snapshot.config.ocrSelectionMode === "manual" ? "Manual" : snapshot.config.ocrSelectionMode === "cages" ? "Automática por gaiolas" : "Melhor rota automática"}</h2>
               </div>
               <div className="ocr-mode-actions" role="group" aria-label="Modo de escolha da rota">
                 <button
-                  className={!snapshot.config.ocrManualRouteSelection ? "button primary" : "button"}
-                  disabled={busy || !snapshot.config.ocrManualRouteSelection}
+                  className={snapshot.config.ocrSelectionMode === "best" ? "button primary" : "button"}
+                  disabled={busy || snapshot.config.ocrSelectionMode === "best"}
                   type="button"
-                  onClick={() => confirmOcrSelectionMode(false)}
+                  onClick={() => confirmOcrSelectionMode("best")}
                 >
-                  Automática
+                  Melhor rota
                 </button>
                 <button
-                  className={snapshot.config.ocrManualRouteSelection ? "button primary" : "button"}
-                  disabled={busy || snapshot.config.ocrManualRouteSelection}
+                  className={snapshot.config.ocrSelectionMode === "cages" ? "button primary" : "button"}
+                  disabled={busy || snapshot.config.ocrSelectionMode === "cages"}
                   type="button"
-                  onClick={() => confirmOcrSelectionMode(true)}
+                  onClick={() => confirmOcrSelectionMode("cages")}
+                >
+                  Por gaiolas
+                </button>
+                <button
+                  className={snapshot.config.ocrSelectionMode === "manual" ? "button primary" : "button"}
+                  disabled={busy || snapshot.config.ocrSelectionMode === "manual"}
+                  type="button"
+                  onClick={() => confirmOcrSelectionMode("manual")}
                 >
                   Manual
                 </button>
               </div>
             </div>
             <p className="approval-message">
-              {snapshot.config.ocrManualRouteSelection
+              {snapshot.config.ocrSelectionMode === "manual"
                 ? "O painel mostra o ranking e aguarda sua confirmação."
+                : snapshot.config.ocrSelectionMode === "cages"
+                ? "O bot envia sozinho todas as gaiolas desejadas encontradas na imagem."
                 : "O bot usa a melhor rota do ranking e envia sozinho quando possível."}
             </p>
           </section>
+          {snapshot.config.ocrSelectionMode === "cages" ? (
+            <section className="quick-panel ocr-desired-cages-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="panel-label">Rotas para pegar dormindo</p>
+                  <h2>Gaiolas desejadas</h2>
+                  <p className="approval-message">Selecione quantas quiser. A lista acompanha o romaneio carregado hoje.</p>
+                </div>
+                <span className="mini-badge ok">{snapshot.config.ocrDesiredCages.length} selecionada(s)</span>
+              </div>
+              <div className="ocr-mode-actions">
+                <button
+                  className="button"
+                  disabled={busy || !romaneio.routes.length}
+                  type="button"
+                  onClick={() => saveGeneralSettings({ ocrDesiredCages: Array.from(new Set(romaneio.routes.map((route) => route.gaiola.toUpperCase()))) })}
+                >
+                  Selecionar todas
+                </button>
+                <button
+                  className="button"
+                  disabled={busy || !snapshot.config.ocrDesiredCages.length}
+                  type="button"
+                  onClick={() => saveGeneralSettings({ ocrDesiredCages: [] })}
+                >
+                  Limpar seleção anterior
+                </button>
+              </div>
+              <div className="ocr-option-grid desired-cages-grid">
+                {Array.from(new Map(romaneio.routes.map((route) => [route.gaiola.toUpperCase(), route])).values()).map((route) => {
+                  const selected = snapshot.config.ocrDesiredCages.some((gaiola) => gaiola.toUpperCase() === route.gaiola.toUpperCase());
+                  return (
+                    <button
+                      key={route.gaiola}
+                      className={selected ? "ocr-option selected" : "ocr-option"}
+                      disabled={busy}
+                      type="button"
+                      onClick={() => toggleDesiredCage(route.gaiola)}
+                    >
+                      <strong>{route.gaiola}</strong>
+                      <span>{route.cidade || "Cidade não identificada"} · {route.bairros.slice(0, 3).map((bairro) => bairro.nome).join(", ")}</span>
+                      {selected ? <b className="send-order-badge">Vai enviar</b> : null}
+                    </button>
+                  );
+                })}
+                {!romaneio.routes.length ? <p className="qr-empty">Carregue o romaneio do dia para selecionar as gaiolas.</p> : null}
+              </div>
+            </section>
+          ) : null}
           <ControlButtons
             busy={busy}
             status={snapshot.status}

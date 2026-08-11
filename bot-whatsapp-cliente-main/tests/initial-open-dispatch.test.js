@@ -76,6 +76,34 @@ test("disparo manual aquece o grupo antes de usar o relay quando estava frio", a
   }
 });
 
+test("bot imagem por gaiolas envia a fila completa sem limitar a duas mensagens", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const messages = Array.from({ length: 25 }, (_, index) => `Cliente G-${index + 1}`);
+    let received = [];
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.preparedTargetDispatchMode = "ocr";
+    bot.preparedTargetJid = "motoristas@g.us";
+    bot.preparedMessages = messages;
+    bot.rebuildPreparedRelayMessages = () => undefined;
+    bot.sendAggressiveTargetSequence = (_jid, outgoing) => {
+      received = outgoing;
+      return Promise.resolve();
+    };
+    bot.enqueueDispatch = () => undefined;
+    bot.registerRouteDispatch = () => "route-test";
+    bot.attachRaceTrackingRoute = () => undefined;
+    bot.markQueuedDispatchSending = () => undefined;
+
+    assert.equal(bot.enviarMensagensRapidas(1, "automatic", Date.now(), "image_ready"), true);
+    assert.deepEqual(received, messages);
+    await bot.activeSendCycle;
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("primeira mensagem não espera a adaptação aplicada à segunda", async () => {
   const { bot, directory } = createBot();
   try {

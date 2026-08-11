@@ -52,6 +52,8 @@ export type BotConfig = {
   alwaysWarmMode: boolean;
   keepAliveIntervalMs: number;
   ocrManualRouteSelection: boolean;
+  ocrSelectionMode: "best" | "manual" | "cages";
+  ocrDesiredCages: string[];
 };
 
 export type DispatchPriorityProfile = {
@@ -644,6 +646,8 @@ export type GeneralSettingsPayload = {
   alwaysWarmMode?: boolean;
   keepAliveIntervalMs?: number;
   ocrManualRouteSelection?: boolean;
+  ocrSelectionMode?: "best" | "manual" | "cages";
+  ocrDesiredCages?: string[];
 };
 
 export type DesktopApi = {
