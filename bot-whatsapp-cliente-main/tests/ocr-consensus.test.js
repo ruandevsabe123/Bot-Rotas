@@ -8,7 +8,8 @@ const {
   findAllGaiolaCodesFromOcr,
   extractNeighborhoodAfterCity,
   selectConsensusDetection,
-  canUseFastOcrResult
+  canUseFastOcrResult,
+  isSafeAutomaticGaiolaDetection
 } = require("../dist/bot/ocr.js");
 
 function plainReading(text, source) {
@@ -29,6 +30,21 @@ test("mantém análise completa quando as leituras rápidas divergem", () => {
     plainReading("F-14 Cabo Frio", "b"),
     plainReading("H-20 Centro", "c")
   ]), false);
+});
+
+test("automático exige confirmação de pelo menos metade das leituras", () => {
+  assert.equal(isSafeAutomaticGaiolaDetection({
+    ...detection("F-14", 92),
+    safeForAutomatic: true,
+    evidenceCount: 2,
+    variantCount: 6
+  }), false);
+  assert.equal(isSafeAutomaticGaiolaDetection({
+    ...detection("F-14", 92),
+    safeForAutomatic: true,
+    evidenceCount: 3,
+    variantCount: 6
+  }), true);
 });
 
 function detection(code, confidence = 90) {

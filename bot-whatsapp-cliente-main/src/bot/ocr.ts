@@ -124,6 +124,11 @@ export function canUseFastOcrResult(readings: RouteOcrResult[]) {
   return detected.length > 0 && detected.every((route) => route.safeForAutomatic);
 }
 
+export function isSafeAutomaticGaiolaDetection(detection: DetectedRouteCode) {
+  const requiredEvidence = Math.max(2, Math.ceil(Math.max(1, detection.variantCount) / 2));
+  return detection.safeForAutomatic && detection.confidence >= 45 && detection.evidenceCount >= requiredEvidence;
+}
+
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>) {
   const results = new Array<R>(items.length);
   let cursor = 0;

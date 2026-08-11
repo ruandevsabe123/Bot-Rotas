@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine } from "./ocr";
+import { extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection } from "./ocr";
 import { readRouteImageOcrWithoutBlockingSocket } from "./ocrIsolated";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
@@ -2518,8 +2518,11 @@ export class BotService extends EventEmitter {
         ...analysisContext()
       });
 
-      const unrankedOptions = detectedRoutes
-        .flatMap((route) => this.buildOcrRouteOptions(route))
+      const optionDetections = config.ocrSelectionMode === "manual"
+        ? detectedRoutes
+        : detectedRoutes.filter(isSafeAutomaticGaiolaDetection);
+      const unrankedOptions = optionDetections
+        .flatMap((route) => this.buildOcrRouteOptions(route, config.ocrSelectionMode === "manual"))
         .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index);
       const options = rankImageRouteOptions(
         unrankedOptions,
@@ -2805,13 +2808,13 @@ export class BotService extends EventEmitter {
       : `[ROMANEIO] Bot escolheu automaticamente a melhor rota: ${messages.join(" | ")}.`);
   }
 
-  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; line?: string; confidence?: number }): OcrRouteOption[] {
+  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; line?: string; confidence?: number }, allowAmbiguousCodeCorrection = false): OcrRouteOption[] {
     if (!detected.code) return [];
     const fallback = () => [this.toOcrFallbackOption(detected)];
     if (!this.romaneioStore) return fallback();
 
     try {
-      const detectedCodes = getOcrGaiolaCodeCandidates(detected.code);
+      const detectedCodes = getOcrGaiolaCodeCandidates(detected.code, allowAmbiguousCodeCorrection);
       const exactGaiolaOptions = detectedCodes
         .flatMap((code) => this.romaneioStore!.rankForDetected({ gaiola: code, bairro: detected.bairro })
           .filter((route) => this.ocrRouteLooksCompatible(route, { ...detected, code })));
@@ -5006,11 +5009,11 @@ function roundMetric(value: number) {
   return Math.round(value * 1000) / 1000;
 }
 
-function getOcrGaiolaCodeCandidates(code: string) {
+function getOcrGaiolaCodeCandidates(code: string, allowAmbiguousCorrection = false) {
   const normalized = String(code || "").trim().toUpperCase();
   if (!normalized) return [];
   const candidates = [normalized];
-  if (/^H-1$/i.test(normalized)) candidates.push("I-1");
+  if (allowAmbiguousCorrection && /^H-1$/i.test(normalized)) candidates.push("I-1");
   return [...new Set(candidates)];
 }
 
