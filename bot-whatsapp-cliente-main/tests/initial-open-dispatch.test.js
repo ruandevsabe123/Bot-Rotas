@@ -104,6 +104,26 @@ test("bot imagem por gaiolas envia a fila completa sem limitar a duas mensagens"
   }
 });
 
+test("aviso pessoal usa o próprio número conectado sem atrasar o grupo", async () => {
+  const { bot, directory } = createBot();
+  try {
+    const sent = [];
+    bot.status = "connected";
+    bot.sock = {
+      user: { id: "5511999999999:12@s.whatsapp.net" },
+      sendMessage: async (jid, content) => sent.push({ jid, content })
+    };
+
+    assert.equal(await bot.sendSelfNotification("🚀 DISPARO REALIZADO"), true);
+    assert.deepEqual(sent, [{
+      jid: "5511999999999@s.whatsapp.net",
+      content: { text: "🚀 DISPARO REALIZADO" }
+    }]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("primeira mensagem não espera a adaptação aplicada à segunda", async () => {
   const { bot, directory } = createBot();
   try {

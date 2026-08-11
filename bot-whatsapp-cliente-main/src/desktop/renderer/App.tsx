@@ -119,6 +119,7 @@ type AdminMainTab = "dashboard" | "validations" | "history" | "logs" | "reports"
 type RouteStatusFilter = "all" | "pending" | "validated" | "rejected" | "leader";
 type RouteKindFilter = "all" | "automatic" | "manual" | "test";
 type RouteHistoryTab = "automatic" | "manual" | "test";
+type DesiredCageSort = "alphabetical" | "distance" | "packages" | "stops" | "ranking";
 type CleanupTarget = "logs" | "routes" | "support" | "all";
 type AdminLogLevelFilter = "all" | "info" | "success" | "warning" | "error";
 
@@ -2926,6 +2927,8 @@ export default function App() {
   const [romaneioLocateResult, setRomaneioLocateResult] = useState<RomaneioLocateResult>(emptyRomaneioLocate);
   const [romaneioError, setRomaneioError] = useState("");
   const [selectedOcrOptionIds, setSelectedOcrOptionIds] = useState<string[]>([]);
+  const [desiredCageSearch, setDesiredCageSearch] = useState("");
+  const [desiredCageSort, setDesiredCageSort] = useState<DesiredCageSort>("alphabetical");
   const [ocrRouteDialogOpen, setOcrRouteDialogOpen] = useState(false);
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
@@ -3128,6 +3131,28 @@ export default function App() {
   const groupLabel = useMemo(() => {
     return snapshot.config.grupoAlvoNome || "Nenhum grupo alvo";
   }, [snapshot.config]);
+
+  const visibleDesiredCageRoutes = useMemo(() => {
+    const ranked = Array.from(new Map(
+      rankRoutes(romaneio.routes, {}, romaneioSettingsDraft)
+        .map((route) => [route.gaiola.toUpperCase(), route])
+    ).values());
+    const query = desiredCageSearch.trim().toLocaleLowerCase("pt-BR");
+    const filtered = query
+      ? ranked.filter((route) => [route.gaiola, route.rota, route.cidade, ...route.bairros.map((bairro) => bairro.nome)]
+          .some((value) => String(value || "").toLocaleLowerCase("pt-BR").includes(query)))
+      : ranked;
+    if (desiredCageSort === "ranking") return filtered;
+    return [...filtered].sort((left, right) => {
+      if (desiredCageSort === "alphabetical") return left.gaiola.localeCompare(right.gaiola, "pt-BR", { numeric: true });
+      const key = desiredCageSort === "distance" ? "distanciaKm" : desiredCageSort === "packages" ? "pacotes" : "paradas";
+      const leftValue = Number(left[key] || 0);
+      const rightValue = Number(right[key] || 0);
+      if (leftValue > 0 && rightValue <= 0) return -1;
+      if (rightValue > 0 && leftValue <= 0) return 1;
+      return leftValue - rightValue || left.gaiola.localeCompare(right.gaiola, "pt-BR", { numeric: true });
+    });
+  }, [desiredCageSearch, desiredCageSort, romaneio.routes, romaneioSettingsDraft]);
 
   const testGroupLabel = useMemo(() => {
     return snapshot.config.grupoTesteNome || "Nenhum teste salvo";
@@ -3941,8 +3966,32 @@ export default function App() {
                   Limpar seleção anterior
                 </button>
               </div>
+              <div className="settings-grid compact-settings desired-cages-tools">
+                <label>
+                  Pesquisar rota
+                  <span className="search-input-wrap">
+                    <Search size={18} aria-hidden="true" />
+                    <input
+                      value={desiredCageSearch}
+                      type="search"
+                      placeholder="Gaiola, rota, bairro ou cidade"
+                      onChange={(event) => setDesiredCageSearch(event.target.value)}
+                    />
+                  </span>
+                </label>
+                <label>
+                  Ordenar por
+                  <select value={desiredCageSort} onChange={(event) => setDesiredCageSort(event.target.value as DesiredCageSort)}>
+                    <option value="alphabetical">Ordem alfabética</option>
+                    <option value="distance">Menor distância</option>
+                    <option value="packages">Menos pacotes</option>
+                    <option value="stops">Menos paradas</option>
+                    <option value="ranking">Ranking dos filtros</option>
+                  </select>
+                </label>
+              </div>
               <div className="ocr-option-grid desired-cages-grid">
-                {Array.from(new Map(rankRoutes(romaneio.routes, {}, romaneioSettingsDraft).map((route) => [route.gaiola.toUpperCase(), route])).values()).map((route, index) => {
+                {visibleDesiredCageRoutes.map((route, index) => {
                   const selected = snapshot.config.ocrDesiredCages.some((gaiola) => gaiola.toUpperCase() === route.gaiola.toUpperCase());
                   return (
                     <button
@@ -3964,6 +4013,7 @@ export default function App() {
                     </button>
                   );
                 })}
+                {romaneio.routes.length && !visibleDesiredCageRoutes.length ? <p className="qr-empty">Nenhuma gaiola encontrada nessa pesquisa.</p> : null}
                 {!romaneio.routes.length ? <p className="qr-empty">Carregue o romaneio do dia para selecionar as gaiolas.</p> : null}
               </div>
             </section>

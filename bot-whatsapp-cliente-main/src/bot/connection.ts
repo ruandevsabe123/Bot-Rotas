@@ -3030,6 +3030,7 @@ export class BotService extends EventEmitter {
         leaderName: this.getLeaderNameFromIdentifiers(senderIdentifiers)
       };
 
+      const reactedRoute = this.routeStore.all().find((route) => route.sentMessageIds.includes(String(reactedMessageId)));
       if (this.routeStore.recordReactionEvent(String(reactedMessageId), routeReaction, action)) {
         const validatedByLeader = action === "add" && routeReaction.isAdmin && isThumbsUpReaction(emoji) && this.routeStore.validateBySentMessageId(String(reactedMessageId), routeReaction.leaderName || senderPhone || "lider", {
           source: "leader_reaction_1h",
@@ -3052,6 +3053,15 @@ export class BotService extends EventEmitter {
             message: `O líder ${routeReaction.leaderName || senderPhone || "identificado"} reagiu e removeu a reação. Explique se a rota foi válida ou não para liberar o bot.`
           });
           this.logger.warning("Bot bloqueado para o cliente até explicar a reação removida pelo líder.");
+        }
+        if (validatedByLeader && reactedRoute) {
+          void this.sendSelfNotification([
+            "✅ ROTA CONFIRMADA",
+            `Líder: ${routeReaction.leaderName || senderPhone || "identificado"}`,
+            `Reação: ${emoji}`,
+            `Grupo: ${reactedRoute.groupName}`,
+            `Mensagem(ns): ${reactedRoute.messages.join(" | ")}`
+          ].join("\n"));
         }
         this.emitSnapshot();
       }
@@ -3411,6 +3421,7 @@ export class BotService extends EventEmitter {
   private updateRouteDispatch(cycleId: number, confirmedCount: number, totalCount: number, dispatchTimeline?: RouteDispatchTimeline, finalizeQueue = false) {
     const routeId = this.activeRouteByCycle.get(cycleId);
     if (!routeId) return;
+    const previousRoute = this.routeStore.all().find((route) => route.id === routeId);
     const patch: Parameters<RouteStore["update"]>[1] = {
       confirmedCount,
       status: confirmedCount === totalCount ? "sent" : confirmedCount > 0 ? "partial" : "failed"
@@ -3420,7 +3431,39 @@ export class BotService extends EventEmitter {
     if (dispatchTimeline) patch.dispatchTimeline = dispatchTimeline;
     this.routeStore.update(routeId, patch);
     if (finalizeQueue) this.markQueuedDispatchFinished(cycleId, confirmedCount, totalCount);
+    if (finalizeQueue && confirmedCount > 0 && previousRoute?.mode === "target" && previousRoute.status === "sending") {
+      void this.sendSelfNotification([
+        "🚀 DISPARO REALIZADO",
+        `Grupo: ${previousRoute.groupName}`,
+        `Confirmadas pelo WhatsApp: ${confirmedCount}/${totalCount}`,
+        `Mensagem(ns): ${previousRoute.messages.join(" | ")}`
+      ].join("\n"));
+    }
     this.emitSnapshot();
+  }
+
+  private async sendSelfNotification(text: string) {
+    const sock = this.sock;
+    const ownJid = String(sock?.user?.id || "").replace(/:\d+@/, "@");
+    if (!sock?.sendMessage || !ownJid || this.status !== "connected") {
+      this.logger.warning("Aviso pessoal não enviado: número conectado indisponível.");
+      return false;
+    }
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await sock.sendMessage(ownJid, { text });
+        this.logger.success("Aviso enviado ao WhatsApp do próprio cliente.");
+        return true;
+      } catch (error) {
+        if (attempt === 3) {
+          this.logger.warning(`Não consegui enviar o aviso pessoal: ${this.getErrorMessage(error)}.`);
+          return false;
+        }
+        await this.delay(300 * attempt);
+      }
+    }
+    return false;
   }
 
   private appendRouteMessageId(cycleId: number, messageId?: string) {

@@ -48,6 +48,27 @@
   min-height: 86px;
 }
 
+.desired-cages-tools {
+  margin: 14px 0;
+}
+
+.search-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input-wrap svg {
+  position: absolute;
+  left: 12px;
+  color: var(--hub-muted);
+  pointer-events: none;
+}
+
+.compact-settings .search-input-wrap input {
+  padding-left: 40px;
+}
+
 .inline-error {
   margin: 12px 0 0;
   border: 1px solid rgba(255, 81, 72, 0.24);
