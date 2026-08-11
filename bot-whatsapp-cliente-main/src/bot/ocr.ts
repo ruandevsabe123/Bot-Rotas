@@ -67,7 +67,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
       const cageVariants = await createPreprocessedImages(imagePath, true, "cage");
       variants.push(...cageVariants);
       const maxReadings = Math.max(1, options.maxReadings || 6);
-      const firstVariants = cageVariants.slice(0, Math.min(2, maxReadings));
+      const firstVariants = cageVariants.slice(0, Math.min(3, maxReadings));
       const firstAttempts = await runOcrVariants(firstVariants);
       const firstReadings = firstAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
       const firstErrors = firstAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
@@ -80,11 +80,18 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
         return combineOcrReadings(firstReadings);
       }
 
-      const fullVariants = await createPreprocessedImages(imagePath, false, "full");
-      variants.push(...fullVariants);
-      const remainingAttempts = await runOcrVariants(fullVariants.slice(0, remainingLimit));
-      const readings = [...firstReadings, ...remainingAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : [])];
-      const errors = [...firstErrors, ...remainingAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : [])];
+      const extraCageVariants = cageVariants.slice(firstVariants.length, firstVariants.length + remainingLimit);
+      const extraCageAttempts = await runOcrVariants(extraCageVariants);
+      let readings = [...firstReadings, ...extraCageAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : [])];
+      let errors = [...firstErrors, ...extraCageAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : [])];
+      const fullReadingLimit = remainingLimit - extraCageVariants.length;
+      if (fullReadingLimit > 0) {
+        const fullVariants = await createPreprocessedImages(imagePath, false, "full");
+        variants.push(...fullVariants);
+        const fullAttempts = await runOcrVariants(fullVariants.slice(0, fullReadingLimit));
+        readings = [...readings, ...fullAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : [])];
+        errors = [...errors, ...fullAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : [])];
+      }
       if (!readings.length) throw new Error(errors[0] || "Nenhuma versão da imagem pôde ser analisada.");
       return combineOcrReadings(readings);
     }

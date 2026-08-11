@@ -2461,7 +2461,7 @@ export class BotService extends EventEmitter {
           : "[ROMANEIO] Grupo aberto: usando análise progressiva rápida com consenso."
         : "[ROMANEIO] Grupo fechado: usando análise completa da imagem.");
       const ocr = await readRouteImageOcrWithoutBlockingSocket(imagePath, {
-        maxReadings: preferCageCrop ? 2 : 6,
+        maxReadings: preferCageCrop ? 3 : 6,
         fastFirst,
         preferCageCrop
       });

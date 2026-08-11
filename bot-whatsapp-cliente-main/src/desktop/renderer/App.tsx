@@ -3112,6 +3112,11 @@ export default function App() {
       setOcrRouteDialogOpen(false);
       return;
     }
+    if (snapshot.config.ocrSelectionMode !== "manual") {
+      setSelectedOcrOptionIds([]);
+      setOcrRouteDialogOpen(false);
+      return;
+    }
     if (selection?.status === "analyzing") {
       setActiveTab("image");
       setSelectedOcrOptionIds([]);
@@ -3137,7 +3142,7 @@ export default function App() {
         setOcrRouteDialogOpen(true);
       }
     }
-  }, [snapshot.config.targetDispatchMode, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
+  }, [snapshot.config.ocrSelectionMode, snapshot.config.targetDispatchMode, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
 
   useEffect(() => {
     if (!desiredCagesTouchedRef.current) {
@@ -4096,7 +4101,7 @@ export default function App() {
             monitoringMode={snapshot.monitoringMode}
             groupState={snapshot.groupState}
           />
-          {snapshot.config.targetDispatchMode === "ocr" && (ocrRouteDialogOpen || snapshot.ocrRouteSelection?.status === "analyzing") ? (
+          {snapshot.config.targetDispatchMode === "ocr" && snapshot.config.ocrSelectionMode === "manual" && (ocrRouteDialogOpen || snapshot.ocrRouteSelection?.status === "analyzing") ? (
             <OcrRouteApprovalPanel
               selection={snapshot.ocrRouteSelection}
               selectedIds={selectedOcrOptionIds}
