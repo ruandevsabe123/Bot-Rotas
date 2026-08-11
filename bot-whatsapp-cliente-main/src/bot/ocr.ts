@@ -60,20 +60,40 @@ export function readImageText(imagePath: string) {
 }
 
 export async function readRouteImageOcr(imagePath: string, options: { maxReadings?: number; fastFirst?: boolean; preferCageCrop?: boolean } = {}) {
-  const variants = await createPreprocessedImages(imagePath, options.preferCageCrop);
-  const maxReadings = Math.max(1, Math.min(variants.length, options.maxReadings || variants.length));
+  const variants: Awaited<ReturnType<typeof createPreprocessedImages>> = [];
 
   try {
-    const selectedVariants = variants.slice(0, maxReadings);
-    const runVariants = (items: typeof selectedVariants) => mapWithConcurrency(items, 3, async (variant) => {
-      try {
-        return { reading: await readSingleRouteImageOcr(variant.path, variant.label, variant.psm) };
-      } catch (error) {
-        return { error: error instanceof Error ? error.message : String(error) };
+    if (options.fastFirst && options.preferCageCrop) {
+      const cageVariants = await createPreprocessedImages(imagePath, true, "cage");
+      variants.push(...cageVariants);
+      const maxReadings = Math.max(1, options.maxReadings || 6);
+      const firstVariants = cageVariants.slice(0, Math.min(3, maxReadings));
+      const firstAttempts = await runOcrVariants(firstVariants);
+      const firstReadings = firstAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
+      const firstErrors = firstAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
+
+      if (canUseFastOcrResult(firstReadings)) return combineOcrReadings(firstReadings);
+
+      const remainingLimit = Math.max(0, maxReadings - firstVariants.length);
+      if (!remainingLimit) {
+        if (!firstReadings.length) throw new Error(firstErrors[0] || "Nenhuma versão da imagem pôde ser analisada.");
+        return combineOcrReadings(firstReadings);
       }
-    });
+
+      const fullVariants = await createPreprocessedImages(imagePath, false, "full");
+      variants.push(...fullVariants);
+      const remainingAttempts = await runOcrVariants(fullVariants.slice(0, remainingLimit));
+      const readings = [...firstReadings, ...remainingAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : [])];
+      const errors = [...firstErrors, ...remainingAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : [])];
+      if (!readings.length) throw new Error(errors[0] || "Nenhuma versão da imagem pôde ser analisada.");
+      return combineOcrReadings(readings);
+    }
+
+    variants.push(...await createPreprocessedImages(imagePath, options.preferCageCrop, "all"));
+    const maxReadings = Math.max(1, Math.min(variants.length, options.maxReadings || variants.length));
+    const selectedVariants = variants.slice(0, maxReadings);
     const fastReadingCount = options.fastFirst ? Math.min(3, selectedVariants.length) : selectedVariants.length;
-    const attempts = await runVariants(selectedVariants.slice(0, fastReadingCount));
+    const attempts = await runOcrVariants(selectedVariants.slice(0, fastReadingCount));
     let readings = attempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
     let errors = attempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
 
@@ -82,7 +102,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
     }
 
     if (fastReadingCount < selectedVariants.length) {
-      const remainingAttempts = await runVariants(selectedVariants.slice(fastReadingCount));
+      const remainingAttempts = await runOcrVariants(selectedVariants.slice(fastReadingCount));
       readings = [...readings, ...remainingAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : [])];
       errors = [...errors, ...remainingAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : [])];
     }
@@ -101,6 +121,16 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
       }
     }
   }
+}
+
+function runOcrVariants(items: Awaited<ReturnType<typeof createPreprocessedImages>>) {
+  return mapWithConcurrency(items, 3, async (variant) => {
+    try {
+      return { reading: await readSingleRouteImageOcr(variant.path, variant.label, variant.psm) };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  });
 }
 
 function combineOcrReadings(readings: RouteOcrResult[]): RouteOcrResult {
@@ -195,7 +225,7 @@ async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string
   };
 }
 
-async function createPreprocessedImages(imagePath: string, preferCageCrop = false) {
+async function createPreprocessedImages(imagePath: string, preferCageCrop = false, mode: "all" | "cage" | "full" = "all") {
   const generatedPaths: string[] = [];
   try {
     const { default: sharp } = await import("sharp");
@@ -217,8 +247,8 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       height: resizeHeight
     };
 
-    await Promise.all([
-      sharp(imagePath)
+    const fullJobs = [
+      () => sharp(imagePath)
         .rotate()
         .resize({ width: resizeWidth, withoutEnlargement: false })
         .grayscale()
@@ -227,7 +257,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .sharpen({ sigma: 1.05, m1: 1.05, m2: 2 })
         .png()
         .toFile(enhancedPath),
-      sharp(imagePath)
+      () => sharp(imagePath)
         .rotate()
         .resize({ width: resizeWidth, withoutEnlargement: false })
         .grayscale()
@@ -235,8 +265,10 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .sharpen({ sigma: 0.9 })
         .threshold(165)
         .png()
-        .toFile(thresholdPath),
-      sharp(imagePath)
+        .toFile(thresholdPath)
+    ];
+    const cageJobs = [
+      () => sharp(imagePath)
         .rotate()
         .resize({ width: resizeWidth, withoutEnlargement: false })
         .extract(cageCrop)
@@ -246,7 +278,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .sharpen({ sigma: 1.05, m1: 1.05, m2: 2 })
         .png()
         .toFile(cageEnhancedPath),
-      sharp(imagePath)
+      () => sharp(imagePath)
         .rotate()
         .resize({ width: resizeWidth, withoutEnlargement: false })
         .extract(cageCrop)
@@ -255,8 +287,13 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .threshold(165)
         .png()
         .toFile(cageThresholdPath)
+    ];
+    if (mode !== "cage") generatedPaths.push(enhancedPath, thresholdPath);
+    if (mode !== "full") generatedPaths.push(cageEnhancedPath, cageThresholdPath);
+    await Promise.all([
+      ...(mode !== "cage" ? fullJobs.map((job) => job()) : []),
+      ...(mode !== "full" ? cageJobs.map((job) => job()) : [])
     ]);
-    generatedPaths.push(enhancedPath, thresholdPath, cageEnhancedPath, cageThresholdPath);
 
     const fullTableVariants = [
       { path: enhancedPath, label: "contraste-e-nitidez", generated: true, psm: 6 },
@@ -271,6 +308,8 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const originalVariant = [
       { path: imagePath, label: "original", generated: false, psm: 11 }
     ];
+    if (mode === "cage") return cageColumnVariants;
+    if (mode === "full") return [...fullTableVariants, ...originalVariant];
     return preferCageCrop
       ? [...cageColumnVariants, ...fullTableVariants, ...originalVariant]
       : [...fullTableVariants, ...cageColumnVariants, ...originalVariant];

@@ -39,6 +39,10 @@ export function readRouteImageOcrWithoutBlockingSocket(imagePath: string, option
   });
 }
 
+export function warmupIsolatedOcrWorker() {
+  if (shouldUseIsolatedOcr()) getWorker();
+}
+
 export function shutdownIsolatedOcrWorker() {
   if (!worker) return;
   const current = worker;

@@ -9,7 +9,7 @@ import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection } from "./ocr";
-import { readRouteImageOcrWithoutBlockingSocket } from "./ocrIsolated";
+import { readRouteImageOcrWithoutBlockingSocket, warmupIsolatedOcrWorker } from "./ocrIsolated";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
@@ -771,6 +771,7 @@ export class BotService extends EventEmitter {
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
     this.latestRouteImageSequence += 1;
+    if (targetDispatchMode === "ocr") warmupIsolatedOcrWorker();
     this.logger.info(`Modo ${modeLabel} selecionado. Os outros modos ficarão desligados.`);
 
     if (!this.hasReadyMessages()) {
