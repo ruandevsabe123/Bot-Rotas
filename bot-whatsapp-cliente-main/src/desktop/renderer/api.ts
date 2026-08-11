@@ -300,6 +300,13 @@ export async function uploadRomaneio(file: File) {
   return fetchForm<RomaneioSnapshot>("/api/romaneio/upload", formData);
 }
 
+export function clearRomaneio() {
+  return fetchJson<RomaneioSnapshot>("/api/romaneio/clear", {
+    method: "POST",
+    body: JSON.stringify({})
+  });
+}
+
 export function getRomaneio() {
   return fetchJson<RomaneioSnapshot>("/api/romaneio/routes");
 }

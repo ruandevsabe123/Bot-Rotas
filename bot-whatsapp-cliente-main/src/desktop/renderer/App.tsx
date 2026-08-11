@@ -30,6 +30,7 @@ import {
   Sparkles,
   SlidersHorizontal,
   TestTube2,
+  Trash2,
   UserPlus,
   X,
   Wifi,
@@ -69,6 +70,7 @@ import {
   acknowledgeRelease,
   botApi,
   clearAdminMaintenance,
+  clearRomaneio,
   confirmRomaneio,
   enterClientMode,
   getRomaneio,
@@ -2563,6 +2565,7 @@ function RomaneioPanel({
   onSettingsChange,
   onLocate,
   onUpload,
+  onClear,
   onConfirmCandidate,
   onSaveSettings,
   error
@@ -2574,6 +2577,7 @@ function RomaneioPanel({
   onSettingsChange: (settings: RomaneioSettings) => void;
   onLocate: () => void;
   onUpload: (file: File) => void;
+  onClear: () => void;
   onConfirmCandidate: (candidate: RomaneioCandidate) => void;
   onSaveSettings: () => void;
   error: string;
@@ -2616,6 +2620,10 @@ function RomaneioPanel({
             </button>
             <button className="button primary" disabled={busy} type="button" onClick={onLocate}>
               Localizar no grupo
+            </button>
+            <button className="button danger" disabled={busy || !romaneio.status.loaded} type="button" onClick={onClear}>
+              <Trash2 size={18} />
+              Limpar romaneio
             </button>
           </div>
         </div>
@@ -3629,6 +3637,32 @@ export default function App() {
     }
   }
 
+  function confirmClearRomaneio() {
+    if (!romaneio.status.loaded) return;
+    setConfirmation({
+      title: "Limpar romaneio carregado",
+      message: `Remover ${romaneio.status.fileName || "o arquivo atual"} e liberar o carregamento de um novo romaneio?`,
+      details: ["Os filtros configurados serão preservados.", "Depois, use Localizar no grupo ou Enviar do aparelho para carregar o novo arquivo."],
+      confirmLabel: "Limpar romaneio",
+      tone: "manual",
+      onConfirm: async () => {
+        setBusy(true);
+        setRomaneioError("");
+        try {
+          const nextRomaneio = await clearRomaneio();
+          setRomaneio(nextRomaneio);
+          setRomaneioSettingsDraft(nextRomaneio.settings);
+          setRomaneioLocateResult({ found: false, message: "Romaneio anterior removido. Pronto para carregar o novo arquivo.", candidates: [] });
+          showActionToast("Romaneio limpo. Pode carregar o novo arquivo.");
+        } catch (error) {
+          setRomaneioError(error instanceof Error ? error.message : "Não consegui limpar o romaneio.");
+        } finally {
+          setBusy(false);
+        }
+      }
+    });
+  }
+
   async function handleConfirmRomaneio(candidate: RomaneioCandidate) {
     setBusy(true);
     setRomaneioError("");
@@ -4080,6 +4114,7 @@ export default function App() {
             onSettingsChange={setRomaneioSettingsDraft}
             onLocate={handleLocateRomaneio}
             onUpload={handleUploadRomaneio}
+            onClear={confirmClearRomaneio}
             onConfirmCandidate={handleConfirmRomaneio}
             onSaveSettings={handleSaveRomaneioSettings}
             error={romaneioError}

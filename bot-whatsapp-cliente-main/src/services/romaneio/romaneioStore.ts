@@ -92,6 +92,12 @@ export class RomaneioStore {
     }
   }
 
+  clear() {
+    fs.rmSync(this.latestPath, { force: true });
+    fs.rmSync(this.processedPath, { force: true });
+    return this.all();
+  }
+
   searchByNeighborhood(bairro: string) {
     const snapshot = this.all();
     return rankRoutes(snapshot.routes, { bairro }, snapshot.settings);

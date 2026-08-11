@@ -7704,3 +7704,202 @@ body {
   color: #fff3f4;
   background: rgba(3, 0, 1, 0.9) !important;
 }
+
+/* Electric blue + black skin. White is reserved for contrast and fine highlights. */
+:root {
+  --hub-accent: #168cff;
+  --hub-accent-strong: #006be6;
+  --hub-accent-soft: rgba(22, 140, 255, 0.15);
+  --hub-cyan: #69b9ff;
+  --hub-green: #39a8ff;
+  --hub-text: #f5f9ff;
+  --hub-muted: #91a7c2;
+  --hub-border: rgba(37, 145, 255, 0.25);
+}
+
+body,
+.app-shell,
+.login-shell,
+.admin-shell,
+.adminx-shell {
+  color: #eaf4ff !important;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(0, 111, 238, 0.24), transparent 38%),
+    radial-gradient(circle at 100% 34%, rgba(24, 137, 255, 0.09), transparent 30%),
+    linear-gradient(180deg, #020911 0%, #010409 48%, #000204 100%) !important;
+}
+
+.bot-ambient {
+  background:
+    radial-gradient(circle at 50% 4%, rgba(11, 126, 255, 0.24), transparent 36%),
+    radial-gradient(circle at 15% 55%, rgba(39, 155, 255, 0.08), transparent 26%) !important;
+}
+
+.app-shell .quick-panel,
+.app-shell .hero-panel,
+.app-shell .operation-panel,
+.app-shell .settings-card,
+.app-shell .group-card,
+.app-shell .launch-review-panel,
+.app-shell .confirmation-dialog,
+.app-shell .ocr-route-approval,
+.login-panel,
+.adminx-sidebar,
+.adminx-panel,
+.adminx-sidepanel,
+.adminx-metric,
+.adminx-notification-popover,
+.adminx-table-wrap,
+.adminx-log-row,
+.adminx-support-row,
+.adminx-ocr-list button,
+.adminx-score-list button,
+.adminx-funnel article,
+.adminx-editor,
+.adminx-danger-card,
+.adminx-leader-candidates article,
+.adminx-leader-list article {
+  border-color: rgba(35, 143, 255, 0.25) !important;
+  color: #eaf4ff !important;
+  background:
+    radial-gradient(circle at 0% 0%, rgba(16, 124, 245, 0.16), transparent 35%),
+    linear-gradient(180deg, rgba(4, 16, 29, 0.97), rgba(1, 5, 11, 0.985)) !important;
+  box-shadow:
+    0 24px 78px rgba(0, 0, 0, 0.74),
+    0 0 28px rgba(0, 113, 238, 0.09),
+    inset 0 1px 0 rgba(255, 255, 255, 0.065) !important;
+}
+
+.app-shell svg,
+.brand-logo,
+.login-field svg,
+.adminx-brand svg,
+.adminx-sidebar nav button svg,
+.adminx-panel-head svg,
+.adminx-sidepanel svg,
+.adminx-topbar svg {
+  color: #54aaff !important;
+}
+
+.app-shell strong,
+.app-shell h1,
+.app-shell h2,
+.app-shell h3,
+.login-heading h1,
+.brand-logo span {
+  color: #f7fbff !important;
+}
+
+.app-shell .panel-label,
+.app-shell .eyebrow,
+.app-shell .section-kicker {
+  color: #69b9ff !important;
+}
+
+.brand-logo,
+.login-field,
+.app-shell input,
+.app-shell select,
+.app-shell textarea,
+.adminx-global-filters input,
+.adminx-global-filters select,
+.adminx-page-actions select,
+.adminx-editor input,
+.adminx-editor select,
+.adminx-leader-form input {
+  border-color: rgba(38, 146, 255, 0.25) !important;
+  color: #f3f8ff !important;
+  background: linear-gradient(180deg, rgba(4, 18, 34, 0.96), rgba(1, 6, 13, 0.98)) !important;
+}
+
+.login-field:focus-within,
+.app-shell input:focus,
+.app-shell select:focus,
+.app-shell textarea:focus {
+  border-color: rgba(79, 174, 255, 0.72) !important;
+  box-shadow: 0 0 0 3px rgba(20, 137, 255, 0.14), 0 0 25px rgba(0, 112, 232, 0.15) !important;
+}
+
+.app-shell .button.primary,
+.app-shell .bottom-nav button.active,
+.app-shell.admin-shell .admin-bottom-nav button.active,
+.app-shell button.active:not(.danger),
+.adminx-client-mode-button {
+  border-color: rgba(105, 185, 255, 0.58) !important;
+  color: #ffffff !important;
+  background: linear-gradient(180deg, #168cff, #004fb8) !important;
+  box-shadow:
+    0 0 28px rgba(20, 137, 255, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+}
+
+.app-shell .button:not(.danger):not(.primary),
+.app-shell .icon-button,
+.app-shell .bottom-nav button,
+.adminx-sidebar nav button,
+.adminx-pill,
+.adminx-pill-red,
+.adminx-pill-blue,
+.adminx-pill-green,
+.adminx-pill-yellow {
+  border-color: rgba(38, 146, 255, 0.24) !important;
+  color: #dcecff !important;
+  background: linear-gradient(180deg, rgba(5, 26, 48, 0.94), rgba(1, 7, 14, 0.98)) !important;
+}
+
+.app-shell .button:not(.danger):hover,
+.app-shell .icon-button:hover,
+.adminx-sidebar nav button:hover,
+.adminx-sidebar nav button.active {
+  border-color: rgba(87, 177, 255, 0.52) !important;
+  background: linear-gradient(180deg, rgba(10, 66, 119, 0.96), rgba(2, 18, 35, 0.99)) !important;
+}
+
+.bottom-nav,
+.admin-bottom-nav {
+  border-color: rgba(43, 150, 255, 0.34) !important;
+  background: linear-gradient(90deg, rgba(4, 43, 81, 0.7), rgba(1, 7, 14, 0.99), rgba(4, 43, 81, 0.62)) !important;
+  box-shadow: 0 18px 70px rgba(0, 0, 0, 0.78), 0 0 34px rgba(15, 125, 245, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.07) !important;
+}
+
+.app-shell .engine-readouts span,
+.app-shell .operation-step,
+.app-shell .launch-review-panel .review-item,
+.app-shell .group-pill,
+.app-shell .status-badge,
+.app-shell .live-badge,
+.app-shell .send-order-badge,
+.romaneio-candidate,
+.romaneio-adaptation-box,
+.romaneio-found-box {
+  border-color: rgba(42, 151, 255, 0.28) !important;
+  background: linear-gradient(180deg, rgba(5, 27, 50, 0.8), rgba(1, 8, 16, 0.94)) !important;
+}
+
+.engine-wave i {
+  background: linear-gradient(180deg, #70c0ff, #087fff) !important;
+  box-shadow: 0 0 16px rgba(29, 145, 255, 0.48) !important;
+}
+
+.adminx-table th,
+.adminx-table td {
+  border-color: rgba(42, 151, 255, 0.13) !important;
+}
+
+.adminx-table tr:hover td {
+  background: rgba(25, 137, 255, 0.07) !important;
+}
+
+.adminx-score.good,
+.adminx-score.warn {
+  background: #168cff !important;
+}
+
+.login-heading span,
+.login-field input::placeholder {
+  color: #849bb6 !important;
+}
+
+.brand-logo img {
+  box-shadow: 0 0 20px rgba(26, 143, 255, 0.3) !important;
+}

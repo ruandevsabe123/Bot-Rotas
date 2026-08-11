@@ -76,6 +76,36 @@ test("restaura o romaneio salvo depois de reiniciar ou fazer deploy", () => {
   }
 });
 
+test("limpa o romaneio carregado e preserva os filtros", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "romaneio-clear-"));
+  try {
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.json_to_sheet([{
+      Rota: "Rota 1",
+      "Corridor Cage": "A-1",
+      Neighborhood: "Centro",
+      "Total Distance": 10,
+      "Num of Order": 20,
+      Stop: 8
+    }]), "Romaneio");
+    const buffer = xlsx.write(workbook, { type: "buffer", bookType: "xlsx" });
+    const store = new RomaneioStore(dir);
+    store.saveSettings({ prioridade: "menor_distancia", distanciaMaxKm: 25 });
+    store.saveUpload("romaneio-antigo.xlsx", buffer);
+
+    const cleared = store.clear();
+
+    assert.equal(cleared.status.loaded, false);
+    assert.equal(cleared.routes.length, 0);
+    assert.equal(cleared.settings.prioridade, "menor_distancia");
+    assert.equal(cleared.settings.distanciaMaxKm, 25);
+    assert.equal(fs.existsSync(path.join(dir, "latest.xlsx")), false);
+    assert.equal(fs.existsSync(path.join(dir, "processed.json")), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 function writeWorkbook(workbook) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "romaneio-format-"));
   const filePath = path.join(dir, "romaneio.xlsx");
