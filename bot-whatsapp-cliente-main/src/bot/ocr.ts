@@ -59,8 +59,8 @@ export function readImageText(imagePath: string) {
   return readRouteImageOcr(imagePath).then((result) => result.text);
 }
 
-export async function readRouteImageOcr(imagePath: string, options: { maxReadings?: number; fastFirst?: boolean } = {}) {
-  const variants = await createPreprocessedImages(imagePath);
+export async function readRouteImageOcr(imagePath: string, options: { maxReadings?: number; fastFirst?: boolean; preferCageCrop?: boolean } = {}) {
+  const variants = await createPreprocessedImages(imagePath, options.preferCageCrop);
   const maxReadings = Math.max(1, Math.min(variants.length, options.maxReadings || variants.length));
 
   try {
@@ -195,7 +195,7 @@ async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string
   };
 }
 
-async function createPreprocessedImages(imagePath: string) {
+async function createPreprocessedImages(imagePath: string, preferCageCrop = false) {
   const generatedPaths: string[] = [];
   try {
     const { default: sharp } = await import("sharp");
@@ -258,14 +258,22 @@ async function createPreprocessedImages(imagePath: string) {
     ]);
     generatedPaths.push(enhancedPath, thresholdPath, cageEnhancedPath, cageThresholdPath);
 
-    return [
+    const fullTableVariants = [
       { path: enhancedPath, label: "contraste-e-nitidez", generated: true, psm: 6 },
       { path: enhancedPath, label: "texto-esparso", generated: false, psm: 11 },
       { path: thresholdPath, label: "preto-e-branco", generated: true, psm: 6 },
+    ];
+    const cageColumnVariants = [
       { path: cageEnhancedPath, label: "coluna-gaiola", generated: true, psm: 6 },
+      { path: cageEnhancedPath, label: "coluna-gaiola-esparsa", generated: false, psm: 11 },
       { path: cageThresholdPath, label: "coluna-gaiola-pb", generated: true, psm: 6 },
+    ];
+    const originalVariant = [
       { path: imagePath, label: "original", generated: false, psm: 11 }
     ];
+    return preferCageCrop
+      ? [...cageColumnVariants, ...fullTableVariants, ...originalVariant]
+      : [...fullTableVariants, ...cageColumnVariants, ...originalVariant];
   } catch {
     for (const generatedPath of generatedPaths) {
       try {

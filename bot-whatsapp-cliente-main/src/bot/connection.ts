@@ -2453,10 +2453,13 @@ export class BotService extends EventEmitter {
 
       await fs.promises.writeFile(imagePath, buffer);
       const fastFirst = this.groupState === "open";
+      const preferCageCrop = fastFirst && config.ocrSelectionMode === "cages";
       this.logger.info(fastFirst
-        ? "[ROMANEIO] Grupo aberto: usando análise progressiva rápida com consenso."
+        ? preferCageCrop
+          ? "[ROMANEIO] Grupo aberto: priorizando a coluna de gaiolas com consenso triplo."
+          : "[ROMANEIO] Grupo aberto: usando análise progressiva rápida com consenso."
         : "[ROMANEIO] Grupo fechado: usando análise completa da imagem.");
-      const ocr = await readRouteImageOcrWithoutBlockingSocket(imagePath, { maxReadings: 6, fastFirst });
+      const ocr = await readRouteImageOcrWithoutBlockingSocket(imagePath, { maxReadings: 6, fastFirst, preferCageCrop });
       if (sequence !== this.latestRouteImageSequence) {
         this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;
