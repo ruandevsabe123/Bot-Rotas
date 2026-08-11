@@ -2929,6 +2929,9 @@ export default function App() {
   const [selectedOcrOptionIds, setSelectedOcrOptionIds] = useState<string[]>([]);
   const [desiredCageSearch, setDesiredCageSearch] = useState("");
   const [desiredCageSort, setDesiredCageSort] = useState<DesiredCageSort>("alphabetical");
+  const [desiredCagesDraft, setDesiredCagesDraft] = useState<string[]>([]);
+  const desiredCagesTouchedRef = useRef(false);
+  const desiredCageSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [ocrRouteDialogOpen, setOcrRouteDialogOpen] = useState(false);
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
@@ -3127,6 +3130,12 @@ export default function App() {
       }
     }
   }, [snapshot.config.targetDispatchMode, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
+
+  useEffect(() => {
+    if (!desiredCagesTouchedRef.current) {
+      setDesiredCagesDraft(snapshot.config.ocrDesiredCages || []);
+    }
+  }, [snapshot.config.ocrDesiredCages]);
 
   const groupLabel = useMemo(() => {
     return snapshot.config.grupoAlvoNome || "Nenhum grupo alvo";
@@ -3387,7 +3396,7 @@ export default function App() {
   function confirmStartImageMonitoring() {
     const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
     const hasName = Boolean(snapshot.config.nomeEnvio);
-    const needsDesiredCages = snapshot.config.ocrSelectionMode === "cages" && !snapshot.config.ocrDesiredCages.length;
+    const needsDesiredCages = snapshot.config.ocrSelectionMode === "cages" && !desiredCagesDraft.length;
 
     if (!hasGroup || !hasName || needsDesiredCages) {
       setGroupEditor("image");
@@ -3413,11 +3422,12 @@ export default function App() {
         `Grupo alvo: ${groupLabel}`,
         `Nome: ${snapshot.config.nomeEnvio}`,
         snapshot.config.ocrSelectionMode === "cages"
-          ? `${snapshot.config.ocrDesiredCages.length} gaiola(s) desejada(s): ${snapshot.config.ocrDesiredCages.join(", ")}`
+          ? `${desiredCagesDraft.length} gaiola(s) desejada(s): ${desiredCagesDraft.join(", ")}`
           : "Ranking definido pelo romaneio e pelos filtros."
       ],
       confirmLabel: "Iniciar imagem",
       onConfirm: async () => {
+        await desiredCageSaveQueueRef.current;
         await runAction(botApi.startImageMonitoring);
       }
     });
@@ -3552,11 +3562,32 @@ export default function App() {
     });
   }
 
-  async function toggleDesiredCage(gaiola: string) {
-    const current = snapshot.config.ocrDesiredCages || [];
-    const selected = current.some((item) => item.toUpperCase() === gaiola.toUpperCase());
-    const next = selected ? current.filter((item) => item.toUpperCase() !== gaiola.toUpperCase()) : [...current, gaiola];
-    await saveGeneralSettings({ ocrDesiredCages: next });
+  function saveDesiredCagesWithoutBlocking(next: string[]) {
+    desiredCagesTouchedRef.current = true;
+    setDesiredCagesDraft(next);
+    desiredCageSaveQueueRef.current = desiredCageSaveQueueRef.current
+      .then(async () => {
+        const nextSnapshot = await botApi.saveGeneralSettings({
+          nuclearMode: snapshot.config.nuclearMode,
+          alwaysWarmMode: snapshot.config.alwaysWarmMode,
+          keepAliveIntervalMs: snapshot.config.keepAliveIntervalMs,
+          ocrManualRouteSelection: snapshot.config.ocrManualRouteSelection,
+          ocrSelectionMode: snapshot.config.ocrSelectionMode,
+          ocrDesiredCages: next
+        });
+        setSnapshot(nextSnapshot);
+      })
+      .catch((error) => {
+        showActionToast(error instanceof Error ? error.message : "Não consegui salvar as gaiolas.", "manual");
+      });
+  }
+
+  function toggleDesiredCage(gaiola: string) {
+    const selected = desiredCagesDraft.some((item) => item.toUpperCase() === gaiola.toUpperCase());
+    const next = selected
+      ? desiredCagesDraft.filter((item) => item.toUpperCase() !== gaiola.toUpperCase())
+      : [...desiredCagesDraft, gaiola];
+    saveDesiredCagesWithoutBlocking(next);
   }
 
   async function handleLocateRomaneio() {
@@ -3946,22 +3977,22 @@ export default function App() {
                   <h2>Gaiolas desejadas</h2>
                   <p className="approval-message">Selecione quantas quiser. As melhores aparecem primeiro conforme os filtros e a prioridade do romaneio.</p>
                 </div>
-                <span className="mini-badge ok">{snapshot.config.ocrDesiredCages.length} selecionada(s)</span>
+                <span className="mini-badge ok">{desiredCagesDraft.length} selecionada(s)</span>
               </div>
               <div className="ocr-mode-actions">
                 <button
                   className="button"
                   disabled={busy || !romaneio.routes.length}
                   type="button"
-                  onClick={() => saveGeneralSettings({ ocrDesiredCages: Array.from(new Set(romaneio.routes.map((route) => route.gaiola.toUpperCase()))) })}
+                  onClick={() => saveDesiredCagesWithoutBlocking(Array.from(new Set(romaneio.routes.map((route) => route.gaiola.toUpperCase()))))}
                 >
                   Selecionar todas
                 </button>
                 <button
                   className="button"
-                  disabled={busy || !snapshot.config.ocrDesiredCages.length}
+                  disabled={!desiredCagesDraft.length}
                   type="button"
-                  onClick={() => saveGeneralSettings({ ocrDesiredCages: [] })}
+                  onClick={() => saveDesiredCagesWithoutBlocking([])}
                 >
                   Limpar seleção anterior
                 </button>
@@ -3992,12 +4023,11 @@ export default function App() {
               </div>
               <div className="ocr-option-grid desired-cages-grid">
                 {visibleDesiredCageRoutes.map((route, index) => {
-                  const selected = snapshot.config.ocrDesiredCages.some((gaiola) => gaiola.toUpperCase() === route.gaiola.toUpperCase());
+                  const selected = desiredCagesDraft.some((gaiola) => gaiola.toUpperCase() === route.gaiola.toUpperCase());
                   return (
                     <button
                       key={route.gaiola}
                       className={selected ? "ocr-option selected" : "ocr-option"}
-                      disabled={busy}
                       type="button"
                       onClick={() => toggleDesiredCage(route.gaiola)}
                     >
