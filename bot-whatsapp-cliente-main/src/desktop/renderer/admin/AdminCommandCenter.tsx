@@ -359,12 +359,13 @@ function UserEditor({
         Bloqueado
       </label>
       <label className="adminx-field">
-        <span>Prioridade</span>
+        <span>Prioridade condicional (0 = mais rápido)</span>
         <input
           aria-label="Prioridade de disparo"
           min={0}
           max={5}
           type="number"
+          title="Só vale quando dois clientes estão armados no mesmo grupo."
           value={value.dispatchPriorityLevel}
           onChange={(event) => onChange({ ...value, dispatchPriorityLevel: Number(event.target.value) })}
         />

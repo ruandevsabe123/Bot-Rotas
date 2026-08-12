@@ -111,7 +111,9 @@ const TARGET_ACK_TIMEOUT_MS = 1200;
 // A primeira rota ganha acesso exclusivo ao socket; a segunda sai logo depois.
 const TARGET_PARALLEL_STAGGER_MS = 12;
 const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
-const DISPATCH_PRIORITY_STEP_MS = 35;
+// Só chega diferente de zero quando o servidor detecta concorrência real entre
+// clientes armados no mesmo grupo. 60ms cria vantagem sem lentidão perceptível.
+const DISPATCH_PRIORITY_STEP_MS = 60;
 const MAX_DISPATCH_PRIORITY_LEVEL = 5;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;

@@ -1116,7 +1116,8 @@ function UserEditor({
           aria-label="Prioridade de disparo"
           min={0}
           max={5}
-          placeholder="Prioridade 0-5"
+          placeholder="Condicional: 0 = mais rápido"
+          title="Só vale quando dois clientes estão armados no mesmo grupo. Nível 0 é o mais rápido."
           type="number"
           value={value.dispatchPriorityLevel}
           onChange={(event) => onChange({ ...value, dispatchPriorityLevel: Number(event.target.value) })}

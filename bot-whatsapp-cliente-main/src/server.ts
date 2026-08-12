@@ -14,6 +14,7 @@ import { ImageUsageStore } from "./imageUsageStore";
 import { PushNotificationStore } from "./pushNotificationStore";
 import { getCurrentRelease, shouldShowCurrentReleaseToClients } from "./releaseNotes";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
+import { computeConditionalDispatchPriorities } from "./services/conditionalDispatchPriority";
 import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
@@ -191,9 +192,48 @@ const lastCriticalBotState = new Map<string, { status: string; monitoringEnabled
 let lastAdminPendingRouteIds: Set<string> | undefined;
 const pendingSnapshotBots = new Map<string, BotProcessProxy>();
 let snapshotFanoutScheduled = false;
+const appliedConditionalPriority = new Map<string, number>();
+let conditionalPriorityTimer: NodeJS.Timeout | undefined;
+
+function scheduleConditionalPrioritySync() {
+  if (conditionalPriorityTimer) return;
+  conditionalPriorityTimer = setTimeout(() => {
+    conditionalPriorityTimer = undefined;
+    void syncConditionalDispatchPriorities();
+  }, 20);
+  conditionalPriorityTimer.unref?.();
+}
+
+async function syncConditionalDispatchPriorities() {
+  const priorities = computeConditionalDispatchPriorities(Array.from(bots.entries()).map(([email, bot]) => {
+    const snapshot = bot.getSnapshot();
+    const targetGroupKey = String(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome || "").trim().toLowerCase();
+    return {
+      email,
+      configuredLevel: panelUsers.get(email)?.dispatchPriorityLevel || 0,
+      connected: snapshot.status === "connected",
+      monitoringEnabled: snapshot.monitoringEnabled,
+      monitoringMode: snapshot.monitoringMode,
+      targetGroupKey
+    };
+  }));
+
+  await Promise.all(Array.from(bots.entries()).map(async ([email, bot]) => {
+    const nextLevel = priorities.get(email) || 0;
+    if (appliedConditionalPriority.get(email) === nextLevel) return;
+    appliedConditionalPriority.set(email, nextLevel);
+    try {
+      await bot.setDispatchPriorityLevel(nextLevel);
+    } catch (error) {
+      appliedConditionalPriority.delete(email);
+      console.error(`Falha ao sincronizar prioridade condicional de ${email}:`, error);
+    }
+  }));
+}
 
 function scheduleSnapshotFanout(email: string, bot: BotProcessProxy) {
   pendingSnapshotBots.set(email, bot);
+  scheduleConditionalPrioritySync();
   if (snapshotFanoutScheduled) return;
 
   snapshotFanoutScheduled = true;
@@ -244,6 +284,8 @@ async function renameUserStorage(oldEmail: string, nextEmail: string) {
   if (existingBot) {
     await existingBot.shutdown().catch(() => undefined);
     bots.delete(oldEmail);
+    appliedConditionalPriority.delete(oldEmail);
+    scheduleConditionalPrioritySync();
   }
 
   const oldDir = path.join(dataDir, "users", getUserStorageKey(oldEmail));
@@ -308,7 +350,9 @@ function getBotForEmail(email: string) {
     logStorePath: userLogStorePath,
     romaneioDir: userRomaneioDir,
     clientEmail: normalizedEmail,
-    dispatchPriorityLevel: panelUser?.dispatchPriorityLevel || 0,
+    // A prioridade configurada só é aplicada pelo coordenador quando existe
+    // outro cliente armado para o mesmo grupo. Sozinho, todo bot roda em zero.
+    dispatchPriorityLevel: 0,
     adminPhoneNumbers,
     leaderContacts: leaderStore.all(),
     autoClearInvalidSession: true,
@@ -332,6 +376,7 @@ function getBotForEmail(email: string) {
   });
 
   bots.set(normalizedEmail, nextBot);
+  scheduleConditionalPrioritySync();
   return nextBot;
 }
 
@@ -1536,7 +1581,8 @@ const server = http.createServer(async (request, response) => {
         dispatchPriorityLevel: normalizeDispatchPriorityLevel(body.dispatchPriorityLevel)
       });
       syncPanelUser(user);
-      await bots.get(user.email)?.setDispatchPriorityLevel(user.dispatchPriorityLevel);
+      appliedConditionalPriority.delete(user.email);
+      scheduleConditionalPrioritySync();
       sendJson(response, 200, getAdminUsersSnapshot());
       return;
     }
@@ -1567,7 +1613,8 @@ const server = http.createServer(async (request, response) => {
         dispatchPriorityLevel: normalizeDispatchPriorityLevel(body.dispatchPriorityLevel ?? currentUser.dispatchPriorityLevel)
       });
       syncPanelUser(user);
-      await bots.get(user.email)?.setDispatchPriorityLevel(user.dispatchPriorityLevel);
+      appliedConditionalPriority.delete(user.email);
+      scheduleConditionalPrioritySync();
       sendJson(response, 200, getAdminUsersSnapshot());
       return;
     }
