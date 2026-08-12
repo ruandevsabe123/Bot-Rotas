@@ -410,9 +410,9 @@ export function findAllConfiguredRouteCodesFromOcr(
 
 export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
   const variants = ocr.variants?.length ? ocr.variants : [ocr];
-  const byCode = new Map<string, DetectedRouteCode[]>();
+  const byCode = new Map<string, Array<DetectedRouteCode & { variantIndex: number }>>();
 
-  for (const variant of variants) {
+  for (const [variantIndex, variant] of variants.entries()) {
     const sourceLines = variant.lines.length
       ? variant.lines
       : variant.text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean).map(createPlainOcrLine);
@@ -432,7 +432,7 @@ export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
         variantCount: variants.length,
         safeForAutomatic: false
       };
-      byCode.set(code, [...(byCode.get(code) || []), detected]);
+      byCode.set(code, [...(byCode.get(code) || []), { ...detected, variantIndex }]);
     }
 
     const sourceWords = sourceLines.flatMap((line) => line.words);
@@ -453,15 +453,21 @@ export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
         variantCount: variants.length,
         safeForAutomatic: false
       };
-      byCode.set(code, [...(byCode.get(code) || []), detected]);
+      byCode.set(code, [...(byCode.get(code) || []), { ...detected, variantIndex }]);
     }
   }
 
   return [...byCode.values()].map((matches) => {
     const best = [...matches].sort((left, right) => right.confidence - left.confidence)[0];
-    const evidence = matches.filter((item) => item.confidence >= 45);
+    const evidenceByVariant = new Map<number, DetectedRouteCode & { variantIndex: number }>();
+    for (const match of matches.filter((item) => item.confidence >= 45)) {
+      const current = evidenceByVariant.get(match.variantIndex);
+      if (!current || match.confidence > current.confidence) evidenceByVariant.set(match.variantIndex, match);
+    }
+    const evidence = [...evidenceByVariant.values()];
+    const { variantIndex: _variantIndex, ...cleanBest } = best;
     return {
-      ...best,
+      ...cleanBest,
       confidence: evidence.length ? Math.round(Math.min(...evidence.map((item) => item.confidence))) : best.confidence,
       evidenceCount: evidence.length,
       variantCount: variants.length,

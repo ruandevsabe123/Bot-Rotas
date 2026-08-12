@@ -139,6 +139,30 @@ function ocrLine(text, left, top, confidence = 92) {
   return { text, words, left, top, width: right - left, height: 20, confidence };
 }
 
+test("não conta linha e palavra da mesma leitura como duas evidências", () => {
+  const reading = {
+    text: "C-30",
+    source: "única-leitura",
+    lines: [ocrLine("C-30", 10, 40)]
+  };
+  const result = findAllGaiolaCodesFromOcr({ ...reading, variants: [reading, { text: "", lines: [], source: "vazia" }] });
+
+  assert.equal(result[0].code, "C-30");
+  assert.equal(result[0].evidenceCount, 1);
+  assert.equal(result[0].safeForAutomatic, false);
+});
+
+test("mantém todas as gaiolas confirmadas por duas de três leituras", () => {
+  const readings = [
+    plainReading("C-25\nC-30\nB-29", "contraste"),
+    plainReading("C-25\nC-30", "preto-e-branco"),
+    plainReading("C-30\nB-29", "esparsa")
+  ];
+  const result = findAllGaiolaCodesFromOcr({ ...readings[0], variants: readings });
+
+  assert.deepEqual(result.filter(isSafeAutomaticGaiolaDetection).map((item) => item.code).sort(), ["B-29", "C-25", "C-30"]);
+});
+
 test("encontra bairro mesmo quando a tabela usa colunas em posições diferentes", () => {
   const result = findConfiguredRouteCodeFromOcr({
     text: "G-12 Parque Presidente Vargas",

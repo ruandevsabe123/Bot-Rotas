@@ -104,6 +104,39 @@ test("bot imagem por gaiolas envia a fila completa sem limitar a duas mensagens"
   }
 });
 
+test("seleção automática prepara uma mensagem para cada gaiola marcada encontrada", () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.configStore.save({
+      nomeEnvio: "Cliente",
+      ocrSelectionMode: "cages",
+      ocrDesiredCages: ["C-25", "C-30", "B-29"]
+    });
+    bot.ocrRouteSelection = { status: "ready", options: [] };
+    const selected = ["C-25", "C-30", "B-29"].map((gaiola, index) => ({
+      id: `option-${index}`,
+      rank: index + 1,
+      rota: `Rota ${index + 1}`,
+      gaiola,
+      bairro: "Centro",
+      distanciaKm: 10,
+      pacotes: 20,
+      paradas: 15,
+      passedFilters: true,
+      reasons: [],
+      score: 100,
+      romaneioMatch: true
+    }));
+
+    bot.applyOcrRouteSelection(selected, "automatic");
+
+    assert.deepEqual(bot.pendingOcrMessages, ["Cliente C-25", "Cliente C-30", "Cliente B-29"]);
+    assert.deepEqual(bot.preparedMessages, ["Cliente C-25", "Cliente C-30", "Cliente B-29"]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("aviso pessoal usa o próprio número conectado sem atrasar o grupo", async () => {
   const { bot, directory } = createBot();
   try {

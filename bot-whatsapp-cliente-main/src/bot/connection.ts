@@ -2566,11 +2566,12 @@ export class BotService extends EventEmitter {
       if (config.ocrSelectionMode !== "manual") {
         const eligibleOptions = options.filter((option) =>
           option.romaneioMatch !== false && (config.ocrSelectionMode === "cages" || option.passedFilters));
-        const desiredCages = new Set(config.ocrDesiredCages.map((gaiola) => normalizarTexto(gaiola)));
+        const desiredCages = config.ocrDesiredCages.map((gaiola) => normalizarTexto(gaiola));
         const automaticOptions = config.ocrSelectionMode === "cages"
-          ? eligibleOptions.filter((option, index, all) =>
-              desiredCages.has(normalizarTexto(option.gaiola)) &&
-              all.findIndex((item) => normalizarTexto(item.gaiola) === normalizarTexto(option.gaiola)) === index)
+          ? desiredCages.flatMap((desiredCage) => {
+              const match = eligibleOptions.find((option) => normalizarTexto(option.gaiola) === desiredCage);
+              return match ? [match] : [];
+            })
           : eligibleOptions.slice(0, 1);
         if (!automaticOptions.length) {
           this.ocrRouteSelection = {
