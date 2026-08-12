@@ -2,10 +2,11 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { computeConditionalDispatchPriorities } = require("../dist/services/conditionalDispatchPriority.js");
 
-function client(email, configuredLevel, overrides = {}) {
+function client(email, beatsEmail, overrides = {}) {
   return {
     email,
-    configuredLevel,
+    configuredLevel: 0,
+    beatsEmail,
     connected: true,
     monitoringEnabled: true,
     monitoringMode: "target",
@@ -16,7 +17,7 @@ function client(email, configuredLevel, overrides = {}) {
 
 test("cliente sozinho nunca recebe atraso de prioridade", () => {
   const priorities = computeConditionalDispatchPriorities([
-    client("guilherme@cliente.com", 2)
+    client("guilherme@cliente.com", "alan@cliente.com")
   ]);
 
   assert.equal(priorities.get("guilherme@cliente.com"), 0);
@@ -24,8 +25,8 @@ test("cliente sozinho nunca recebe atraso de prioridade", () => {
 
 test("Alan ganha vantagem somente quando ambos competem no mesmo grupo", () => {
   const priorities = computeConditionalDispatchPriorities([
-    client("alan@cliente.com", 0),
-    client("guilherme@cliente.com", 1)
+    client("alan@cliente.com", "guilherme@cliente.com"),
+    client("guilherme@cliente.com", undefined)
   ]);
 
   assert.equal(priorities.get("alan@cliente.com"), 0);
@@ -34,9 +35,9 @@ test("Alan ganha vantagem somente quando ambos competem no mesmo grupo", () => {
 
 test("não altera clientes desconectados, parados ou em outro grupo", () => {
   const priorities = computeConditionalDispatchPriorities([
-    client("alan@cliente.com", 0),
-    client("guilherme@cliente.com", 3, { monitoringEnabled: false }),
-    client("outro@cliente.com", 2, { targetGroupKey: "outro@g.us" })
+    client("alan@cliente.com", "guilherme@cliente.com"),
+    client("guilherme@cliente.com", undefined, { monitoringEnabled: false }),
+    client("outro@cliente.com", "alan@cliente.com", { targetGroupKey: "outro@g.us" })
   ]);
 
   assert.equal(priorities.get("alan@cliente.com"), 0);

@@ -85,6 +85,7 @@ type UserEditorState = {
   blocked: boolean;
   color: string;
   dispatchPriorityLevel: number;
+  dispatchBeatsEmail?: string;
 };
 
 type RejectRequest = {
@@ -113,7 +114,8 @@ const emptyEditor: UserEditorState = {
   role: "client",
   blocked: false,
   color: "#38bdf8",
-  dispatchPriorityLevel: 0
+  dispatchPriorityLevel: 0,
+  dispatchBeatsEmail: ""
 };
 
 const REAL_VALIDATION_GROUP = "MOTORISTAS - CAMPOS DOS GOYTACAZES";
@@ -338,13 +340,15 @@ function UserEditor({
   busy,
   onChange,
   onCancel,
-  onSave
+  onSave,
+  competitors
 }: {
   value: UserEditorState;
   busy: boolean;
   onChange: (value: UserEditorState) => void;
   onCancel: () => void;
   onSave: () => void;
+  competitors: AdminUserSummary[];
 }) {
   return (
     <form className="adminx-editor" onSubmit={(event) => { event.preventDefault(); onSave(); }}>
@@ -359,16 +363,13 @@ function UserEditor({
         Bloqueado
       </label>
       <label className="adminx-field">
-        <span>Prioridade condicional (0 = mais rápido)</span>
-        <input
-          aria-label="Prioridade de disparo"
-          min={0}
-          max={5}
-          type="number"
-          title="Só vale quando dois clientes estão armados no mesmo grupo."
-          value={value.dispatchPriorityLevel}
-          onChange={(event) => onChange({ ...value, dispatchPriorityLevel: Number(event.target.value) })}
-        />
+        <span>Este cliente ganha de</span>
+        <select value={value.dispatchBeatsEmail || ""} onChange={(event) => onChange({ ...value, dispatchBeatsEmail: event.target.value, dispatchPriorityLevel: 0 })}>
+          <option value="">Ninguém</option>
+          {competitors.filter((user) => user.role === "client" && user.email !== (value.originalEmail || value.email)).map((user) => (
+            <option key={user.email} value={user.email}>{user.email}</option>
+          ))}
+        </select>
       </label>
       <input type="color" value={value.color} onChange={(event) => onChange({ ...value, color: event.target.value })} />
       <button className="button" type="button" onClick={onCancel}>Cancelar</button>
@@ -1570,8 +1571,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
               <button className="button primary" type="button" onClick={() => setEditor(emptyEditor)}><UserPlus size={18} />Adicionar usuário</button>
               <button className="button" type="button" onClick={() => exportRoutes("csv")}><Download size={18} />Exportar rotas</button>
             </div>
-            {editor ? <UserEditor value={editor} busy={busy} onChange={setEditor} onCancel={() => setEditor(undefined)} onSave={() => saveUser()} /> : null}
-            <ClientsTable users={users.users} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: user.dispatchPriorityLevel })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: user.dispatchPriorityLevel })} />
+            {editor ? <UserEditor value={editor} busy={busy} competitors={users.users} onChange={setEditor} onCancel={() => setEditor(undefined)} onSave={() => saveUser()} /> : null}
+            <ClientsTable users={users.users} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "" })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "" })} />
           </section>
         ) : null}
 
@@ -2100,7 +2101,7 @@ function ClientsTable({
               <td data-label="Painel"><StatusPill tone={user.blocked ? "red" : user.presenceStatus === "online" ? "green" : user.presenceStatus === "recent" ? "yellow" : "muted"}>{user.blocked ? "bloqueado" : user.presenceStatus}</StatusPill></td>
               <td data-label="Bot">{user.botStatus || "fechado"}</td>
               <td data-label="Monitoramento">{user.monitoringEnabled ? <StatusPill tone="green">ativo</StatusPill> : <StatusPill tone="muted">parado</StatusPill>}</td>
-              <td data-label="Prioridade">Nível {user.dispatchPriorityLevel}</td>
+              <td data-label="Confronto">{user.dispatchBeatsEmail ? `Ganha de ${user.dispatchBeatsEmail}` : "Sem preferência"}</td>
               <td data-label="Último visto">{formatShort(user.lastSeenAt)}</td>
               <td data-label="Uso">{formatDuration(user.totalUsageMs)}</td>
               <td data-label="Ações">

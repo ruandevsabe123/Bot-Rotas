@@ -326,6 +326,7 @@ export type PanelUser = {
   blocked?: boolean;
   color?: string;
   dispatchPriorityLevel?: number;
+  dispatchBeatsEmail?: string;
   impersonatedBy?: string;
 };
 
@@ -349,6 +350,7 @@ export type AdminUserSummary = {
   blocked: boolean;
   color: string;
   dispatchPriorityLevel: number;
+  dispatchBeatsEmail?: string;
   presenceStatus: UserPresenceStatus;
   panelOnline: boolean;
   botOpen: boolean;

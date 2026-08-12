@@ -463,9 +463,9 @@ test("prioridade de cliente atrasa discretamente o primeiro relay do grupo alvo"
 
     await dispatch;
     assert.equal(calls.length, 1);
-    assert.ok(calls[0].at - startedAt >= 55);
+    assert.ok(calls[0].at - startedAt >= 490);
     assert.equal(timeline.dispatchPriority.level, 1);
-    assert.equal(timeline.priorityDelayMs, 60);
+    assert.equal(timeline.priorityDelayMs, 500);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

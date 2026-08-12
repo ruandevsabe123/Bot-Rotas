@@ -1,6 +1,7 @@
 export type ConditionalPriorityClient = {
   email: string;
   configuredLevel: number;
+  beatsEmail?: string;
   connected: boolean;
   monitoringEnabled: boolean;
   monitoringMode?: "target" | "test";
@@ -20,13 +21,12 @@ export function computeConditionalDispatchPriorities(clients: ConditionalPriorit
 
   for (const competitors of competitorsByGroup.values()) {
     if (competitors.length < 2) continue;
-    for (const client of competitors) priorities.set(client.email, normalizeLevel(client.configuredLevel));
+    const competitorEmails = new Set(competitors.map((client) => client.email));
+    for (const winner of competitors) {
+      const loserEmail = String(winner.beatsEmail || "").trim().toLowerCase();
+      if (loserEmail && loserEmail !== winner.email && competitorEmails.has(loserEmail)) priorities.set(loserEmail, 1);
+    }
   }
 
   return priorities;
-}
-
-function normalizeLevel(value: unknown) {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.min(5, Math.max(0, Math.floor(parsed))) : 0;
 }

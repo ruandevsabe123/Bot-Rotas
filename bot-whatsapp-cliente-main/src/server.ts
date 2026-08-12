@@ -8,7 +8,7 @@ import qrcodeTerminal from "qrcode-terminal";
 import { BotProcessProxy } from "./bot/botProcessProxy";
 import { DEFAULT_LEADER_CONTACTS } from "./bot/leaderDefaults";
 import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderStore";
-import { defaultUserColor, normalizeDispatchPriorityLevel, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
+import { defaultUserColor, normalizeDispatchBeatsEmail, normalizeDispatchPriorityLevel, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
 import { ImageUsageStore } from "./imageUsageStore";
 import { PushNotificationStore } from "./pushNotificationStore";
@@ -61,6 +61,7 @@ type PanelUserRecord = {
   blocked: boolean;
   color: string;
   dispatchPriorityLevel: number;
+  dispatchBeatsEmail?: string;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -211,6 +212,7 @@ async function syncConditionalDispatchPriorities() {
     return {
       email,
       configuredLevel: panelUsers.get(email)?.dispatchPriorityLevel || 0,
+      beatsEmail: panelUsers.get(email)?.dispatchBeatsEmail,
       connected: snapshot.status === "connected",
       monitoringEnabled: snapshot.monitoringEnabled,
       monitoringMode: snapshot.monitoringMode,
@@ -589,6 +591,7 @@ function toUserSummary(email: string, user: PanelUserRecord) {
     blocked: user.blocked,
     color: user.color || defaultUserColor(email),
     dispatchPriorityLevel: normalizeDispatchPriorityLevel(user.dispatchPriorityLevel),
+    dispatchBeatsEmail: normalizeDispatchBeatsEmail(user.dispatchBeatsEmail, email),
     presenceStatus,
     panelOnline: presenceStatus === "online",
     botOpen: Boolean(botSnapshot && ["connected", "connecting", "waiting_qr", "reconnecting"].includes(botSnapshot.status)),
@@ -1578,7 +1581,8 @@ const server = http.createServer(async (request, response) => {
         role: body.role === "admin" ? "admin" : "client",
         blocked: Boolean(body.blocked),
         color: normalizeUserColor(String(body.color || ""), String(body.email || "")),
-        dispatchPriorityLevel: normalizeDispatchPriorityLevel(body.dispatchPriorityLevel)
+        dispatchPriorityLevel: 0,
+        dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail, String(body.email || ""))
       });
       syncPanelUser(user);
       appliedConditionalPriority.delete(user.email);
@@ -1610,7 +1614,8 @@ const server = http.createServer(async (request, response) => {
         role: body.role === "admin" ? "admin" : "client",
         blocked: Boolean(body.blocked),
         color: normalizeUserColor(String(body.color || currentUser.color || ""), nextEmail),
-        dispatchPriorityLevel: normalizeDispatchPriorityLevel(body.dispatchPriorityLevel ?? currentUser.dispatchPriorityLevel)
+        dispatchPriorityLevel: 0,
+        dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail ?? currentUser.dispatchBeatsEmail, nextEmail)
       });
       syncPanelUser(user);
       appliedConditionalPriority.delete(user.email);
