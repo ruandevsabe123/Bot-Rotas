@@ -66,6 +66,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminCommandCenter } from "./admin/AdminCommandCenter";
 import { enableWebPushNotifications } from "./pushNotifications";
 import { rankRoutes } from "../../services/romaneio/rankRoutes";
+import { uiText } from "./uiText";
 import {
   acknowledgeRelease,
   botApi,
@@ -272,7 +273,7 @@ function MessagePreviewStrip({
       </button>
       {expanded ? (
         <div className="message-strip-body">
-          {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{message}</span>) : <span>Nenhuma mensagem salva.</span>}
+          {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{uiText(message)}</span>) : <span>Nenhuma mensagem salva.</span>}
           <button className="link-button" type="button" onClick={onOpen}>
             Editar
           </button>
@@ -784,7 +785,7 @@ function LaunchReviewPanel({
         </article>
       </div>
       <div className="review-messages">
-        {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{message}</span>) : <span>Configure a rota antes de iniciar.</span>}
+        {messages.length ? messages.map((message, index) => <span key={`${message}-${index}`}>{uiText(message)}</span>) : <span>Configure a rota antes de iniciar.</span>}
       </div>
       <div className="review-actions">
         <button className="button" type="button" onClick={onEditTarget}>
@@ -919,7 +920,7 @@ function AdminRouteHistory({
                 <small>{route.clientEmail} · {route.confirmedCount}/{route.totalCount} enviadas · {route.reactions.length} reação(ões)</small>
                 <div className="admin-route-feed-messages">
                   {route.messages.map((message, index) => (
-                    <span key={`${route.id}-compact-message-${index}`}>{message}</span>
+                    <span key={`${route.id}-compact-message-${index}`}>{uiText(message)}</span>
                   ))}
                 </div>
                 {route.reactions.length ? (
@@ -1005,7 +1006,7 @@ function RouteRow({
       </div>
       <div className="route-messages">
         {route.messages.map((message, index) => (
-          <span key={`${route.id}-${message}-${index}`}>{message}</span>
+          <span key={`${route.id}-${message}-${index}`}>{uiText(message)}</span>
         ))}
       </div>
       {route.reactions.length ? (
@@ -1239,7 +1240,7 @@ function UserDetailModal({ detail, onClose }: { detail: AdminUserDetail; onClose
           <p className="panel-label">Logs recentes do bot</p>
           <div className="detail-list scrollable-detail-list">
             {detail.logs.length ? detail.logs.slice(0, 60).map((log) => (
-              <span key={log.id}>{formatDate(log.timestamp)} · {log.message}</span>
+              <span key={log.id}>{formatDate(log.timestamp)} · {uiText(log.message)}</span>
             )) : <span>Nenhum log registrado.</span>}
           </div>
         </section>
@@ -1279,7 +1280,7 @@ function RouteDetailModal({ route, onClose }: { route: RouteDispatch; onClose: (
         <section className="detail-section">
           <p className="panel-label">Mensagens</p>
           <div className="detail-list">
-            {route.messages.length ? route.messages.map((message, index) => <span key={`${route.id}-detail-message-${index}`}>{message}</span>) : <span>Nenhuma mensagem registrada.</span>}
+            {route.messages.length ? route.messages.map((message, index) => <span key={`${route.id}-detail-message-${index}`}>{uiText(message)}</span>) : <span>Nenhuma mensagem registrada.</span>}
           </div>
         </section>
         <section className="detail-section">
@@ -1389,7 +1390,7 @@ function AdminLogRow({ log }: { log: AdminLogEntry }) {
         </p>
         <small>{formatDate(log.timestamp)}</small>
       </div>
-      <p>{log.message}</p>
+      <p>{uiText(log.message)}</p>
     </article>
   );
 }
@@ -1772,7 +1773,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     ...filteredLogs.filter((log) => log.level === "error").slice(0, 8).map((log) => ({
       id: `error-${log.clientEmail}-${log.id}`,
       title: "Erro no bot",
-      detail: `${log.clientEmail}: ${log.message}`,
+      detail: uiText(`${log.clientEmail}: ${log.message}`),
       time: log.timestamp,
       tone: "red" as const
     }))
@@ -2801,7 +2802,7 @@ function OcrRouteApprovalPanel({
             <X size={20} />
           </button>
         </div>
-        {selection.message ? <p className="approval-message">{selection.message}</p> : null}
+        {selection.message ? <p className="approval-message">{uiText(selection.message)}</p> : null}
         {selection.preferredCity && selection.preferredCityFound === false ? (
           <div className="ocr-city-alert" role="status">
             <strong>Nenhuma rota de {selection.preferredCity} foi encontrada</strong>
@@ -2887,7 +2888,7 @@ function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRou
           <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>Disparo automático</strong><small>{selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} mensagem(ns) preparada(s) ou enviada(s).` : analyzing ? "Aguardando gaiolas válidas." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
         </div>
         {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.rota} · {option.cidade || option.bairro}</span><small>{option.pacotes} pct · {option.paradas} paradas · {option.distanciaKm.toFixed(3)} km</small></article>)}</div> : null}
-        {!analyzing && selection.message ? <p className={selection.status === "error" ? "inline-error" : "approval-message"}>{selection.message}</p> : null}
+        {!analyzing && selection.message ? <p className={selection.status === "error" ? "inline-error" : "approval-message"}>{uiText(selection.message)}</p> : null}
         {finished ? <div className="review-actions"><button className="button primary" type="button" onClick={onClose}>Fechar análise</button></div> : null}
       </section>
     </div>

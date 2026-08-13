@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { BotConfig, BotGroup, MonitoredRoute } from "../../../shared/types";
+import { uiText } from "../uiText";
 
 type Props = {
   kind: "target" | "test";
@@ -391,7 +392,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
         <div className="message-preview compact-preview">
           <strong>{previewMessages.length} {isImageTarget ? "rota(s)" : "mensagem(ns)"}</strong>
           {previewMessages.slice(0, 3).map((message, index) => (
-            <span key={`${message}-${index}`}>{message}</span>
+            <span key={`${message}-${index}`}>{uiText(message)}</span>
           ))}
         </div>
 

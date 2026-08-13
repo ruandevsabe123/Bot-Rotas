@@ -1,5 +1,6 @@
 import { BotLog } from "../../../shared/types";
 import { Trash2 } from "lucide-react";
+import { uiText } from "../uiText";
 
 type Props = {
   logs: BotLog[];
@@ -32,7 +33,7 @@ export function LogsPanel({ logs, onClear, clearDisabled }: Props) {
       <div className="timeline-list">
         {logs.length ? (
           logs.map((log) => {
-            const message = log.message.replace(/\bOCR\b/g, "IA");
+            const message = uiText(log.message);
             const kind = getTimelineKind(message);
             return (
               <div className={`timeline-row timeline-${kind} log-${log.level}`} key={log.id}>

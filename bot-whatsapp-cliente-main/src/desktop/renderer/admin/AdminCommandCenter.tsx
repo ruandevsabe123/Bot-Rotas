@@ -30,6 +30,7 @@ import {
   X,
   Zap
 } from "lucide-react";
+import { uiText } from "../uiText";
 import {
   AdminLogEntry,
   AdminImageUsageSnapshot,
@@ -461,7 +462,7 @@ function RouteSidePanel({
         <section className="adminx-detail-section">
           <h3>Mensagens enviadas</h3>
           <div className="adminx-chip-stack">
-            {route.messages.map((message, index) => <span key={`${route.id}-msg-${index}`}>{message}</span>)}
+            {route.messages.map((message, index) => <span key={`${route.id}-msg-${index}`}>{uiText(message)}</span>)}
           </div>
         </section>
         {route.ocr ? (
@@ -600,7 +601,7 @@ function ClientSidePanel({
           <h3>Logs recentes</h3>
           <div className="adminx-log-stack">
             {detail.logs.slice(0, 50).map((log) => (
-              <span className={`adminx-logline adminx-log-${log.level}`} key={log.id}>{formatDate(log.timestamp)} - {log.message}</span>
+              <span className={`adminx-logline adminx-log-${log.level}`} key={log.id}>{formatDate(log.timestamp)} - {uiText(log.message)}</span>
             ))}
           </div>
         </section>
@@ -813,7 +814,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     ...removedReactionRoutes.slice(0, 8).map((route) => ({ id: `removed-${route.id}`, tone: "yellow" as const, title: "Reação removida", detail: `${route.clientEmail} - ${route.groupName || route.groupJid}` })),
     ...staleClients.slice(0, 8).map((client) => ({ id: `stale-${client.email}`, tone: "blue" as const, title: "Cliente sem conectar", detail: `${client.email} - último visto ${formatShort(client.lastSeenAt)}` })),
     ...armedLongRoutes.slice(0, 8).map((client) => ({ id: `armed-${client.email}`, tone: "yellow" as const, title: "Bot armado há muito tempo", detail: `${client.email} - ${formatDuration(client.performanceMetrics?.armedIdleMs || 0)}` })),
-    ...notAcceptableLogs.slice(0, 8).map((log) => ({ id: `na-${log.clientEmail}-${log.id}`, tone: "red" as const, title: "Falha not-acceptable", detail: `${log.clientEmail} - ${log.message}` })),
+    ...notAcceptableLogs.slice(0, 8).map((log) => ({ id: `na-${log.clientEmail}-${log.id}`, tone: "red" as const, title: "Falha not-acceptable", detail: uiText(`${log.clientEmail} - ${log.message}`) })),
     ...support.messages.filter((message) => !message.read).slice(0, 8).map((message) => ({ id: `support-${message.id}`, tone: "red" as const, title: "Suporte não lido", detail: `${message.email} - ${message.message}` }))
   ].slice(0, 18);
   const importantNotifications = [
@@ -821,7 +822,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     ...(validationReviewRoutes.length ? [{ id: "validations", title: "Rotas aguardando validação", detail: `${validationReviewRoutes.length} rota(s) precisam da sua decisão.`, target: "validations" as AdminPage }] : []),
     ...(imageUsage.totals.pending ? [{ id: "usage", title: "Análises aguardando cobrança", detail: `${imageUsage.totals.pending} análise(s) ainda precisam ser classificadas.`, target: "usage" as AdminPage }] : []),
     ...(support.unread ? [{ id: "support", title: "Mensagens de suporte", detail: `${support.unread} mensagem(ns) ainda não foram lidas.`, target: "support" as AdminPage }] : []),
-    ...logs.filter((log) => log.level === "error" && Date.now() - new Date(log.timestamp).getTime() < 24 * 60 * 60 * 1000).slice(-5).reverse().map((log) => ({ id: `error-${log.id}`, title: "Erro recente no bot", detail: `${log.clientEmail}: ${log.message}`, target: "logs" as AdminPage }))
+    ...logs.filter((log) => log.level === "error" && Date.now() - new Date(log.timestamp).getTime() < 24 * 60 * 60 * 1000).slice(-5).reverse().map((log) => ({ id: `error-${log.id}`, title: "Erro recente no bot", detail: uiText(`${log.clientEmail}: ${log.message}`), target: "logs" as AdminPage }))
   ].slice(0, 10);
   const leaderPhones = useMemo(() => new Set(leaders.map((leader) => normalizeAdminText(leader.phone).replace(/\D/g, ""))), [leaders]);
   const leaderCandidates = useMemo(() => {
@@ -2126,7 +2127,7 @@ function LogList({ logs, full = false }: { logs: AdminLogEntry[]; full?: boolean
         <article className={`adminx-log-row adminx-log-${log.level}`} key={`${log.clientEmail}-${log.id}`} style={colorStyle(log.clientColor)}>
           <span>{formatShort(log.timestamp)}</span>
           <b>{log.clientEmail}</b>
-          <p>{log.message}</p>
+          <p>{uiText(log.message)}</p>
         </article>
       ))}
       {!logs.length ? <p className="adminx-empty-text">Nenhum log encontrado.</p> : null}
