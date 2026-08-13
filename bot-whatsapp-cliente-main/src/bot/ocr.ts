@@ -166,6 +166,22 @@ export function isSafeAutomaticGaiolaDetection(detection: DetectedRouteCode) {
   return detection.safeForAutomatic && detection.confidence >= 45 && detection.evidenceCount >= requiredEvidence;
 }
 
+export function calculateCageColumnCrop(imageWidth: number, imageHeight: number, resizedWidth: number, resizedHeight: number) {
+  const ratio = imageHeight > 0 ? imageWidth / imageHeight : 0;
+  // O arquivo pode ser o print completo ou já começar diretamente em GAIOLA.
+  // A proporção distingue os dois layouts sem gastar uma leitura preliminar.
+  const croppedTable = ratio >= 1.92;
+  const leftRatio = croppedTable ? 0 : 0.155;
+  const widthRatio = croppedTable ? 0.13 : 0.105;
+  const left = Math.max(0, Math.floor(resizedWidth * leftRatio));
+  return {
+    left,
+    top: 0,
+    width: Math.max(1, Math.min(resizedWidth - left, Math.floor(resizedWidth * widthRatio))),
+    height: resizedHeight
+  };
+}
+
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>) {
   const results = new Array<R>(items.length);
   let cursor = 0;
@@ -248,15 +264,12 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const resizeHeight = metadata.width && metadata.height
       ? Math.max(1, Math.round((metadata.height / metadata.width) * resizeWidth))
       : 1200;
-    const cageCrop = {
-      // Há dois formatos reais: print completo (gaiola após DATA/HUB) e print
-      // já recortado (GAIOLA começa na borda). A faixa larga inclui a gaiola
-      // nos dois sem alcançar cidade/bairro, e o whitelist ignora o AT longo.
-      left: 0,
-      top: 0,
-      width: Math.max(1, Math.floor(resizeWidth * 0.34)),
-      height: resizeHeight
-    };
+    const cageCrop = calculateCageColumnCrop(
+      metadata.width || resizeWidth,
+      metadata.height || resizeHeight,
+      resizeWidth,
+      resizeHeight
+    );
 
     const fullJobs = [
       () => sharp(imagePath)
