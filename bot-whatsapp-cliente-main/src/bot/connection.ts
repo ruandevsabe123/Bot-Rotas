@@ -113,7 +113,7 @@ const TARGET_PARALLEL_STAGGER_MS = 12;
 const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
 // O nível interno agora é binário e invisível: o cliente escolhido como perdedor
 // cede esta janela somente quando o vencedor também concorre no mesmo grupo.
-const DISPATCH_PRIORITY_STEP_MS = 500;
+const DISPATCH_PRIORITY_STEP_MS = 250;
 const MAX_DISPATCH_PRIORITY_LEVEL = 5;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;

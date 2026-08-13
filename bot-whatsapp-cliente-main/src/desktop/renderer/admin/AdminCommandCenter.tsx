@@ -365,7 +365,7 @@ function UserEditor({
       <label className="adminx-field">
         <span>Este cliente ganha de</span>
         <select value={value.dispatchBeatsEmail || ""} onChange={(event) => onChange({ ...value, dispatchBeatsEmail: event.target.value, dispatchPriorityLevel: 0 })}>
-          <option value="">Ninguém</option>
+          <option value="">Não ganha de ninguém</option>
           {competitors.filter((user) => user.role === "client" && user.email !== (value.originalEmail || value.email)).map((user) => (
             <option key={user.email} value={user.email}>{user.email}</option>
           ))}
@@ -2101,7 +2101,7 @@ function ClientsTable({
               <td data-label="Painel"><StatusPill tone={user.blocked ? "red" : user.presenceStatus === "online" ? "green" : user.presenceStatus === "recent" ? "yellow" : "muted"}>{user.blocked ? "bloqueado" : user.presenceStatus}</StatusPill></td>
               <td data-label="Bot">{user.botStatus || "fechado"}</td>
               <td data-label="Monitoramento">{user.monitoringEnabled ? <StatusPill tone="green">ativo</StatusPill> : <StatusPill tone="muted">parado</StatusPill>}</td>
-              <td data-label="Confronto">{user.dispatchBeatsEmail ? `Ganha de ${user.dispatchBeatsEmail}` : "Sem preferência"}</td>
+              <td data-label="Confronto">{user.dispatchBeatsEmail ? `Ganha de ${user.dispatchBeatsEmail}` : "Não ganha de ninguém"}</td>
               <td data-label="Último visto">{formatShort(user.lastSeenAt)}</td>
               <td data-label="Uso">{formatDuration(user.totalUsageMs)}</td>
               <td data-label="Ações">

@@ -1117,7 +1117,7 @@ function UserEditor({
       <label className="login-field">
         <Gauge size={18} />
         <select aria-label="Este cliente ganha de" value={value.dispatchBeatsEmail || ""} onChange={(event) => onChange({ ...value, dispatchBeatsEmail: event.target.value, dispatchPriorityLevel: 0 })}>
-          <option value="">Sem preferência de confronto</option>
+          <option value="">Não ganha de ninguém</option>
           {competitors.filter((user) => user.role === "client" && user.email !== (value.originalEmail || value.email)).map((user) => (
             <option key={user.email} value={user.email}>Ganha de {user.email}</option>
           ))}
@@ -1171,7 +1171,7 @@ function AdminUserRow({
         <div className="route-meta">
           <span>Último login: {formatDate(user.lastLoginAt)}</span>
           <span>{getBotOpenCopy(user)}</span>
-          <span>{user.dispatchBeatsEmail ? `Ganha de: ${user.dispatchBeatsEmail}` : "Sem confronto preferencial"}</span>
+          <span>{user.dispatchBeatsEmail ? `Ganha de: ${user.dispatchBeatsEmail}` : "Não ganha de ninguém"}</span>
           <span>Uso: {formatDuration(user.totalUsageMs)}</span>
           <span>{user.loginCount} login(s)</span>
         </div>
