@@ -167,17 +167,16 @@ export function isSafeAutomaticGaiolaDetection(detection: DetectedRouteCode) {
 }
 
 export function calculateCageColumnCrop(imageWidth: number, imageHeight: number, resizedWidth: number, resizedHeight: number) {
-  const ratio = imageHeight > 0 ? imageWidth / imageHeight : 0;
-  // O arquivo pode ser o print completo ou já começar diretamente em GAIOLA.
-  // A proporção distingue os dois layouts sem gastar uma leitura preliminar.
-  const croppedTable = ratio >= 1.92;
-  const leftRatio = croppedTable ? 0 : 0.155;
-  const widthRatio = croppedTable ? 0.13 : 0.105;
-  const left = Math.max(0, Math.floor(resizedWidth * leftRatio));
+  void imageWidth;
+  void imageHeight;
+  // O WhatsApp preserva conteúdos iguais em telas com proporções diferentes.
+  // A faixa cobre GAIOLA tanto na borda quanto depois de DATA/HUB; o whitelist
+  // e a validação de código descartam os identificadores longos de AT.
+  const left = 0;
   return {
     left,
     top: 0,
-    width: Math.max(1, Math.min(resizedWidth - left, Math.floor(resizedWidth * widthRatio))),
+    width: Math.max(1, Math.min(resizedWidth, Math.floor(resizedWidth * 0.28))),
     height: resizedHeight
   };
 }

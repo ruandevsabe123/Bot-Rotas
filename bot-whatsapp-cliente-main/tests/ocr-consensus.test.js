@@ -13,14 +13,14 @@ const {
   calculateCageColumnCrop
 } = require("../dist/bot/ocr.js");
 
-test("recorta somente GAIOLA nos layouts completo e já cortado", () => {
+test("cobre GAIOLA nos layouts completo e já cortado sem depender da proporção", () => {
   const full = calculateCageColumnCrop(1122, 640, 2244, 1280);
-  assert.deepEqual(full, { left: 347, top: 0, width: 235, height: 1280 });
+  assert.deepEqual(full, { left: 0, top: 0, width: 628, height: 1280 });
 
   const cropped = calculateCageColumnCrop(906, 447, 1812, 894);
-  assert.deepEqual(cropped, { left: 0, top: 0, width: 235, height: 894 });
-  assert.ok(full.width < 2244 * 0.11);
-  assert.ok(cropped.width < 1812 * 0.14);
+  assert.deepEqual(cropped, { left: 0, top: 0, width: 507, height: 894 });
+  assert.ok(full.width < 2244 * 0.29);
+  assert.ok(cropped.width < 1812 * 0.29);
 });
 
 function plainReading(text, source) {
