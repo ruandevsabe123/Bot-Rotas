@@ -193,7 +193,7 @@ const lastCriticalBotState = new Map<string, { status: string; monitoringEnabled
 let lastAdminPendingRouteIds: Set<string> | undefined;
 const pendingSnapshotBots = new Map<string, BotProcessProxy>();
 let snapshotFanoutScheduled = false;
-const appliedConditionalPriority = new Map<string, number>();
+const appliedConditionalPriority = new Map<string, { level: number; workerPid?: number }>();
 let conditionalPriorityTimer: NodeJS.Timeout | undefined;
 
 function scheduleConditionalPrioritySync() {
@@ -213,6 +213,7 @@ async function syncConditionalDispatchPriorities() {
       email,
       configuredLevel: panelUsers.get(email)?.dispatchPriorityLevel || 0,
       beatsEmail: panelUsers.get(email)?.dispatchBeatsEmail,
+      priorityUpdatedAt: panelUsers.get(email)?.updatedAt,
       connected: snapshot.status === "connected",
       monitoringEnabled: snapshot.monitoringEnabled,
       monitoringMode: snapshot.monitoringMode,
@@ -222,8 +223,10 @@ async function syncConditionalDispatchPriorities() {
 
   await Promise.all(Array.from(bots.entries()).map(async ([email, bot]) => {
     const nextLevel = priorities.get(email) || 0;
-    if (appliedConditionalPriority.get(email) === nextLevel) return;
-    appliedConditionalPriority.set(email, nextLevel);
+    const workerPid = bot.getWorkerPid();
+    const applied = appliedConditionalPriority.get(email);
+    if (applied?.level === nextLevel && applied.workerPid === workerPid) return;
+    appliedConditionalPriority.set(email, { level: nextLevel, workerPid });
     try {
       await bot.setDispatchPriorityLevel(nextLevel);
     } catch (error) {
@@ -541,6 +544,16 @@ function requireAuth(request: http.IncomingMessage, response: http.ServerRespons
 function syncPanelUser(user: StoredPanelUser) {
   panelUsers.set(user.email, createUserRecord(user.email, user.password, user.role, user));
   broadcastAdminSnapshot();
+}
+
+function enforceExclusiveDispatchWinner(winner: StoredPanelUser) {
+  const loserEmail = normalizeDispatchBeatsEmail(winner.dispatchBeatsEmail, winner.email);
+  if (!loserEmail) return;
+  const loser = panelUsers.get(loserEmail);
+  if (!loser || normalizeDispatchBeatsEmail(loser.dispatchBeatsEmail, loserEmail) !== winner.email) return;
+  const updatedLoser = panelUserStore.upsert({ email: loserEmail, dispatchBeatsEmail: "" });
+  syncPanelUser(updatedLoser);
+  appliedConditionalPriority.delete(loserEmail);
 }
 
 function touchPanelUser(email: string) {
@@ -1585,6 +1598,7 @@ const server = http.createServer(async (request, response) => {
         dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail, String(body.email || ""))
       });
       syncPanelUser(user);
+      enforceExclusiveDispatchWinner(user);
       appliedConditionalPriority.delete(user.email);
       scheduleConditionalPrioritySync();
       sendJson(response, 200, getAdminUsersSnapshot());
@@ -1618,6 +1632,7 @@ const server = http.createServer(async (request, response) => {
         dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail ?? currentUser.dispatchBeatsEmail, nextEmail)
       });
       syncPanelUser(user);
+      enforceExclusiveDispatchWinner(user);
       appliedConditionalPriority.delete(user.email);
       scheduleConditionalPrioritySync();
       sendJson(response, 200, getAdminUsersSnapshot());
