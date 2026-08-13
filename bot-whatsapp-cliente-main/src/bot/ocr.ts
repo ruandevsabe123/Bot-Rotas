@@ -249,9 +249,12 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       ? Math.max(1, Math.round((metadata.height / metadata.width) * resizeWidth))
       : 1200;
     const cageCrop = {
-      left: Math.max(0, Math.floor(resizeWidth * 0.14)),
+      // Há dois formatos reais: print completo (gaiola após DATA/HUB) e print
+      // já recortado (GAIOLA começa na borda). A faixa larga inclui a gaiola
+      // nos dois sem alcançar cidade/bairro, e o whitelist ignora o AT longo.
+      left: 0,
       top: 0,
-      width: Math.max(1, Math.floor(resizeWidth * 0.18)),
+      width: Math.max(1, Math.floor(resizeWidth * 0.34)),
       height: resizeHeight
     };
 

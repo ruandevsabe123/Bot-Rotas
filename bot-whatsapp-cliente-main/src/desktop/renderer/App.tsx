@@ -2862,6 +2862,38 @@ function OcrRouteApprovalPanel({
   );
 }
 
+function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRouteSelectionState; onClose: () => void }) {
+  if (!selection || selection.status === "idle") return null;
+  const analyzing = selection.status === "analyzing";
+  const finished = !analyzing;
+  const selectedOptions = selection.selectedOptionIds?.length
+    ? selection.options.filter((option) => selection.selectedOptionIds?.includes(option.id))
+    : selection.options;
+
+  return (
+    <div className="modal-backdrop ocr-analysis-backdrop" role="presentation">
+      <section className="sheet-dialog ocr-route-dialog automatic-analysis-dialog" role="dialog" aria-modal="true" aria-labelledby="automatic-analysis-title">
+        <div className="sheet-heading">
+          <div>
+            <p className="panel-label">Bot imagem automático</p>
+            <h2 id="automatic-analysis-title">{analyzing ? "Analisando a imagem" : selection.status === "confirmed" ? "Análise concluída" : "Imagem verificada"}</h2>
+          </div>
+          {finished ? <button className="icon-button" title="Fechar" type="button" onClick={onClose}><X size={20} /></button> : <span className="mini-badge">PROCESSANDO</span>}
+        </div>
+        <div className="automatic-analysis-steps">
+          <article className="analysis-step done"><CheckCircle2 size={19} /><span><strong>Imagem recebida</strong><small>O servidor recebeu a foto do grupo.</small></span></article>
+          <article className={analyzing ? "analysis-step active" : "analysis-step done"}>{analyzing ? <RefreshCw className="spin" size={19} /> : <CheckCircle2 size={19} />}<span><strong>Lendo gaiolas</strong><small>{analyzing ? "Três tratamentos conferindo os códigos..." : `${selection.detectedRouteCount || selection.options.length} rota(s) segura(s) encontrada(s).`}</small></span></article>
+          <article className={analyzing ? "analysis-step" : "analysis-step done"}><Route size={19} /><span><strong>Comparando com o romaneio</strong><small>{analyzing ? "Aguardando a leitura terminar." : "Códigos cruzados com o arquivo carregado."}</small></span></article>
+          <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>Disparo automático</strong><small>{selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} mensagem(ns) preparada(s) ou enviada(s).` : analyzing ? "Aguardando gaiolas válidas." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
+        </div>
+        {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.rota} · {option.cidade || option.bairro}</span><small>{option.pacotes} pct · {option.paradas} paradas · {option.distanciaKm.toFixed(3)} km</small></article>)}</div> : null}
+        {!analyzing && selection.message ? <p className={selection.status === "error" ? "inline-error" : "approval-message"}>{selection.message}</p> : null}
+        {finished ? <div className="review-actions"><button className="button primary" type="button" onClick={onClose}>Fechar análise</button></div> : null}
+      </section>
+    </div>
+  );
+}
+
 function ReleaseDialog({
   release,
   busy,
@@ -2944,6 +2976,7 @@ export default function App() {
   const desiredCagesTouchedRef = useRef(false);
   const desiredCageSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [ocrRouteDialogOpen, setOcrRouteDialogOpen] = useState(false);
+  const [automaticOcrAnalysisOpen, setAutomaticOcrAnalysisOpen] = useState(false);
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
   const [incidentClock, setIncidentClock] = useState(Date.now());
@@ -3113,13 +3146,19 @@ export default function App() {
     if (!imageBotActive) {
       setSelectedOcrOptionIds([]);
       setOcrRouteDialogOpen(false);
+      setAutomaticOcrAnalysisOpen(false);
       return;
     }
     if (snapshot.config.ocrSelectionMode !== "manual") {
       setSelectedOcrOptionIds([]);
       setOcrRouteDialogOpen(false);
+      if (selection && selection.status !== "idle") {
+        if (selection.status === "analyzing") setActiveTab("image");
+        setAutomaticOcrAnalysisOpen(true);
+      }
       return;
     }
+    setAutomaticOcrAnalysisOpen(false);
     if (selection?.status === "analyzing") {
       setActiveTab("image");
       setSelectedOcrOptionIds([]);
@@ -4299,6 +4338,12 @@ export default function App() {
             </div>
           </section>
         </div>
+      ) : null}
+      {automaticOcrAnalysisOpen && snapshot.config.targetDispatchMode === "ocr" && snapshot.config.ocrSelectionMode !== "manual" ? (
+        <AutomaticOcrAnalysisDialog
+          selection={snapshot.ocrRouteSelection}
+          onClose={() => setAutomaticOcrAnalysisOpen(false)}
+        />
       ) : null}
       {pendingClientIncident ? (
         <div className="modal-backdrop incident-lock-backdrop" role="presentation">
