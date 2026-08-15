@@ -44,6 +44,7 @@ export type DetectedRouteCode = {
 };
 
 let tesseractJsWorkerPromise: ReturnType<typeof createWorker> | undefined;
+let tesseractJsCageWorkerPromise: ReturnType<typeof createWorker> | undefined;
 
 export function normalizeOcrText(text: string) {
   return text
@@ -197,15 +198,16 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper:
 
 function readSingleRouteImageOcr(imagePath: string, label: string, psm = 6) {
   return readRouteImageOcrWithBinary(imagePath, label, psm)
-    .catch(() => readRouteImageOcrWithTesseractJs(imagePath, label));
+    .catch(() => readRouteImageOcrWithTesseractJs(imagePath, label, psm));
 }
 
 function readRouteImageOcrWithBinary(imagePath: string, label: string, psm: number) {
   return new Promise<RouteOcrResult>((resolve, reject) => {
-    const cageOptions = label.startsWith("coluna-gaiola")
+    const cageOnly = label.startsWith("coluna-gaiola");
+    const cageOptions = cageOnly
       ? ["-c", "tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"]
       : [];
-    const commandArgs = [imagePath, "stdout", "-l", "por", "--oem", "1", "--psm", String(psm), ...cageOptions, "tsv"];
+    const commandArgs = [imagePath, "stdout", "-l", cageOnly ? "eng" : "por", "--oem", "1", "--psm", String(psm), ...cageOptions, "tsv"];
     execFile(
       "tesseract",
       commandArgs,
@@ -227,8 +229,13 @@ function readRouteImageOcrWithBinary(imagePath: string, label: string, psm: numb
   });
 }
 
-async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string): Promise<RouteOcrResult> {
-  const worker = await getTesseractJsWorker();
+async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string, psm: number): Promise<RouteOcrResult> {
+  const cageOnly = label.startsWith("coluna-gaiola");
+  const worker = await getTesseractJsWorker(cageOnly);
+  await worker.setParameters({
+    tessedit_pageseg_mode: String(psm) as any,
+    ...(cageOnly ? { tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-" } : {})
+  });
 
   const result = await worker.recognize(
     imagePath,
@@ -248,6 +255,50 @@ async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string
   };
 }
 
+async function detectCageColumnCrop(imagePath: string, sharp: any, fallbackWidth: number, fallbackHeight: number) {
+  try {
+    const { data, info } = await sharp(imagePath).rotate().grayscale().raw().toBuffer({ resolveWithObject: true });
+    const width = Number(info.width || fallbackWidth);
+    const height = Number(info.height || fallbackHeight);
+    const yStart = Math.max(1, Math.floor(height * 0.11));
+    const yEnd = Math.max(yStart + 1, Math.floor(height * 0.96));
+    const yStep = Math.max(1, Math.floor((yEnd - yStart) / 120));
+    const darkColumns: boolean[] = [];
+    for (let x = 0; x < Math.floor(width * 0.36); x += 1) {
+      let samples = 0;
+      let dark = 0;
+      for (let y = yStart; y < yEnd; y += yStep) {
+        samples += 1;
+        if (data[y * width + x] < 105) dark += 1;
+      }
+      darkColumns.push(samples > 0 && dark / samples >= 0.45);
+    }
+    const runs: Array<[number, number]> = [];
+    let start = -1;
+    for (let x = 0; x <= darkColumns.length; x += 1) {
+      if (darkColumns[x] && start < 0) start = x;
+      if (!darkColumns[x] && start >= 0) {
+        runs.push([start, x]);
+        start = -1;
+      }
+    }
+    const hubRuns = runs.filter(([left, right]) => right - left >= width * 0.035);
+    if (hubRuns.length) {
+      const [left, right] = hubRuns.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
+      const hubWidth = right - left;
+      const cageLeft = Math.max(0, right - Math.round(width * 0.004));
+      const cageWidth = Math.min(width - cageLeft, Math.max(Math.round(width * 0.085), Math.round(hubWidth * 1.12)));
+      return { left: cageLeft, top: 0, width: Math.max(1, cageWidth), height };
+    }
+    const edgeRun = runs.find(([left, right]) => left <= width * 0.015 && right - left < width * 0.035);
+    const cageLeft = edgeRun ? Math.max(0, edgeRun[1] - 1) : 0;
+    const cageWidth = Math.min(width - cageLeft, Math.max(1, Math.round(width * 0.11)));
+    return { left: cageLeft, top: 0, width: cageWidth, height };
+  } catch {
+    return { left: 0, top: 0, width: Math.max(1, Math.round(fallbackWidth * 0.12)), height: fallbackHeight };
+  }
+}
+
 async function createPreprocessedImages(imagePath: string, preferCageCrop = false, mode: "all" | "cage" | "full" = "all") {
   const generatedPaths: string[] = [];
   try {
@@ -259,16 +310,12 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const enhancedPath = `${baseName}-enhanced.png`;
     const thresholdPath = `${baseName}-threshold.png`;
     const cageEnhancedPath = `${baseName}-cage-enhanced.png`;
-    const cageThresholdPath = `${baseName}-cage-threshold.png`;
+    const cageSoftPath = `${baseName}-cage-soft.png`;
+    const cageCompactPath = `${baseName}-cage-compact.png`;
     const resizeHeight = metadata.width && metadata.height
       ? Math.max(1, Math.round((metadata.height / metadata.width) * resizeWidth))
       : 1200;
-    const cageCrop = calculateCageColumnCrop(
-      metadata.width || resizeWidth,
-      metadata.height || resizeHeight,
-      resizeWidth,
-      resizeHeight
-    );
+    const cageCrop = await detectCageColumnCrop(imagePath, sharp, metadata.width || resizeWidth, metadata.height || resizeHeight);
 
     const fullJobs = [
       () => sharp(imagePath)
@@ -293,26 +340,37 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const cageJobs = [
       () => sharp(imagePath)
         .rotate()
-        .resize({ width: resizeWidth, withoutEnlargement: false })
         .extract(cageCrop)
+        .resize({ width: cageCrop.width * 4, withoutEnlargement: false })
         .grayscale()
         .normalize()
-        .linear(1.18, -8)
-        .sharpen({ sigma: 1.05, m1: 1.05, m2: 2 })
+        .sharpen({ sigma: 0.6 })
+        .extend({ top: 24, bottom: 50, left: 24, right: 24, background: "white" })
         .png()
         .toFile(cageEnhancedPath),
       () => sharp(imagePath)
         .rotate()
-        .resize({ width: resizeWidth, withoutEnlargement: false })
         .extract(cageCrop)
+        .resize({ width: cageCrop.width * 4, withoutEnlargement: false })
         .grayscale()
         .normalize()
-        .threshold(165)
+        .linear(1.12, -5)
+        .extend({ top: 24, bottom: 50, left: 24, right: 24, background: "white" })
         .png()
-        .toFile(cageThresholdPath)
+        .toFile(cageSoftPath),
+      () => sharp(imagePath)
+        .rotate()
+        .extract(cageCrop)
+        .resize({ width: cageCrop.width * 3, withoutEnlargement: false })
+        .grayscale()
+        .normalize()
+        .sharpen({ sigma: 0.7 })
+        .extend({ top: 20, bottom: 40, left: 20, right: 20, background: "white" })
+        .png()
+        .toFile(cageCompactPath)
     ];
     if (mode !== "cage") generatedPaths.push(enhancedPath, thresholdPath);
-    if (mode !== "full") generatedPaths.push(cageEnhancedPath, cageThresholdPath);
+    if (mode !== "full") generatedPaths.push(cageEnhancedPath, cageSoftPath, cageCompactPath);
     await Promise.all([
       ...(mode !== "cage" ? fullJobs.map((job) => job()) : []),
       ...(mode !== "full" ? cageJobs.map((job) => job()) : [])
@@ -324,9 +382,9 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       { path: thresholdPath, label: "preto-e-branco", generated: true, psm: 6 },
     ];
     const cageColumnVariants = [
-      { path: cageEnhancedPath, label: "coluna-gaiola", generated: true, psm: 6 },
-      { path: cageThresholdPath, label: "coluna-gaiola-pb", generated: true, psm: 6 },
-      { path: cageEnhancedPath, label: "coluna-gaiola-esparsa", generated: false, psm: 11 },
+      { path: cageEnhancedPath, label: "coluna-gaiola-4x", generated: true, psm: 11 },
+      { path: cageSoftPath, label: "coluna-gaiola-4x-suave", generated: true, psm: 11 },
+      { path: cageCompactPath, label: "coluna-gaiola-3x", generated: true, psm: 11 },
     ];
     const originalVariant = [
       { path: imagePath, label: "original", generated: false, psm: 11 }
@@ -348,8 +406,16 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
   }
 }
 
-function getTesseractJsWorker() {
-  if (!tesseractJsWorkerPromise) {
+function getTesseractJsWorker(cageOnly = false) {
+  if (cageOnly && !tesseractJsCageWorkerPromise) {
+    tesseractJsCageWorkerPromise = createWorker("eng", 1, {
+      logger: () => undefined
+    }).catch((error) => {
+      tesseractJsCageWorkerPromise = undefined;
+      throw error;
+    });
+  }
+  if (!cageOnly && !tesseractJsWorkerPromise) {
     tesseractJsWorkerPromise = createWorker("por", 1, {
       logger: () => undefined
     }).catch((error) => {
@@ -358,7 +424,7 @@ function getTesseractJsWorker() {
     });
   }
 
-  return tesseractJsWorkerPromise;
+  return cageOnly ? tesseractJsCageWorkerPromise! : tesseractJsWorkerPromise!;
 }
 
 export function findConfiguredRouteCode(ocrText: string, routes: string[]) {
