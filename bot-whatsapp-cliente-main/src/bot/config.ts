@@ -23,7 +23,8 @@ export const DEFAULT_CONFIG: BotConfig = {
   keepAliveIntervalMs: 300000,
   ocrManualRouteSelection: true,
   ocrSelectionMode: "manual",
-  ocrDesiredCages: []
+  ocrDesiredCages: [],
+  ocrCageMessageLimit: 0
 };
 
 export class ConfigStore {
@@ -138,6 +139,7 @@ export class ConfigStore {
             .map((item) => item.trim().toUpperCase())
             .filter(Boolean)))
         : [],
+      ocrCageMessageLimit: this.clampNumber(input.ocrCageMessageLimit, 0, 1000, DEFAULT_CONFIG.ocrCageMessageLimit),
       // support legacy `codigosMensagens` if present
       codigosMensagensAlvo: Array.isArray(input.codigosMensagensAlvo)
         ? input.codigosMensagensAlvo.filter((item) => typeof item === "string" && item.trim())

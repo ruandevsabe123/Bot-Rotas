@@ -151,7 +151,8 @@ const emptySnapshot: BotSnapshot = {
     keepAliveIntervalMs: 300000,
     ocrManualRouteSelection: true,
     ocrSelectionMode: "manual",
-    ocrDesiredCages: []
+    ocrDesiredCages: [],
+    ocrCageMessageLimit: 0
   },
   groups: [],
   readinessChecks: [],
@@ -3219,6 +3220,19 @@ export default function App() {
     });
   }, [desiredCageSearch, desiredCageSort, romaneio.routes, romaneioSettingsDraft]);
 
+  const desiredCageDispatchOrder = useMemo(() => {
+    const selected = new Set(desiredCagesDraft.map((gaiola) => gaiola.toUpperCase()));
+    const ranked = Array.from(new Map(
+      rankRoutes(romaneio.routes, {}, romaneioSettingsDraft)
+        .map((route) => [route.gaiola.toUpperCase(), route])
+    ).values());
+    return new Map(
+      ranked
+        .filter((route) => selected.has(route.gaiola.toUpperCase()))
+        .map((route, index) => [route.gaiola.toUpperCase(), index + 1])
+    );
+  }, [desiredCagesDraft, romaneio.routes, romaneioSettingsDraft]);
+
   const testGroupLabel = useMemo(() => {
     return snapshot.config.grupoTesteNome || "Nenhum teste salvo";
   }, [snapshot.config]);
@@ -3583,14 +3597,15 @@ export default function App() {
     });
   }
 
-  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean; ocrSelectionMode?: BotConfig["ocrSelectionMode"]; ocrDesiredCages?: string[] }) {
+  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean; ocrSelectionMode?: BotConfig["ocrSelectionMode"]; ocrDesiredCages?: string[]; ocrCageMessageLimit?: number }) {
     return runAction(() => botApi.saveGeneralSettings({
       nuclearMode: settings.nuclearMode ?? snapshot.config.nuclearMode,
       alwaysWarmMode: settings.alwaysWarmMode ?? snapshot.config.alwaysWarmMode,
       keepAliveIntervalMs: settings.keepAliveIntervalMs ?? snapshot.config.keepAliveIntervalMs,
       ocrManualRouteSelection: settings.ocrManualRouteSelection ?? snapshot.config.ocrManualRouteSelection,
       ocrSelectionMode: settings.ocrSelectionMode ?? snapshot.config.ocrSelectionMode,
-      ocrDesiredCages: settings.ocrDesiredCages ?? snapshot.config.ocrDesiredCages
+      ocrDesiredCages: settings.ocrDesiredCages ?? snapshot.config.ocrDesiredCages,
+      ocrCageMessageLimit: settings.ocrCageMessageLimit ?? snapshot.config.ocrCageMessageLimit
     }));
   }
 
@@ -3621,6 +3636,8 @@ export default function App() {
   function saveDesiredCagesWithoutBlocking(next: string[]) {
     desiredCagesTouchedRef.current = true;
     setDesiredCagesDraft(next);
+    const currentLimit = snapshot.config.ocrCageMessageLimit;
+    const nextLimit = currentLimit > 0 ? Math.min(currentLimit, next.length) : 0;
     desiredCageSaveQueueRef.current = desiredCageSaveQueueRef.current
       .then(async () => {
         const nextSnapshot = await botApi.saveGeneralSettings({
@@ -3629,7 +3646,8 @@ export default function App() {
           keepAliveIntervalMs: snapshot.config.keepAliveIntervalMs,
           ocrManualRouteSelection: snapshot.config.ocrManualRouteSelection,
           ocrSelectionMode: snapshot.config.ocrSelectionMode,
-          ocrDesiredCages: next
+          ocrDesiredCages: next,
+          ocrCageMessageLimit: nextLimit
         });
         setSnapshot(nextSnapshot);
       })
@@ -4081,6 +4099,21 @@ export default function App() {
               </div>
               <div className="settings-grid compact-settings desired-cages-tools">
                 <label>
+                  Quantas mensagens enviar
+                  <select
+                    value={snapshot.config.ocrCageMessageLimit}
+                    disabled={busy || !desiredCagesDraft.length}
+                    onChange={(event) => saveGeneralSettings({ ocrCageMessageLimit: Number(event.target.value) })}
+                  >
+                    <option value={0}>Todas que aparecerem</option>
+                    {Array.from({ length: desiredCagesDraft.length }, (_, index) => index + 1).map((amount) => (
+                      <option key={amount} value={amount}>
+                        {amount === 1 ? "Somente a melhor" : amount === 2 ? "As 2 melhores" : `As ${amount} melhores`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
                   Pesquisar rota
                   <span className="search-input-wrap">
                     <Search size={18} aria-hidden="true" />
@@ -4106,6 +4139,7 @@ export default function App() {
               <div className="ocr-option-grid desired-cages-grid">
                 {visibleDesiredCageRoutes.map((route, index) => {
                   const selected = desiredCagesDraft.some((gaiola) => gaiola.toUpperCase() === route.gaiola.toUpperCase());
+                  const dispatchOrder = desiredCageDispatchOrder.get(route.gaiola.toUpperCase());
                   return (
                     <button
                       key={route.gaiola}
@@ -4115,7 +4149,7 @@ export default function App() {
                     >
                       <strong>#{index + 1} · {route.gaiola}</strong>
                       <span>{route.cidade || "Cidade não identificada"} · {route.bairros.slice(0, 3).map((bairro) => bairro.nome).join(", ")}</span>
-                      {selected ? <b className="send-order-badge">Vai enviar</b> : null}
+                      {selected && dispatchOrder ? <b className="send-order-badge">Vai enviar {dispatchOrder}º</b> : null}
                       <div className="route-row-metrics">
                         <span>{route.distanciaKm > 0 ? `${route.distanciaKm.toFixed(3)} km` : "km não informado"}</span>
                         <span>{route.pacotes} pacotes</span>

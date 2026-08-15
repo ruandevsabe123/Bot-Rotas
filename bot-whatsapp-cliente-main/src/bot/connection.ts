@@ -10,6 +10,7 @@ import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection } from "./ocr";
 import { readRouteImageOcrWithoutBlockingSocket, warmupIsolatedOcrWorker } from "./ocrIsolated";
+import { selectRankedDesiredCages } from "./ocrCageSelection";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
@@ -1587,7 +1588,7 @@ export class BotService extends EventEmitter {
     this.emitSnapshot();
   }
 
-  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean; ocrSelectionMode?: BotConfig["ocrSelectionMode"]; ocrDesiredCages?: string[] }) {
+  setGeneralSettings(settings: { nuclearMode: boolean; fastMode?: boolean; minSendDelayMs?: number; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean; ocrSelectionMode?: BotConfig["ocrSelectionMode"]; ocrDesiredCages?: string[]; ocrCageMessageLimit?: number }) {
     const currentConfig = this.configStore.load();
     const changingMode = Boolean(settings.nuclearMode) !== currentConfig.nuclearMode;
     if (this.monitoringEnabled && changingMode) {
@@ -1607,6 +1608,7 @@ export class BotService extends EventEmitter {
       nextSettings.ocrManualRouteSelection = settings.ocrSelectionMode === "manual";
     }
     if (settings.ocrDesiredCages !== undefined) nextSettings.ocrDesiredCages = settings.ocrDesiredCages;
+    if (settings.ocrCageMessageLimit !== undefined) nextSettings.ocrCageMessageLimit = settings.ocrCageMessageLimit;
     const config = this.configStore.save(nextSettings);
     this.refreshRuntimeSettings(config);
     this.prepareSendPlan();
@@ -2568,12 +2570,8 @@ export class BotService extends EventEmitter {
       if (config.ocrSelectionMode !== "manual") {
         const eligibleOptions = options.filter((option) =>
           option.romaneioMatch !== false && (config.ocrSelectionMode === "cages" || option.passedFilters));
-        const desiredCages = config.ocrDesiredCages.map((gaiola) => normalizarTexto(gaiola));
         const automaticOptions = config.ocrSelectionMode === "cages"
-          ? desiredCages.flatMap((desiredCage) => {
-              const match = eligibleOptions.find((option) => normalizarTexto(option.gaiola) === desiredCage);
-              return match ? [match] : [];
-            })
+          ? selectRankedDesiredCages(eligibleOptions, config.ocrDesiredCages, config.ocrCageMessageLimit)
           : eligibleOptions.slice(0, 1);
         if (!automaticOptions.length) {
           this.ocrRouteSelection = {

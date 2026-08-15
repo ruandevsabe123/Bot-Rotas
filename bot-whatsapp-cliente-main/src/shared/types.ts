@@ -54,6 +54,9 @@ export type BotConfig = {
   ocrManualRouteSelection: boolean;
   ocrSelectionMode: "best" | "manual" | "cages";
   ocrDesiredCages: string[];
+  // 0 envia todas as gaiolas desejadas encontradas; valores positivos limitam
+  // o envio às melhores opções do ranking.
+  ocrCageMessageLimit: number;
 };
 
 export type DispatchPriorityProfile = {
@@ -650,6 +653,7 @@ export type GeneralSettingsPayload = {
   ocrManualRouteSelection?: boolean;
   ocrSelectionMode?: "best" | "manual" | "cages";
   ocrDesiredCages?: string[];
+  ocrCageMessageLimit?: number;
 };
 
 export type DesktopApi = {

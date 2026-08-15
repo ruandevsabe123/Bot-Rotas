@@ -20,6 +20,15 @@ test("salva uma quantidade ilimitada de gaiolas desejadas sem truncar", () => {
   assert.equal(saved.ocrDesiredCages.length, 350);
   assert.deepEqual(saved.ocrDesiredCages.slice(0, 3), ["G-1", "G-2", "G-3"]);
   assert.equal(store.load().ocrDesiredCages.length, 350);
+  assert.equal(saved.ocrCageMessageLimit, 0);
+});
+
+test("salva o limite personalizado de mensagens por gaiola", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "desired-cages-limit-"));
+  const store = new ConfigStore(path.join(directory, "config.json"));
+  const saved = store.save({ ocrSelectionMode: "cages", ocrDesiredCages: ["C-30", "B-29"], ocrCageMessageLimit: 2 });
+  assert.equal(saved.ocrCageMessageLimit, 2);
+  assert.equal(store.load().ocrCageMessageLimit, 2);
 });
 
 test("migra a configuração antiga de escolha automática para melhor rota", () => {

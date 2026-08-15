@@ -1047,7 +1047,8 @@ async function handleAction(bot: BotProcessProxy, action: string, body: any) {
         keepAliveIntervalMs: body.keepAliveIntervalMs,
         ocrManualRouteSelection: body.ocrManualRouteSelection,
         ocrSelectionMode: body.ocrSelectionMode,
-        ocrDesiredCages: Array.isArray(body.ocrDesiredCages) ? body.ocrDesiredCages : undefined
+        ocrDesiredCages: Array.isArray(body.ocrDesiredCages) ? body.ocrDesiredCages : undefined,
+        ocrCageMessageLimit: body.ocrCageMessageLimit
       });
       break;
     case "confirm-ocr-routes":
