@@ -197,6 +197,13 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper:
 }
 
 function readSingleRouteImageOcr(imagePath: string, label: string, psm = 6) {
+  if (label.startsWith("coluna-gaiola")) {
+    return readRouteImageOcrWithTesseractJs(imagePath, label, psm)
+      .then((reading) => findAllGaiolaCodesFromOcr(reading).length
+        ? reading
+        : readRouteImageOcrWithBinary(imagePath, label, psm))
+      .catch(() => readRouteImageOcrWithBinary(imagePath, label, psm));
+  }
   return readRouteImageOcrWithBinary(imagePath, label, psm)
     .catch(() => readRouteImageOcrWithTesseractJs(imagePath, label, psm));
 }
@@ -425,6 +432,10 @@ function getTesseractJsWorker(cageOnly = false) {
   }
 
   return cageOnly ? tesseractJsCageWorkerPromise! : tesseractJsWorkerPromise!;
+}
+
+export async function warmupRouteOcrEngine() {
+  await getTesseractJsWorker(true);
 }
 
 export function findConfiguredRouteCode(ocrText: string, routes: string[]) {

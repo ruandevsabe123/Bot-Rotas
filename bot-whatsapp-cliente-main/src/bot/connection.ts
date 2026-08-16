@@ -2469,6 +2469,7 @@ export class BotService extends EventEmitter {
         fastFirst,
         preferCageCrop
       });
+      this.logger.info(`[ROMANEIO] Motor da leitura: ${ocr.source}.`);
       if (sequence !== this.latestRouteImageSequence) {
         this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;

@@ -1,4 +1,4 @@
-const CACHE_NAME = "bot-rotas-shell-v6";
+const CACHE_NAME = "bot-rotas-shell-v7";
 const SHELL_ASSETS = ["/manifest.webmanifest", "/br-skull-icon-192-v6.png", "/br-skull-icon-512-v6.png", "/br-skull-icon-maskable-512-v6.png"];
 
 self.addEventListener("install", (event) => {
@@ -21,12 +21,24 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
 
   if (event.request.mode === "navigate" || url.pathname === "/") {
-    event.respondWith(fetch(event.request).catch(() => caches.match("/")));
+    event.respondWith(networkFirst(event.request, "/"));
     return;
   }
 
-  event.respondWith(fetch(event.request).catch(() => caches.match(event.request)));
+  event.respondWith(networkFirst(event.request));
 });
+
+async function networkFirst(request, fallbackUrl) {
+  try {
+    return await fetch(request);
+  } catch {
+    const cached = await caches.match(request) || (fallbackUrl ? await caches.match(fallbackUrl) : undefined);
+    return cached || new Response("Sem conexão com o painel.", {
+      status: 503,
+      headers: { "Content-Type": "text/plain; charset=utf-8" }
+    });
+  }
+}
 
 self.addEventListener("push", (event) => {
   let data = {};

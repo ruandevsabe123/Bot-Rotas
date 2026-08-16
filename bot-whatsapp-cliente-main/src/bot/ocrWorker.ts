@@ -1,4 +1,6 @@
-import { readRouteImageOcr } from "./ocr";
+import { readRouteImageOcr, warmupRouteOcrEngine } from "./ocr";
+
+void warmupRouteOcrEngine().catch(() => undefined);
 
 process.on("message", (message: any) => {
   if (!message || message.type !== "analyze" || typeof message.id !== "string") return;
