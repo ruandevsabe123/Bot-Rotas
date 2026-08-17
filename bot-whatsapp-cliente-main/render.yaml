@@ -10,6 +10,8 @@ services:
         value: production
       - key: DATA_DIR
         value: /data
+      - key: OCR_GLOBAL_CONCURRENCY
+        value: "3"
       - key: PANEL_USERS
         sync: false
       - key: PANEL_ADMIN_EMAILS
