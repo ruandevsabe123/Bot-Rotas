@@ -132,7 +132,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
 }
 
 function runOcrVariants(items: Awaited<ReturnType<typeof createPreprocessedImages>>) {
-  return mapWithConcurrency(items, 3, async (variant) => {
+  return mapWithConcurrency(items, 1, async (variant) => {
     try {
       return { reading: await readSingleRouteImageOcr(variant.path, variant.label, variant.psm) };
     } catch (error) {
@@ -436,6 +436,20 @@ function getTesseractJsWorker(cageOnly = false) {
 
 export async function warmupRouteOcrEngine() {
   await getTesseractJsWorker(true);
+}
+
+export async function shutdownRouteOcrEngine() {
+  const workers = [tesseractJsWorkerPromise, tesseractJsCageWorkerPromise].filter(Boolean) as ReturnType<typeof createWorker>[];
+  tesseractJsWorkerPromise = undefined;
+  tesseractJsCageWorkerPromise = undefined;
+  await Promise.all(workers.map(async (workerPromise) => {
+    try {
+      const worker = await workerPromise;
+      await worker.terminate();
+    } catch {
+      // O processo pode ter caído antes de liberar o motor da IA.
+    }
+  }));
 }
 
 export function findConfiguredRouteCode(ocrText: string, routes: string[]) {

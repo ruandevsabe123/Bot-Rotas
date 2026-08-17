@@ -9,7 +9,8 @@ type PendingRequest = {
   timer: NodeJS.Timeout;
 };
 
-const OCR_WORKER_TIMEOUT_MS = 90_000;
+const OCR_WORKER_TIMEOUT_MS = 120_000;
+const RETRYABLE_WORKER_ERROR = /SIGBUS|encerrou inesperadamente|worker da IA falhou|EPIPE|excedeu/i;
 const pendingRequests = new Map<string, PendingRequest>();
 let worker: ChildProcess | undefined;
 let requestSequence = 0;
@@ -19,9 +20,21 @@ export function shouldUseIsolatedOcr(env = process.env) {
   return env.OCR_ISOLATED_PROCESS === "true" || Boolean(env.RENDER);
 }
 
-export function readRouteImageOcrWithoutBlockingSocket(imagePath: string, options: OcrOptions = {}) {
+export async function readRouteImageOcrWithoutBlockingSocket(imagePath: string, options: OcrOptions = {}) {
   if (!shouldUseIsolatedOcr()) return readRouteImageOcr(imagePath, options);
 
+  try {
+    return await requestIsolatedOcr(imagePath, options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!RETRYABLE_WORKER_ERROR.test(message)) throw error;
+    recycleWorker();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    return requestIsolatedOcr(imagePath, options);
+  }
+}
+
+function requestIsolatedOcr(imagePath: string, options: OcrOptions) {
   const activeWorker = getWorker();
   const id = `${process.pid}-${Date.now()}-${++requestSequence}`;
   return new Promise<RouteOcrResult>((resolve, reject) => {
