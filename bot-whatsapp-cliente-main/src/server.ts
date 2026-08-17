@@ -8,7 +8,7 @@ import qrcodeTerminal from "qrcode-terminal";
 import { BotProcessProxy } from "./bot/botProcessProxy";
 import { DEFAULT_LEADER_CONTACTS } from "./bot/leaderDefaults";
 import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderStore";
-import { defaultUserColor, normalizeDispatchBeatsEmail, normalizeDispatchPriorityLevel, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
+import { defaultUserColor, normalizeDispatchAdvantageMs, normalizeDispatchBeatsEmail, normalizeDispatchPriorityLevel, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
 import { ImageUsageStore } from "./imageUsageStore";
 import { PushNotificationStore } from "./pushNotificationStore";
@@ -62,6 +62,7 @@ type PanelUserRecord = {
   color: string;
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
+  dispatchAdvantageMs: number;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -91,6 +92,7 @@ function createUserRecord(email: string, password: string, role: PanelUserRole, 
     blocked: false,
     color: defaultUserColor(email),
     dispatchPriorityLevel: 0,
+    dispatchAdvantageMs: 400,
     createdAt: now,
     updatedAt: now,
     totalUsageMs: 0,
@@ -193,7 +195,7 @@ const lastCriticalBotState = new Map<string, { status: string; monitoringEnabled
 let lastAdminPendingRouteIds: Set<string> | undefined;
 const pendingSnapshotBots = new Map<string, BotProcessProxy>();
 let snapshotFanoutScheduled = false;
-const appliedConditionalPriority = new Map<string, { level: number; workerPid?: number }>();
+const appliedConditionalPriority = new Map<string, { level: number; delayMs: number; workerPid?: number }>();
 let conditionalPriorityTimer: NodeJS.Timeout | undefined;
 
 function scheduleConditionalPrioritySync() {
@@ -213,6 +215,7 @@ async function syncConditionalDispatchPriorities() {
       email,
       configuredLevel: panelUsers.get(email)?.dispatchPriorityLevel || 0,
       beatsEmail: panelUsers.get(email)?.dispatchBeatsEmail,
+      advantageMs: panelUsers.get(email)?.dispatchAdvantageMs,
       priorityUpdatedAt: panelUsers.get(email)?.updatedAt,
       connected: snapshot.status === "connected",
       monitoringEnabled: snapshot.monitoringEnabled,
@@ -222,13 +225,14 @@ async function syncConditionalDispatchPriorities() {
   }));
 
   await Promise.all(Array.from(bots.entries()).map(async ([email, bot]) => {
-    const nextLevel = priorities.get(email) || 0;
+    const nextDelayMs = priorities.get(email) || 0;
+    const nextLevel = nextDelayMs > 0 ? 1 : 0;
     const workerPid = bot.getWorkerPid();
     const applied = appliedConditionalPriority.get(email);
-    if (applied?.level === nextLevel && applied.workerPid === workerPid) return;
-    appliedConditionalPriority.set(email, { level: nextLevel, workerPid });
+    if (applied?.delayMs === nextDelayMs && applied.workerPid === workerPid) return;
+    appliedConditionalPriority.set(email, { level: nextLevel, delayMs: nextDelayMs, workerPid });
     try {
-      await bot.setDispatchPriorityLevel(nextLevel);
+      await bot.setDispatchPriorityDelayMs(nextDelayMs);
     } catch (error) {
       appliedConditionalPriority.delete(email);
       console.error(`Falha ao sincronizar prioridade condicional de ${email}:`, error);
@@ -605,6 +609,7 @@ function toUserSummary(email: string, user: PanelUserRecord) {
     color: user.color || defaultUserColor(email),
     dispatchPriorityLevel: normalizeDispatchPriorityLevel(user.dispatchPriorityLevel),
     dispatchBeatsEmail: normalizeDispatchBeatsEmail(user.dispatchBeatsEmail, email),
+    dispatchAdvantageMs: normalizeDispatchAdvantageMs(user.dispatchAdvantageMs),
     presenceStatus,
     panelOnline: presenceStatus === "online",
     botOpen: Boolean(botSnapshot && ["connected", "connecting", "waiting_qr", "reconnecting"].includes(botSnapshot.status)),
@@ -1596,7 +1601,8 @@ const server = http.createServer(async (request, response) => {
         blocked: Boolean(body.blocked),
         color: normalizeUserColor(String(body.color || ""), String(body.email || "")),
         dispatchPriorityLevel: 0,
-        dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail, String(body.email || ""))
+        dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail, String(body.email || "")),
+        dispatchAdvantageMs: normalizeDispatchAdvantageMs(body.dispatchAdvantageMs)
       });
       syncPanelUser(user);
       enforceExclusiveDispatchWinner(user);
@@ -1630,7 +1636,8 @@ const server = http.createServer(async (request, response) => {
         blocked: Boolean(body.blocked),
         color: normalizeUserColor(String(body.color || currentUser.color || ""), nextEmail),
         dispatchPriorityLevel: 0,
-        dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail ?? currentUser.dispatchBeatsEmail, nextEmail)
+        dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail ?? currentUser.dispatchBeatsEmail, nextEmail),
+        dispatchAdvantageMs: normalizeDispatchAdvantageMs(body.dispatchAdvantageMs ?? currentUser.dispatchAdvantageMs)
       });
       syncPanelUser(user);
       enforceExclusiveDispatchWinner(user);

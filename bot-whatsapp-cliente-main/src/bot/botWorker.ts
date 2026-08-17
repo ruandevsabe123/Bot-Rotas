@@ -28,6 +28,7 @@ const ALLOWED_METHODS = new Set([
   "setMessageSettings",
   "setWarmupMessageSettings",
   "setDispatchPriorityLevel",
+  "setDispatchPriorityDelayMs",
   "saveRoutePreset",
   "deleteRoutePreset",
   "setGeneralSettings",

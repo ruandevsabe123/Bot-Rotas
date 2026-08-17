@@ -239,6 +239,7 @@ export function saveAdminUser(payload: {
   color: string;
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
+  dispatchAdvantageMs?: number;
 }) {
   const isEdit = Boolean(payload.originalEmail);
   return fetchJson<AdminUsersSnapshot>(

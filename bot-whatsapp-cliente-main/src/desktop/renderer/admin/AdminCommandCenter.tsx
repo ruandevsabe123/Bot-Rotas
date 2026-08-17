@@ -87,6 +87,7 @@ type UserEditorState = {
   color: string;
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
+  dispatchAdvantageMs: number;
 };
 
 type RejectRequest = {
@@ -116,7 +117,8 @@ const emptyEditor: UserEditorState = {
   blocked: false,
   color: "#38bdf8",
   dispatchPriorityLevel: 0,
-  dispatchBeatsEmail: ""
+  dispatchBeatsEmail: "",
+  dispatchAdvantageMs: 400
 };
 
 const REAL_VALIDATION_GROUP = "MOTORISTAS - CAMPOS DOS GOYTACAZES";
@@ -372,6 +374,12 @@ function UserEditor({
           ))}
         </select>
       </label>
+      {value.dispatchBeatsEmail ? (
+        <label className="adminx-field">
+          <span>Vantagem em ms (mínimo 400)</span>
+          <input min={400} max={10000} step={50} type="number" value={value.dispatchAdvantageMs} onChange={(event) => onChange({ ...value, dispatchAdvantageMs: Math.max(400, Number(event.target.value) || 400) })} />
+        </label>
+      ) : null}
       <input type="color" value={value.color} onChange={(event) => onChange({ ...value, color: event.target.value })} />
       <button className="button" type="button" onClick={onCancel}>Cancelar</button>
       <button className="button primary" disabled={busy || !value.email.trim() || (!value.originalEmail && !value.password.trim())} type="submit">
@@ -1573,7 +1581,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
               <button className="button" type="button" onClick={() => exportRoutes("csv")}><Download size={18} />Exportar rotas</button>
             </div>
             {editor ? <UserEditor value={editor} busy={busy} competitors={users.users} onChange={setEditor} onCancel={() => setEditor(undefined)} onSave={() => saveUser()} /> : null}
-            <ClientsTable users={users.users} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "" })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "" })} />
+            <ClientsTable users={users.users} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400 })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400 })} />
           </section>
         ) : null}
 
@@ -2102,7 +2110,7 @@ function ClientsTable({
               <td data-label="Painel"><StatusPill tone={user.blocked ? "red" : user.presenceStatus === "online" ? "green" : user.presenceStatus === "recent" ? "yellow" : "muted"}>{user.blocked ? "bloqueado" : user.presenceStatus}</StatusPill></td>
               <td data-label="Bot">{user.botStatus || "fechado"}</td>
               <td data-label="Monitoramento">{user.monitoringEnabled ? <StatusPill tone="green">ativo</StatusPill> : <StatusPill tone="muted">parado</StatusPill>}</td>
-              <td data-label="Confronto">{user.dispatchBeatsEmail ? `Ganha de ${user.dispatchBeatsEmail}` : "Não ganha de ninguém"}</td>
+              <td data-label="Confronto">{user.dispatchBeatsEmail ? `Ganha de ${user.dispatchBeatsEmail} · ${user.dispatchAdvantageMs || 400}ms` : "Não ganha de ninguém"}</td>
               <td data-label="Último visto">{formatShort(user.lastSeenAt)}</td>
               <td data-label="Uso">{formatDuration(user.totalUsageMs)}</td>
               <td data-label="Ações">

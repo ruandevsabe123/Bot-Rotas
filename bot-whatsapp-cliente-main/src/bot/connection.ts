@@ -114,7 +114,7 @@ const TARGET_PARALLEL_STAGGER_MS = 12;
 const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
 // O nível interno agora é binário e invisível: o cliente escolhido como perdedor
 // cede esta janela somente quando o vencedor também concorre no mesmo grupo.
-const DISPATCH_PRIORITY_STEP_MS = 250;
+const MAX_DISPATCH_PRIORITY_DELAY_MS = 10_000;
 const MAX_DISPATCH_PRIORITY_LEVEL = 5;
 const MAX_OUTGOING_MESSAGES = 2;
 const WARMUP_MESSAGE_COUNT = 15;
@@ -233,6 +233,7 @@ export class BotService extends EventEmitter {
   private statusEvents: BotStatusEvent[] = [];
   private clientEmail = "";
   private dispatchPriorityLevel = 0;
+  private dispatchPriorityDelayMs = 0;
   private adminPhoneNumbers = new Set<string>();
   private extraAdminPhoneNumbers: string[] = [];
   private leaderContacts = new Map<string, string>();
@@ -396,10 +397,11 @@ export class BotService extends EventEmitter {
   }
 
   private getDispatchPriorityProfile(): DispatchPriorityProfile {
-    const level = this.normalizeDispatchPriorityLevel(this.dispatchPriorityLevel);
+    const legacyDelayMs = this.normalizeDispatchPriorityLevel(this.dispatchPriorityLevel) > 0 ? 400 : 0;
+    const delayMs = Math.max(0, Math.min(MAX_DISPATCH_PRIORITY_DELAY_MS, Math.round(this.dispatchPriorityDelayMs || legacyDelayMs)));
     return {
-      level,
-      delayMs: level * DISPATCH_PRIORITY_STEP_MS
+      level: delayMs > 0 ? 1 : 0,
+      delayMs
     };
   }
 
@@ -1628,6 +1630,15 @@ export class BotService extends EventEmitter {
     const nextLevel = this.normalizeDispatchPriorityLevel(level);
     if (nextLevel === this.dispatchPriorityLevel) return;
     this.dispatchPriorityLevel = nextLevel;
+    this.dispatchPriorityDelayMs = nextLevel > 0 ? Math.max(400, nextLevel * 400) : 0;
+    this.emitSnapshot();
+  }
+
+  setDispatchPriorityDelayMs(delayMs: number) {
+    const normalized = Number.isFinite(Number(delayMs)) ? Math.max(0, Math.min(MAX_DISPATCH_PRIORITY_DELAY_MS, Math.round(Number(delayMs)))) : 0;
+    if (normalized === this.dispatchPriorityDelayMs) return;
+    this.dispatchPriorityDelayMs = normalized;
+    this.dispatchPriorityLevel = normalized > 0 ? 1 : 0;
     this.emitSnapshot();
   }
 

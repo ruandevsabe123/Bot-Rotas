@@ -463,9 +463,21 @@ test("prioridade de cliente atrasa discretamente o primeiro relay do grupo alvo"
 
     await dispatch;
     assert.equal(calls.length, 1);
-    assert.ok(calls[0].at - startedAt >= 240);
+    assert.ok(calls[0].at - startedAt >= 390);
     assert.equal(timeline.dispatchPriority.level, 1);
-    assert.equal(timeline.priorityDelayMs, 250);
+    assert.equal(timeline.priorityDelayMs, 400);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("prioridade aceita atraso exato configurado pelo administrador", () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.setDispatchPriorityDelayMs(850);
+    assert.deepEqual(bot.getDispatchPriorityProfile(), { level: 1, delayMs: 850 });
+    bot.setDispatchPriorityDelayMs(0);
+    assert.deepEqual(bot.getDispatchPriorityProfile(), { level: 0, delayMs: 0 });
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

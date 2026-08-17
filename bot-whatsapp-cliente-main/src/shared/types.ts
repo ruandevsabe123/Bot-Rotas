@@ -339,6 +339,7 @@ export type PanelUser = {
   color?: string;
   dispatchPriorityLevel?: number;
   dispatchBeatsEmail?: string;
+  dispatchAdvantageMs?: number;
   impersonatedBy?: string;
 };
 
@@ -363,6 +364,7 @@ export type AdminUserSummary = {
   color: string;
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
+  dispatchAdvantageMs: number;
   presenceStatus: UserPresenceStatus;
   panelOnline: boolean;
   botOpen: boolean;

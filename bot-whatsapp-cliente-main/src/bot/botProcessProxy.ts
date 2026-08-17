@@ -150,6 +150,7 @@ export class BotProcessProxy extends EventEmitter {
   setMessageSettings(...args: any[]) { return this.call("setMessageSettings", ...args); }
   setWarmupMessageSettings(...args: any[]) { return this.call("setWarmupMessageSettings", ...args); }
   setDispatchPriorityLevel(level: number) { return this.call("setDispatchPriorityLevel", level); }
+  setDispatchPriorityDelayMs(delayMs: number) { return this.call("setDispatchPriorityDelayMs", delayMs); }
   saveRoutePreset(name: string, routes: { cidade: string; bairro: string }[]) { return this.call("saveRoutePreset", name, routes); }
   deleteRoutePreset(id: string) { return this.call("deleteRoutePreset", id); }
   setGeneralSettings(settings: any) { return this.call("setGeneralSettings", settings); }

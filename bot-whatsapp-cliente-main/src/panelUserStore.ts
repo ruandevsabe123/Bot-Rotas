@@ -10,6 +10,7 @@ export type StoredPanelUser = {
   color: string;
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
+  dispatchAdvantageMs: number;
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -38,6 +39,7 @@ export class PanelUserStore {
     color?: string;
     dispatchPriorityLevel?: number;
     dispatchBeatsEmail?: string;
+    dispatchAdvantageMs?: number;
   }) {
     const email = input.email.trim().toLowerCase();
     if (!email) throw new Error("Email obrigatório.");
@@ -52,6 +54,7 @@ export class PanelUserStore {
       if (input.color !== undefined) existing.color = normalizeUserColor(input.color, existing.email);
       if (input.dispatchPriorityLevel !== undefined) existing.dispatchPriorityLevel = normalizeDispatchPriorityLevel(input.dispatchPriorityLevel);
       if (input.dispatchBeatsEmail !== undefined) existing.dispatchBeatsEmail = normalizeDispatchBeatsEmail(input.dispatchBeatsEmail, email);
+      if (input.dispatchAdvantageMs !== undefined) existing.dispatchAdvantageMs = normalizeDispatchAdvantageMs(input.dispatchAdvantageMs);
       existing.updatedAt = now;
       this.save(users);
       return existing;
@@ -67,6 +70,7 @@ export class PanelUserStore {
       color: normalizeUserColor(input.color, email),
       dispatchPriorityLevel: normalizeDispatchPriorityLevel(input.dispatchPriorityLevel),
       dispatchBeatsEmail: normalizeDispatchBeatsEmail(input.dispatchBeatsEmail, email),
+      dispatchAdvantageMs: normalizeDispatchAdvantageMs(input.dispatchAdvantageMs),
       createdAt: now,
       updatedAt: now,
       totalUsageMs: 0,
@@ -172,6 +176,7 @@ export class PanelUserStore {
       color: normalizeUserColor(input.color, input.email),
       dispatchPriorityLevel: normalizeDispatchPriorityLevel(input.dispatchPriorityLevel),
       dispatchBeatsEmail: normalizeDispatchBeatsEmail(input.dispatchBeatsEmail, input.email),
+      dispatchAdvantageMs: normalizeDispatchAdvantageMs(input.dispatchAdvantageMs),
       createdAt: typeof input.createdAt === "string" ? input.createdAt : now,
       updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : now,
       lastLoginAt: typeof input.lastLoginAt === "string" ? input.lastLoginAt : undefined,
@@ -213,4 +218,10 @@ export function normalizeDispatchPriorityLevel(value: unknown) {
 export function normalizeDispatchBeatsEmail(value: unknown, ownEmail = "") {
   const email = String(value || "").trim().toLowerCase();
   return email && email !== String(ownEmail || "").trim().toLowerCase() ? email : undefined;
+}
+
+export function normalizeDispatchAdvantageMs(value: unknown) {
+  const numberValue = Number(value);
+  if (!Number.isFinite(numberValue)) return 400;
+  return Math.min(10_000, Math.max(400, Math.round(numberValue)));
 }

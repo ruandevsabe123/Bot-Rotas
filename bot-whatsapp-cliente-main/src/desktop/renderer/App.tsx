@@ -1059,6 +1059,7 @@ type UserEditorState = {
   color: string;
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
+  dispatchAdvantageMs: number;
 };
 
 const emptyUserEditor: UserEditorState = {
@@ -1068,7 +1069,8 @@ const emptyUserEditor: UserEditorState = {
   blocked: false,
   color: "#3b82f6",
   dispatchPriorityLevel: 0,
-  dispatchBeatsEmail: ""
+  dispatchBeatsEmail: "",
+  dispatchAdvantageMs: 400
 };
 
 function UserEditor({
@@ -1125,6 +1127,21 @@ function UserEditor({
           ))}
         </select>
       </label>
+      {value.dispatchBeatsEmail ? (
+        <label className="login-field">
+          <Clock3 size={18} />
+          <input
+            aria-label="Vantagem em milissegundos"
+            min={400}
+            max={10000}
+            step={50}
+            type="number"
+            value={value.dispatchAdvantageMs}
+            onChange={(event) => onChange({ ...value, dispatchAdvantageMs: Math.max(400, Number(event.target.value) || 400) })}
+          />
+          <span>ms de vantagem (mínimo 400)</span>
+        </label>
+      ) : null}
       <label className="color-picker-row" title="Cor do usuário no histórico">
         <span className="color-orb" style={{ background: value.color }} />
         <input
@@ -1173,7 +1190,7 @@ function AdminUserRow({
         <div className="route-meta">
           <span>Último login: {formatDate(user.lastLoginAt)}</span>
           <span>{getBotOpenCopy(user)}</span>
-          <span>{user.dispatchBeatsEmail ? `Ganha de: ${user.dispatchBeatsEmail}` : "Não ganha de ninguém"}</span>
+          <span>{user.dispatchBeatsEmail ? `Ganha de: ${user.dispatchBeatsEmail} · ${user.dispatchAdvantageMs || 400}ms` : "Não ganha de ninguém"}</span>
           <span>Uso: {formatDuration(user.totalUsageMs)}</span>
           <span>{user.loginCount} login(s)</span>
         </div>
@@ -2337,8 +2354,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                   key={user.email}
                   user={user}
                   onDetails={() => openDetails(user.email)}
-                  onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "" })}
-                  onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "" })}
+                  onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400 })}
+                  onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400 })}
                 />
               ))}
             </div>
@@ -2443,8 +2460,8 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                 key={user.email}
                 user={user}
                 onDetails={() => openDetails(user.email)}
-                onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "" })}
-                onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "" })}
+                onEdit={() => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400 })}
+                onToggleBlock={() => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400 })}
               />
             ))}
           </div>

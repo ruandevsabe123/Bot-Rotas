@@ -30,7 +30,7 @@ test("Alan ganha vantagem somente quando ambos competem no mesmo grupo", () => {
   ]);
 
   assert.equal(priorities.get("alan@cliente.com"), 0);
-  assert.equal(priorities.get("guilherme@cliente.com"), 1);
+  assert.equal(priorities.get("guilherme@cliente.com"), 400);
 });
 
 test("não altera clientes desconectados, parados ou em outro grupo", () => {
@@ -52,5 +52,25 @@ test("confronto invertido nunca anula o vencedor configurado por último", () =>
   ]);
 
   assert.equal(priorities.get("alan@cliente.com"), 0);
-  assert.equal(priorities.get("guilherme@cliente.com"), 1);
+  assert.equal(priorities.get("guilherme@cliente.com"), 400);
+});
+
+test("aplica ao perdedor a vantagem configurada pelo vencedor", () => {
+  const priorities = computeConditionalDispatchPriorities([
+    client("alan@cliente.com", "guilherme@cliente.com", { advantageMs: 850 }),
+    client("guilherme@cliente.com", undefined)
+  ]);
+
+  assert.equal(priorities.get("alan@cliente.com"), 0);
+  assert.equal(priorities.get("guilherme@cliente.com"), 850);
+});
+
+test("não ganha de ninguém não atrasa nenhum cliente", () => {
+  const priorities = computeConditionalDispatchPriorities([
+    client("alan@cliente.com", undefined, { advantageMs: 900 }),
+    client("guilherme@cliente.com", undefined)
+  ]);
+
+  assert.equal(priorities.get("alan@cliente.com"), 0);
+  assert.equal(priorities.get("guilherme@cliente.com"), 0);
 });
