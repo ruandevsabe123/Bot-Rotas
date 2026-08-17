@@ -13,6 +13,8 @@ export class RomaneioStore {
   private latestPath: string;
   private processedPath: string;
   private settingsPath: string;
+  private cachedProcessed?: ProcessedRomaneio;
+  private cachedProcessedSignature = "";
 
   constructor(private dir: string) {
     this.latestPath = path.join(dir, "latest.xlsx");
@@ -55,7 +57,7 @@ export class RomaneioStore {
 
   saveUpload(fileName: string, buffer: Buffer) {
     fs.mkdirSync(this.dir, { recursive: true });
-    fs.writeFileSync(this.latestPath, buffer);
+    writeFileAtomic(this.latestPath, buffer);
 
     try {
       const parsed = parseRomaneioXlsx(this.latestPath);
@@ -73,7 +75,9 @@ export class RomaneioStore {
         warnings: parsed.warnings,
         routes: parsed.routes
       };
-      fs.writeFileSync(this.processedPath, JSON.stringify(processed, null, 2));
+      writeFileAtomic(this.processedPath, JSON.stringify(processed, null, 2));
+      this.cachedProcessed = processed;
+      this.cachedProcessedSignature = fileSignature(this.processedPath);
       return this.all();
     } catch (error) {
       const failed: ProcessedRomaneio = {
@@ -87,7 +91,9 @@ export class RomaneioStore {
         error: error instanceof Error ? error.message : String(error),
         routes: []
       };
-      fs.writeFileSync(this.processedPath, JSON.stringify(failed, null, 2));
+      writeFileAtomic(this.processedPath, JSON.stringify(failed, null, 2));
+      this.cachedProcessed = failed;
+      this.cachedProcessedSignature = fileSignature(this.processedPath);
       throw error;
     }
   }
@@ -95,6 +101,8 @@ export class RomaneioStore {
   clear() {
     fs.rmSync(this.latestPath, { force: true });
     fs.rmSync(this.processedPath, { force: true });
+    this.cachedProcessed = undefined;
+    this.cachedProcessedSignature = "";
     return this.all();
   }
 
@@ -126,14 +134,20 @@ export class RomaneioStore {
   }
 
   private loadProcessed(): ProcessedRomaneio | undefined {
+    const signature = fileSignature(this.processedPath);
+    if (this.cachedProcessed && signature && signature === this.cachedProcessedSignature) return this.cachedProcessed;
     try {
       const parsed = JSON.parse(fs.readFileSync(this.processedPath, "utf-8"));
-      return {
+      const processed = {
         ...emptyStatus(),
         ...parsed,
         routes: Array.isArray(parsed.routes) ? parsed.routes : []
       };
+      this.cachedProcessed = processed;
+      this.cachedProcessedSignature = signature;
+      return processed;
     } catch {
+      if (this.cachedProcessed) return this.cachedProcessed;
       return this.recoverFromLatestUpload();
     }
   }
@@ -158,11 +172,33 @@ export class RomaneioStore {
         routes: parsed.routes
       };
       fs.mkdirSync(this.dir, { recursive: true });
-      fs.writeFileSync(this.processedPath, JSON.stringify(recovered, null, 2));
+      writeFileAtomic(this.processedPath, JSON.stringify(recovered, null, 2));
+      this.cachedProcessed = recovered;
+      this.cachedProcessedSignature = fileSignature(this.processedPath);
       return recovered;
     } catch {
       return undefined;
     }
+  }
+}
+
+function fileSignature(filePath: string) {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${stat.mtimeMs}:${stat.size}`;
+  } catch {
+    return "";
+  }
+}
+
+function writeFileAtomic(filePath: string, contents: string | Buffer) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+  try {
+    fs.writeFileSync(temporaryPath, contents);
+    fs.renameSync(temporaryPath, filePath);
+  } finally {
+    fs.rmSync(temporaryPath, { force: true });
   }
 }
 

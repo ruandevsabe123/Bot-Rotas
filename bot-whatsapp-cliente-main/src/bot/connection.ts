@@ -2564,6 +2564,14 @@ export class BotService extends EventEmitter {
         comparisonMs: Math.max(0, comparisonFinishedAtMs - ocrFinishedAtMs)
       };
       if (!options.length) {
+        const romaneioStatus = this.romaneioStore?.status();
+        const noSafeDetections = optionDetections.length === 0;
+        const romaneioUnavailable = !romaneioStatus?.loaded || !romaneioStatus.totalRoutes;
+        const failureMessage = noSafeDetections
+          ? "A imagem foi lida, mas nenhuma gaiola atingiu o consenso de segurança. O romaneio continua carregado e o bot continua aguardando."
+          : romaneioUnavailable
+          ? "O romaneio não está carregado. Confirme o arquivo correto antes de continuar."
+          : "As gaiolas lidas não correspondem às rotas do romaneio confirmado. O arquivo continua carregado.";
         this.ocrRouteSelection = {
           status: "error",
           analysisId,
@@ -2573,9 +2581,9 @@ export class BotService extends EventEmitter {
           line: detected.line,
           processedAt: new Date().toISOString(),
           options: [],
-          message: "Imagem analisada, mas não encontrei opções no romaneio. Confira se o romaneio correto foi confirmado."
+          message: failureMessage
         };
-        this.logger.warning(`[ROMANEIO] A IA detectou ${detected.route} ${detected.code}, mas não há opções de romaneio para aprovação.`);
+        this.logger.warning(`[ROMANEIO] Cruzamento sem opções: leituras=${detectedRoutes.length}, seguras=${optionDetections.length}, romaneioCarregado=${Boolean(romaneioStatus?.loaded)}, rotasRomaneio=${romaneioStatus?.totalRoutes || 0}.`);
         this.emitSnapshot();
         return;
       }

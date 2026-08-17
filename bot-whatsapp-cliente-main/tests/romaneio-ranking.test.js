@@ -76,6 +76,34 @@ test("restaura o romaneio salvo depois de reiniciar ou fazer deploy", () => {
   }
 });
 
+test("mantém o último romaneio válido durante uma leitura concorrente incompleta", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "romaneio-cache-"));
+  try {
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.json_to_sheet([{
+      Rota: "Rota 30",
+      "Corridor Cage": "C-30",
+      Neighborhood: "Centro",
+      "Total Distance": 20,
+      "Num of Order": 100,
+      Stop: 50
+    }]), "Romaneio");
+    const store = new RomaneioStore(dir);
+    store.saveUpload("romaneio.xlsx", xlsx.write(workbook, { type: "buffer", bookType: "xlsx" }));
+
+    assert.equal(store.rankForDetected({ gaiola: "C-30" }).length, 1);
+    fs.writeFileSync(path.join(dir, "processed.json"), "{gravacao-incompleta");
+
+    for (let index = 0; index < 500; index += 1) {
+      const ranked = store.rankForDetected({ gaiola: "C-30" });
+      assert.equal(ranked.length, 1);
+      assert.equal(ranked[0].gaiola, "C-30");
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("limpa o romaneio carregado e preserva os filtros", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "romaneio-clear-"));
   try {
