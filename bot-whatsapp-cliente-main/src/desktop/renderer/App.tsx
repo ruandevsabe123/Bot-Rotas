@@ -2871,6 +2871,11 @@ function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRou
   const selectedOptions = selection.selectedOptionIds?.length
     ? selection.options.filter((option) => selection.selectedOptionIds?.includes(option.id))
     : selection.options;
+  const formatAnalysisTime = (milliseconds?: number) => {
+    if (milliseconds === undefined) return "--";
+    if (milliseconds < 1000) return `${milliseconds} ms`;
+    return `${(milliseconds / 1000).toFixed(2).replace(".", ",")} s`;
+  };
 
   return (
     <div className="modal-backdrop ocr-analysis-backdrop" role="presentation">
@@ -2888,6 +2893,15 @@ function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRou
           <article className={analyzing ? "analysis-step" : "analysis-step done"}><Route size={19} /><span><strong>Comparando com o romaneio</strong><small>{analyzing ? "Aguardando a leitura terminar." : "Códigos cruzados com o arquivo carregado."}</small></span></article>
           <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>Disparo automático</strong><small>{selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} mensagem(ns) preparada(s) ou enviada(s).` : analyzing ? "Aguardando gaiolas válidas." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
         </div>
+        {!analyzing && selection.timing ? (
+          <div className="automatic-analysis-timing" aria-label="Tempos da análise e do envio">
+            <span><small>Baixar imagem</small><strong>{formatAnalysisTime(selection.timing.downloadMs)}</strong></span>
+            <span><small>Analisar gaiolas</small><strong>{formatAnalysisTime(selection.timing.ocrMs)}</strong></span>
+            <span><small>Cruzar romaneio</small><strong>{formatAnalysisTime(selection.timing.comparisonMs)}</strong></span>
+            <span><small>Enviar mensagens</small><strong>{formatAnalysisTime(selection.timing.dispatchMs)}</strong></span>
+            <span className="total"><small>Tempo total até o envio</small><strong>{formatAnalysisTime(selection.timing.totalMs)}</strong></span>
+          </div>
+        ) : null}
         {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.rota} · {option.cidade || option.bairro}</span><small>{option.pacotes} pct · {option.paradas} paradas · {option.distanciaKm.toFixed(3)} km</small></article>)}</div> : null}
         {!analyzing && selection.message ? <p className={selection.status === "error" ? "inline-error" : "approval-message"}>{uiText(selection.message)}</p> : null}
         {finished ? <div className="review-actions"><button className="button primary" type="button" onClick={onClose}>Fechar análise</button></div> : null}

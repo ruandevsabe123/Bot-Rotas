@@ -7962,6 +7962,45 @@ body,
   overflow: auto;
 }
 
+.automatic-analysis-timing {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.automatic-analysis-timing span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid rgba(51, 153, 255, 0.28);
+  border-radius: 10px;
+  background: rgba(0, 102, 204, 0.09);
+}
+
+.automatic-analysis-timing small {
+  color: var(--muted);
+}
+
+.automatic-analysis-timing strong {
+  color: #64b5ff;
+}
+
+.automatic-analysis-timing .total {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  border-color: rgba(51, 153, 255, 0.65);
+  background: rgba(0, 119, 238, 0.18);
+}
+
+@media (max-width: 680px) {
+  .automatic-analysis-timing {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 .automatic-analysis-routes article {
   display: grid;
   gap: 3px;

@@ -223,6 +223,15 @@ export type OcrRouteSelectionState = {
   detectedRouteCount?: number;
   preferredCity?: string;
   preferredCityFound?: boolean;
+  analysisId?: string;
+  timing?: {
+    startedAt: string;
+    downloadMs: number;
+    ocrMs: number;
+    comparisonMs: number;
+    dispatchMs?: number;
+    totalMs?: number;
+  };
 };
 
 export type BotSnapshot = {

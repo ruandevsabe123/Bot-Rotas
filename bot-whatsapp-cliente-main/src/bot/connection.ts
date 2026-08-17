@@ -2420,6 +2420,7 @@ export class BotService extends EventEmitter {
     if (config.targetDispatchMode !== "ocr" || !analysisSocket) return;
 
     const messageId = String(msg?.key?.id || Date.now());
+    const analysisId = `${this.clientEmail}:${messageId}`;
     const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
     const analysisStartedAtMs = Date.now();
     const analysisStartedAt = new Date(analysisStartedAtMs).toISOString();
@@ -2439,6 +2440,7 @@ export class BotService extends EventEmitter {
       this.ocrRouteSelection = {
         status: "analyzing",
         options: [],
+        analysisId,
         processedAt: new Date().toISOString(),
         estimatedDurationSeconds: this.estimateOcrAnalysisSeconds(),
         message: "Analisando imagem..."
@@ -2457,6 +2459,7 @@ export class BotService extends EventEmitter {
       );
 
       await fs.promises.writeFile(imagePath, buffer);
+      const downloadFinishedAtMs = Date.now();
       const fastFirst = this.groupState === "open";
       const preferCageCrop = fastFirst && config.ocrSelectionMode === "cages";
       this.logger.info(fastFirst
@@ -2469,6 +2472,7 @@ export class BotService extends EventEmitter {
         fastFirst,
         preferCageCrop
       });
+      const ocrFinishedAtMs = Date.now();
       this.logger.info(`[ROMANEIO] Motor da leitura: ${ocr.source}.`);
       if (sequence !== this.latestRouteImageSequence) {
         this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
@@ -2509,7 +2513,7 @@ export class BotService extends EventEmitter {
 
       this.lastOcrDispatchKey = dispatchKey;
       this.lastOcrInsight = {
-        analysisId: `${this.clientEmail}:${messageId}`,
+        analysisId,
         source: ocr.source,
         text: ocr.text,
         line: detected.line,
@@ -2541,9 +2545,18 @@ export class BotService extends EventEmitter {
         unrankedOptions,
         this.romaneioStore?.getSettings().prioridade || "equilibrio_geral"
       );
+      const comparisonFinishedAtMs = Date.now();
+      const timing = {
+        startedAt: analysisStartedAt,
+        downloadMs: Math.max(0, downloadFinishedAtMs - analysisStartedAtMs),
+        ocrMs: Math.max(0, ocrFinishedAtMs - downloadFinishedAtMs),
+        comparisonMs: Math.max(0, comparisonFinishedAtMs - ocrFinishedAtMs)
+      };
       if (!options.length) {
         this.ocrRouteSelection = {
           status: "error",
+          analysisId,
+          timing: { ...timing, totalMs: comparisonFinishedAtMs - analysisStartedAtMs },
           detected: { rota: detected.route, bairro: detected.bairro, gaiola: detected.code },
           source: ocr.source,
           line: detected.line,
@@ -2558,6 +2571,8 @@ export class BotService extends EventEmitter {
 
       const readySelection = {
         status: "ready",
+        analysisId,
+        timing,
         detected: { rota: detected.route, bairro: detected.bairro, gaiola: detected.code },
         source: ocr.source,
         line: detected.line,
@@ -3370,6 +3385,24 @@ export class BotService extends EventEmitter {
       }
     });
     this.activeSendCycle = trackedSendCycle;
+
+    const timedAnalysisId = this.ocrRouteSelection.analysisId;
+    const timedAnalysis = this.ocrRouteSelection.timing;
+    if (this.monitoringMode === "target" && this.preparedTargetDispatchMode === "ocr" && timedAnalysisId && timedAnalysis) {
+      void trackedSendCycle.finally(() => {
+        if (this.ocrRouteSelection.analysisId !== timedAnalysisId) return;
+        const finishedAt = Date.now();
+        const startedAt = Date.parse(timedAnalysis.startedAt) || sendStartedAt;
+        const completedTiming = {
+          ...timedAnalysis,
+          dispatchMs: Math.max(0, finishedAt - sendStartedAt),
+          totalMs: Math.max(0, finishedAt - startedAt)
+        };
+        this.ocrRouteSelection = { ...this.ocrRouteSelection, timing: completedTiming };
+        this.logger.success(`[ROMANEIO] Tempo total da imagem até o último envio: ${completedTiming.totalMs}ms.`);
+        this.emitSnapshot();
+      }).catch(() => undefined);
+    }
 
     this.logger.info(
       `${this.monitoringMode === "test" ? "Aquecimento real do teste" : this.preparedNuclearMode ? "Modo nuclear máximo" : "Modo instantâneo agressivo"}: ${mensagens.length} mensagens preparadas: ${mensagens.join(" | ")}`
