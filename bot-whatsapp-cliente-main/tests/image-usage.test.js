@@ -45,13 +45,15 @@ test("usa R$ 0,70 como padrão e preserva telemetria da análise", () => {
     analysisFinishedAt: "2026-07-18T10:00:04.250Z",
     analysisDurationMs: 4250
   });
-  store.decideForRoute("foto-com-tempo", "rota-3", "billable", "admin@teste.com");
+  assert.equal(store.decideForRoute("foto-com-tempo", "rota-3", "billable", "Líder: Teste"), true);
+  assert.equal(store.decideForRoute("foto-com-tempo", "rota-3", "billable", "Líder: Teste"), false);
 
   const entry = store.get("foto-com-tempo");
   assert.equal(entry.amountCents, 70);
   assert.equal(entry.groupName, "Motoristas");
   assert.equal(entry.analysisDurationMs, 4250);
   assert.equal(entry.routeDispatchId, "rota-3");
+  assert.equal(entry.reviewedBy, "Líder: Teste");
   assert.equal(store.clientSnapshot("cliente@teste.com").amountCents, 70);
 });
 

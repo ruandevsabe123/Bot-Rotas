@@ -217,6 +217,10 @@ export class BotProcessProxy extends EventEmitter {
       this.emit("image-analysis", message.analysis);
       return;
     }
+    if (message.type === "route-auto-validated") {
+      this.emit("route-auto-validated", message);
+      return;
+    }
     if (message.type === "response") {
       const pending = this.pending.get(message.id);
       if (!pending) return;

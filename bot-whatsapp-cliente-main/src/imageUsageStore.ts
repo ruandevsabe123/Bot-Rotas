@@ -81,6 +81,7 @@ export class ImageUsageStore {
     const now = new Date().toISOString();
     this.data.entries = this.data.entries.map((entry) => {
       if (entry.id !== analysisId) return entry;
+      if (entry.decision === decision && entry.routeDispatchId === routeDispatchId) return entry;
       changed = true;
       return {
         ...entry,

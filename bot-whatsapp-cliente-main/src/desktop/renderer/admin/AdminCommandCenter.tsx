@@ -71,7 +71,7 @@ type AdminCommandCenterProps = {
   onEnterClientMode: (email: string) => void | Promise<void>;
 };
 
-type AdminPage = "today" | "operations" | "dashboard" | "clients" | "validations" | "reactions" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
+type AdminPage = "today" | "operations" | "dashboard" | "clients" | "validations" | "reactions" | "validated_ai" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
 type DatePreset = "today" | "7d" | "30d" | "all";
 type DecisionFilter = "all" | "pending" | "validated" | "rejected" | "leader" | "removed";
 type ModeFilter = "all" | "target" | "test" | "manual" | "automatic" | "ocr" | "warmup" | "simulation";
@@ -638,7 +638,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [page, setPage] = useState<AdminPage>(() => {
     const requested = new URLSearchParams(window.location.search).get("admin");
-    return ["today", "dashboard", "clients", "validations", "reactions", "usage", "history", "logs", "support", "reports", "maintenance", "settings"].includes(requested || "")
+    return ["today", "dashboard", "clients", "validations", "reactions", "validated_ai", "usage", "history", "logs", "support", "reports", "maintenance", "settings"].includes(requested || "")
       ? requested as AdminPage
       : "dashboard";
   });
@@ -800,6 +800,9 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   const reactedImageRoutes = visibleRoutes.filter((route) => Boolean(route.ocr) && hasAnyReaction(route));
   const pendingReactedImageRoutes = reactedImageRoutes.filter((route) => routeDecision(route) === "pending");
   const decidedReactedImageRoutes = reactedImageRoutes.filter((route) => routeDecision(route) !== "pending");
+  const validatedImageRoutes = visibleRoutes.filter((route) =>
+    Boolean(route.ocr) && routeDecision(route) === "validated" && route.decisionSource === "leader_reaction_1h"
+  );
   const validationLeaderRoutes = realValidationRoutes.filter(hasLeaderReaction);
   const validatedRealRoutes = realValidationRoutes.filter((route) => routeDecision(route) === "validated");
   const nonValidationRoutes = visibleRoutes.filter((route) => !isRealValidationRoute(route));
@@ -1261,6 +1264,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     { id: "clients", label: "Clientes", Icon: Users, badge: onlineClients },
     { id: "validations", label: "Validações", Icon: ShieldCheck, badge: validationReviewRoutes.length },
     { id: "reactions", label: "Reações IA", Icon: MessageSquareText, badge: pendingReactedImageRoutes.length },
+    { id: "validated_ai", label: "Rotas IA válidas", Icon: CheckCircle2, badge: validatedImageRoutes.length },
     { id: "usage", label: "Análises", Icon: BrainCircuit, badge: imageUsage.totals.pending },
     { id: "history", label: "Histórico", Icon: History },
     { id: "logs", label: "Logs", Icon: Activity, badge: visibleLogs.filter((log) => log.level === "error").length },
@@ -1659,6 +1663,23 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                 {!reactedImageRoutes.length ? <p className="adminx-empty-text">Nenhuma análise de imagem reagida neste período.</p> : null}
               </article>
             </section>
+          </section>
+        ) : null}
+
+        {page === "validated_ai" ? (
+          <section className="adminx-page">
+            <RouteFilters decisionFilter={decisionFilter} modeFilter={modeFilter} onDecision={setDecisionFilter} onMode={setModeFilter} />
+            <div className="adminx-metrics">
+              <MetricCard Icon={CheckCircle2} tone="green" title="Rotas IA válidas" value={validatedImageRoutes.length} detail="confirmadas automaticamente pelo líder" />
+              <MetricCard Icon={CircleDollarSign} tone="green" title="Consumo validado" value={formatMoney(imageUsage.totals.amountCents)} detail="incluído no consumo da IA" />
+            </div>
+            <article className="adminx-panel adminx-panel-wide">
+              <div className="adminx-panel-head">
+                <div><p>Histórico automático</p><h2>Rotas de imagem confirmadas com 👍 do líder</h2></div>
+                <StatusPill tone="green">{validatedImageRoutes.length} válida(s)</StatusPill>
+              </div>
+              <RouteTable routes={validatedImageRoutes} selectedRoutes={[]} readOnly onSelect={() => undefined} onOpen={setRouteDetail} onValidate={() => undefined} onReject={() => undefined} />
+            </article>
           </section>
         ) : null}
 

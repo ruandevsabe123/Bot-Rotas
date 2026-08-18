@@ -3106,6 +3106,11 @@ export class BotService extends EventEmitter {
           this.logger.warning("Bot bloqueado para o cliente até explicar a reação removida pelo líder.");
         }
         if (validatedByLeader && reactedRoute) {
+          this.emit("route-auto-validated", {
+            routeId: reactedRoute.id,
+            analysisId: reactedRoute.ocr?.analysisId,
+            leaderName: routeReaction.leaderName || senderPhone || "Líder identificado"
+          });
           void this.sendSelfNotification([
             "✅ ROTA CONFIRMADA",
             `Líder: ${routeReaction.leaderName || senderPhone || "identificado"}`,

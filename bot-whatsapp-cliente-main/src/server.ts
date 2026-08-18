@@ -383,6 +383,15 @@ function getBotForEmail(email: string) {
       }
     });
   });
+  nextBot.on("route-auto-validated", (validation: { routeId: string; analysisId?: string; leaderName?: string }) => {
+    setImmediate(() => {
+      const reviewedBy = `Líder: ${validation.leaderName || "identificado"}`;
+      if (imageUsageStore.decideForRoute(validation.analysisId, validation.routeId, "billable", reviewedBy)) {
+        console.log(`[IA] Consumo aprovado automaticamente por reação do líder: ${normalizedEmail} / ${validation.routeId}.`);
+      }
+      scheduleSnapshotFanout(normalizedEmail, nextBot);
+    });
+  });
 
   bots.set(normalizedEmail, nextBot);
   scheduleConditionalPrioritySync();

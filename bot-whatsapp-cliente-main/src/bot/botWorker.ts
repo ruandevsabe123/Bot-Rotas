@@ -79,6 +79,9 @@ async function initialize(message: Extract<BotWorkerIncomingMessage, { type: "in
   bot.on("image-analysis", (analysis) => {
     setImmediate(() => send({ type: "image-analysis", analysis }));
   });
+  bot.on("route-auto-validated", (validation) => {
+    setImmediate(() => send({ type: "route-auto-validated", ...validation }));
+  });
   send({ type: "ready", snapshot: bot.getSnapshot() });
 }
 

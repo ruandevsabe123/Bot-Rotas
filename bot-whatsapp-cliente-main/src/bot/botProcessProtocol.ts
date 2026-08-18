@@ -50,9 +50,17 @@ export type BotWorkerImageAnalysisMessage = {
   analysis: Partial<ImageUsageEntry> & { id: string; messageId: string; result: ImageUsageEntry["result"] };
 };
 
+export type BotWorkerRouteAutoValidatedMessage = {
+  type: "route-auto-validated";
+  routeId: string;
+  analysisId?: string;
+  leaderName?: string;
+};
+
 export type BotWorkerOutgoingMessage =
   | BotWorkerReadyMessage
   | BotWorkerResponseMessage
   | BotWorkerSnapshotMessage
   | BotWorkerSnapshotDirtyMessage
-  | BotWorkerImageAnalysisMessage;
+  | BotWorkerImageAnalysisMessage
+  | BotWorkerRouteAutoValidatedMessage;
