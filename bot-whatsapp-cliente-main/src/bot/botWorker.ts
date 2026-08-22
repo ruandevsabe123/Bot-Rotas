@@ -1,6 +1,7 @@
 import { BotService } from "./connection";
 import { shutdownIsolatedOcrWorker } from "./ocrIsolated";
 import { BotWorkerIncomingMessage, BotWorkerOutgoingMessage } from "./botProcessProtocol";
+import os from "os";
 
 const ALLOWED_METHODS = new Set([
   "start",
@@ -47,6 +48,18 @@ let snapshotTimer: NodeJS.Timeout | undefined;
 let shuttingDown = false;
 let reportedCritical = false;
 let callQueue = Promise.resolve();
+
+// Tente favorecer o processo que mantÃ©m o socket. Render pode negar prioridade
+// negativa; nesse caso o worker segue na prioridade normal e o OCR fica em +10.
+try {
+  os.setPriority(process.pid, -5);
+} catch {
+  try {
+    os.setPriority(process.pid, 0);
+  } catch {
+    // Sem suporte do sistema operacional.
+  }
+}
 
 function send(message: BotWorkerOutgoingMessage) {
   if (process.connected) process.send?.(message);

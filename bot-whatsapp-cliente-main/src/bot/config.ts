@@ -28,6 +28,8 @@ export const DEFAULT_CONFIG: BotConfig = {
 };
 
 export class ConfigStore {
+  private cached?: BotConfig;
+
   constructor(private readonly configPath = path.resolve(process.cwd(), "config.json")) {}
 
   get path() {
@@ -35,15 +37,17 @@ export class ConfigStore {
   }
 
   load(): BotConfig {
+    if (this.cached) return this.cached;
     this.ensureConfigFile();
 
     try {
       const content = fs.readFileSync(this.configPath, "utf-8");
-      return this.normalize(JSON.parse(content));
+      this.cached = this.normalize(JSON.parse(content));
+      return this.cached;
     } catch {
       const fallback = { ...DEFAULT_CONFIG };
       this.save(fallback);
-      return fallback;
+      return this.cached || fallback;
     }
   }
 
@@ -55,7 +59,8 @@ export class ConfigStore {
 
     fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
     fs.writeFileSync(this.configPath, JSON.stringify(nextConfig, null, 2));
-    return nextConfig;
+    this.cached = nextConfig;
+    return this.cached;
   }
 
   saveGroup(group: string): BotConfig {
@@ -99,6 +104,7 @@ export class ConfigStore {
   }
 
   private loadWithoutCreating(): BotConfig {
+    if (this.cached) return this.cached;
     if (!fs.existsSync(this.configPath)) {
       return { ...DEFAULT_CONFIG };
     }

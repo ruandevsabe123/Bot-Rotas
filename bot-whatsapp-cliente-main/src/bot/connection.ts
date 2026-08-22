@@ -96,8 +96,8 @@ const HEALTH_CHECK_INTERVAL_MS = 25000;
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
 const RACE_KEEP_ALIVE_INTERVAL_MS = 10000;
 const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000;
-const CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
-const SENDER_KEY_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
+const CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS = 5 * 60 * 1000;
+const SENDER_KEY_KEEP_ALIVE_INTERVAL_MS = 5 * 60 * 1000;
 const SOCKET_RTT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
 const ACTIVE_CHAT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
 const INTERNAL_WARM_READY_MAX_AGE_MS = 90 * 1000;
@@ -110,7 +110,7 @@ export const QR_CODE_LIFETIME_MS = 60_000;
 const ROMANEIO_CANDIDATE_LIMIT = 20;
 const TARGET_ACK_TIMEOUT_MS = 1200;
 // A primeira rota ganha acesso exclusivo ao socket; a segunda sai logo depois.
-const TARGET_PARALLEL_STAGGER_MS = 12;
+const TARGET_PARALLEL_STAGGER_MS = 4;
 const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
 // O nível interno agora é binário e invisível: o cliente escolhido como perdedor
 // cede esta janela somente quando o vencedor também concorre no mesmo grupo.
@@ -161,6 +161,7 @@ export class BotService extends EventEmitter {
   private reconnectTimer?: NodeJS.Timeout;
   private healthCheckTimer?: NodeJS.Timeout;
   private warmKeepAliveTimer?: NodeJS.Timeout;
+  private closingWarmupTimer?: NodeJS.Timeout;
   private warmKeepAliveIntervalMs = 0;
   private stopping = false;
   private starting?: Promise<void>;
@@ -173,6 +174,7 @@ export class BotService extends EventEmitter {
   private activeSendCycleId?: number;
   private activeSendTrigger?: RouteDispatch["trigger"];
   private criticalDispatchInProgress = false;
+  private lastOpeningSignalAt = 0;
   private pendingReactionBatch?: any[];
   private reactionProcessingScheduled = false;
   private monitoringEnabled = false;
@@ -2272,11 +2274,13 @@ export class BotService extends EventEmitter {
         this.criticalDispatchInProgress = false;
         this.logger.info(`🔒 ${activeGroup.label} FECHADO. Bot armado para próxima abertura.`);
         this.prepareSendPlan();
+        this.scheduleClosingWarmup();
         this.logger.info("Plano de disparo preparado em memória para a próxima abertura.");
         return;
       }
 
       if (update.announce === false) {
+        this.lastOpeningSignalAt = eventReceivedAt;
         this.groupState = "open";
         if (!this.grupoJaFechouDepoisDoInicio) {
           this.logger.info(`⚠️ ${activeGroup.label} já estava aberto desde o início. Aguardando próximo ciclo de fechamento e reabertura...`);
@@ -2358,6 +2362,7 @@ export class BotService extends EventEmitter {
       const detectouAbertura = OPENING_TRIGGER_WORDS.some((palavra) => textoNormalizado.includes(palavra));
 
       if (detectouAbertura) {
+        this.lastOpeningSignalAt = eventReceivedAt;
         this.groupState = "open";
         if (!this.grupoJaFechouDepoisDoInicio) {
           this.logger.info(
@@ -3371,6 +3376,9 @@ export class BotService extends EventEmitter {
       return false;
     }
 
+    // Reserve a pista crítica antes até da renovação do envelope.
+    this.criticalDispatchInProgress = true;
+    this.lastOpeningSignalAt = eventDetectedAt;
     // O envelope precisa nascer agora para ter ID/timestamp novos. Somente a
     // primeira mensagem entra no caminho crítico; as demais são construídas
     // depois que a primeira chamada já alcançou o socket.
@@ -3383,24 +3391,25 @@ export class BotService extends EventEmitter {
       openingSignal
     );
     this.performanceMetrics.activeQueue = mensagens.length;
-    this.criticalDispatchInProgress = true;
     this.activeSendCycleId = cycleId;
     this.activeSendTrigger = trigger;
     this.acceptedMessageCountByCycle.set(cycleId, 0);
     if (this.monitoringMode === "target") this.activeSignalProfileTimeline = timeline;
-    // Inicia o relay antes das gravações de auditoria. A primeira chamada ao
-    // WhatsApp ocorre imediatamente; fila e histórico são persistidos ainda
-    // neste mesmo ciclo, antes da Promise do relay concluir.
+    // Inicia o relay antes das gravações de auditoria.
     const sendCycle =
       this.monitoringMode === "test"
         ? this.sendFastSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger)
         : this.preparedNuclearMode
         ? this.sendNuclearTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline)
         : this.sendAggressiveTargetSequence(this.preparedTargetJid, mensagens, cycleId, eventDetectedAt, sendStartedAt, trigger, timeline);
-    this.enqueueDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
-    const routeId = this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger, timeline);
-    this.attachRaceTrackingRoute(cycleId, routeId);
-    this.markQueuedDispatchSending(cycleId, routeId);
+    // A faixa seguinte do relay também usa microtasks. Auditoria entra depois,
+    // impedindo JSON, histórico e painel de atrasarem a rajada no socket.
+    queueMicrotask(() => {
+      this.enqueueDispatch(cycleId, this.preparedTargetJid, mensagens, trigger);
+      const routeId = this.registerRouteDispatch(cycleId, this.preparedTargetJid, mensagens, trigger, timeline);
+      this.attachRaceTrackingRoute(cycleId, routeId);
+      this.markQueuedDispatchSending(cycleId, routeId);
+    });
 
     const trackedSendCycle = sendCycle.finally(() => {
       if (this.activeSendCycle === trackedSendCycle) {
@@ -4248,18 +4257,29 @@ export class BotService extends EventEmitter {
     return initialWarmup;
   }
 
+  private scheduleClosingWarmup() {
+    if (this.closingWarmupTimer) clearTimeout(this.closingWarmupTimer);
+    this.closingWarmupTimer = setTimeout(() => {
+      this.closingWarmupTimer = undefined;
+      if (this.groupState !== "closed" || this.criticalDispatchInProgress || this.activeSendCycle) return;
+      void this.runWarmKeepAlive("fechamento");
+    }, 25);
+    this.closingWarmupTimer.unref?.();
+  }
+
   private async runWarmKeepAlive(
-    reason: "timer" | "armado" | "reconexão" = "timer",
+    reason: "timer" | "armado" | "reconexão" | "fechamento" = "timer",
     config = this.configStore.load()
   ) {
     if (this.status !== "connected" || !this.sock) return false;
     if (this.criticalDispatchInProgress || this.activeSendCycle) return false;
+    if (reason === "timer" && Date.now() - this.lastOpeningSignalAt < 3_000) return false;
     if (reason === "timer" && (this.processingImageIds.size > 0 || this.ocrRouteSelection.status === "analyzing")) {
       return false;
     }
     const nextInterval = this.getWarmKeepAliveIntervalMs(config);
     if (this.warmKeepAliveIntervalMs && nextInterval !== this.warmKeepAliveIntervalMs) {
-      void this.startWarmKeepAlive(reason === "timer" ? "armado" : reason);
+      void this.startWarmKeepAlive(reason === "reconexão" ? "reconexão" : "armado");
       return true;
     }
 
@@ -5027,6 +5047,10 @@ export class BotService extends EventEmitter {
     if (this.warmKeepAliveTimer) {
       clearInterval(this.warmKeepAliveTimer);
       this.warmKeepAliveTimer = undefined;
+    }
+    if (this.closingWarmupTimer) {
+      clearTimeout(this.closingWarmupTimer);
+      this.closingWarmupTimer = undefined;
     }
     this.warmKeepAliveIntervalMs = 0;
   }

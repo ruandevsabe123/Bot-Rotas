@@ -1,4 +1,5 @@
 import { ChildProcess, fork } from "child_process";
+import os from "os";
 import path from "path";
 import { readRouteImageOcr, RouteOcrResult } from "./ocr";
 
@@ -73,6 +74,15 @@ function getWorker() {
     env: { ...process.env, OCR_ISOLATED_PROCESS: "false", OCR_WORKER_PROCESS: "true" },
     stdio: ["ignore", "inherit", "inherit", "ipc"]
   });
+  // OCR consome CPU intensamente. Em contenÃ§Ã£o, mantenha o socket do bot
+  // responsivo e deixe o kernel executar o Tesseract como tarefa de fundo.
+  if (worker.pid) {
+    try {
+      os.setPriority(worker.pid, 10);
+    } catch {
+      // Alguns ambientes nÃ£o permitem alterar nice; o isolamento ainda vale.
+    }
+  }
   worker.on("message", (message: any) => {
     if (!message || message.type !== "result" || typeof message.id !== "string") return;
     settleRequest(message.id, message.result, message.error);

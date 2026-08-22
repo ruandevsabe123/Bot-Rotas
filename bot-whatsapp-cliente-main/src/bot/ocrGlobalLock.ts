@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import fs from "fs";
+import os from "os";
 import path from "path";
 
 const POLL_INTERVAL_MS = 75;
@@ -31,8 +32,11 @@ export async function acquireGlobalOcrLock(env = process.env) {
 
 function parseConcurrency(value?: string) {
   const parsed = Number.parseInt(String(value || DEFAULT_CONCURRENCY), 10);
-  if (!Number.isFinite(parsed)) return DEFAULT_CONCURRENCY;
-  return Math.max(1, Math.min(MAX_CONCURRENCY, parsed));
+  const requested = Number.isFinite(parsed) ? parsed : DEFAULT_CONCURRENCY;
+  const availableCpu = typeof os.availableParallelism === "function" ? os.availableParallelism() : os.cpus().length;
+  // Nunca abra mais Tesseracts pesados que CPUs disponíveis. No Render
+  // Standard (1 CPU), três clientes entram numa única fila global.
+  return Math.max(1, Math.min(MAX_CONCURRENCY, availableCpu, requested));
 }
 
 async function tryAcquireSlot(lockPath: string, token: string): Promise<(() => Promise<void>) | undefined> {
