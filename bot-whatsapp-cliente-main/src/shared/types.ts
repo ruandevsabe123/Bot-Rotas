@@ -313,6 +313,12 @@ export type AdminImageUsageSnapshot = {
 
 export type PanelUserRole = "client" | "admin";
 
+export type DispatchMatchupRule = {
+  opponentEmail: string;
+  outcome: "wins" | "loses";
+  delayMs: number;
+};
+
 export type AppReleaseChange = {
   title: string;
   description: string;
@@ -340,6 +346,7 @@ export type PanelUser = {
   dispatchPriorityLevel?: number;
   dispatchBeatsEmail?: string;
   dispatchAdvantageMs?: number;
+  dispatchMatchups?: DispatchMatchupRule[];
   impersonatedBy?: string;
 };
 
@@ -365,6 +372,7 @@ export type AdminUserSummary = {
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
   dispatchAdvantageMs: number;
+  dispatchMatchups: DispatchMatchupRule[];
   presenceStatus: UserPresenceStatus;
   panelOnline: boolean;
   botOpen: boolean;

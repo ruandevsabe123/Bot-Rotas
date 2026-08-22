@@ -8,14 +8,14 @@ import qrcodeTerminal from "qrcode-terminal";
 import { BotProcessProxy } from "./bot/botProcessProxy";
 import { DEFAULT_LEADER_CONTACTS } from "./bot/leaderDefaults";
 import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderStore";
-import { defaultUserColor, normalizeDispatchAdvantageMs, normalizeDispatchBeatsEmail, normalizeDispatchPriorityLevel, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
+import { defaultUserColor, normalizeDispatchAdvantageMs, normalizeDispatchBeatsEmail, normalizeDispatchMatchups, normalizeDispatchPriorityLevel, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
 import { ImageUsageStore } from "./imageUsageStore";
 import { PushNotificationStore } from "./pushNotificationStore";
 import { getCurrentRelease, shouldShowCurrentReleaseToClients } from "./releaseNotes";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
 import { computeConditionalDispatchPriorities } from "./services/conditionalDispatchPriority";
-import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
+import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, DispatchMatchupRule, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
@@ -63,6 +63,7 @@ type PanelUserRecord = {
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
   dispatchAdvantageMs: number;
+  dispatchMatchups: DispatchMatchupRule[];
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -93,6 +94,7 @@ function createUserRecord(email: string, password: string, role: PanelUserRole, 
     color: defaultUserColor(email),
     dispatchPriorityLevel: 0,
     dispatchAdvantageMs: 400,
+    dispatchMatchups: [],
     createdAt: now,
     updatedAt: now,
     totalUsageMs: 0,
@@ -216,6 +218,7 @@ async function syncConditionalDispatchPriorities() {
       configuredLevel: panelUsers.get(email)?.dispatchPriorityLevel || 0,
       beatsEmail: panelUsers.get(email)?.dispatchBeatsEmail,
       advantageMs: panelUsers.get(email)?.dispatchAdvantageMs,
+      matchups: panelUsers.get(email)?.dispatchMatchups,
       priorityUpdatedAt: panelUsers.get(email)?.updatedAt,
       connected: snapshot.status === "connected",
       monitoringEnabled: snapshot.monitoringEnabled,
@@ -559,16 +562,6 @@ function syncPanelUser(user: StoredPanelUser) {
   broadcastAdminSnapshot();
 }
 
-function enforceExclusiveDispatchWinner(winner: StoredPanelUser) {
-  const loserEmail = normalizeDispatchBeatsEmail(winner.dispatchBeatsEmail, winner.email);
-  if (!loserEmail) return;
-  const loser = panelUsers.get(loserEmail);
-  if (!loser || normalizeDispatchBeatsEmail(loser.dispatchBeatsEmail, loserEmail) !== winner.email) return;
-  const updatedLoser = panelUserStore.upsert({ email: loserEmail, dispatchBeatsEmail: "" });
-  syncPanelUser(updatedLoser);
-  appliedConditionalPriority.delete(loserEmail);
-}
-
 function touchPanelUser(email: string) {
   const user = panelUsers.get(email);
   if (!user) return;
@@ -619,6 +612,7 @@ function toUserSummary(email: string, user: PanelUserRecord) {
     dispatchPriorityLevel: normalizeDispatchPriorityLevel(user.dispatchPriorityLevel),
     dispatchBeatsEmail: normalizeDispatchBeatsEmail(user.dispatchBeatsEmail, email),
     dispatchAdvantageMs: normalizeDispatchAdvantageMs(user.dispatchAdvantageMs),
+    dispatchMatchups: normalizeDispatchMatchups(user.dispatchMatchups, email),
     presenceStatus,
     panelOnline: presenceStatus === "online",
     botOpen: Boolean(botSnapshot && ["connected", "connecting", "waiting_qr", "reconnecting"].includes(botSnapshot.status)),
@@ -1611,10 +1605,10 @@ const server = http.createServer(async (request, response) => {
         color: normalizeUserColor(String(body.color || ""), String(body.email || "")),
         dispatchPriorityLevel: 0,
         dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail, String(body.email || "")),
-        dispatchAdvantageMs: normalizeDispatchAdvantageMs(body.dispatchAdvantageMs)
+        dispatchAdvantageMs: normalizeDispatchAdvantageMs(body.dispatchAdvantageMs),
+        dispatchMatchups: normalizeDispatchMatchups(body.dispatchMatchups, String(body.email || ""))
       });
       syncPanelUser(user);
-      enforceExclusiveDispatchWinner(user);
       appliedConditionalPriority.delete(user.email);
       scheduleConditionalPrioritySync();
       sendJson(response, 200, getAdminUsersSnapshot());
@@ -1646,10 +1640,10 @@ const server = http.createServer(async (request, response) => {
         color: normalizeUserColor(String(body.color || currentUser.color || ""), nextEmail),
         dispatchPriorityLevel: 0,
         dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail ?? currentUser.dispatchBeatsEmail, nextEmail),
-        dispatchAdvantageMs: normalizeDispatchAdvantageMs(body.dispatchAdvantageMs ?? currentUser.dispatchAdvantageMs)
+        dispatchAdvantageMs: normalizeDispatchAdvantageMs(body.dispatchAdvantageMs ?? currentUser.dispatchAdvantageMs),
+        dispatchMatchups: normalizeDispatchMatchups(body.dispatchMatchups ?? currentUser.dispatchMatchups, nextEmail)
       });
       syncPanelUser(user);
-      enforceExclusiveDispatchWinner(user);
       appliedConditionalPriority.delete(user.email);
       scheduleConditionalPrioritySync();
       sendJson(response, 200, getAdminUsersSnapshot());

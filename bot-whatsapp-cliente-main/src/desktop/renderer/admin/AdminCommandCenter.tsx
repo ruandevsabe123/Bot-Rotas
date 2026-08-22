@@ -40,6 +40,7 @@ import {
   AdminUserDetail,
   AdminUserSummary,
   AdminUsersSnapshot,
+  DispatchMatchupRule,
   LeaderContact,
   PanelUserRole,
   RouteDispatch,
@@ -88,6 +89,7 @@ type UserEditorState = {
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
   dispatchAdvantageMs: number;
+  dispatchMatchups: DispatchMatchupRule[];
 };
 
 type RejectRequest = {
@@ -118,7 +120,8 @@ const emptyEditor: UserEditorState = {
   color: "#38bdf8",
   dispatchPriorityLevel: 0,
   dispatchBeatsEmail: "",
-  dispatchAdvantageMs: 400
+  dispatchAdvantageMs: 400,
+  dispatchMatchups: []
 };
 
 const REAL_VALIDATION_GROUP = "MOTORISTAS - CAMPOS DOS GOYTACAZES";
@@ -365,21 +368,30 @@ function UserEditor({
         <input type="checkbox" checked={value.blocked} onChange={(event) => onChange({ ...value, blocked: event.target.checked })} />
         Bloqueado
       </label>
-      <label className="adminx-field">
-        <span>Este cliente ganha de</span>
-        <select value={value.dispatchBeatsEmail || ""} onChange={(event) => onChange({ ...value, dispatchBeatsEmail: event.target.value, dispatchPriorityLevel: 0 })}>
-          <option value="">Não ganha de ninguém</option>
-          {competitors.filter((user) => user.role === "client" && user.email !== (value.originalEmail || value.email)).map((user) => (
-            <option key={user.email} value={user.email}>{user.email}</option>
-          ))}
-        </select>
-      </label>
-      {value.dispatchBeatsEmail ? (
-        <label className="adminx-field">
-          <span>Vantagem em ms (mínimo 400)</span>
-          <input min={400} max={10000} step={50} type="number" value={value.dispatchAdvantageMs} onChange={(event) => onChange({ ...value, dispatchAdvantageMs: Math.max(400, Number(event.target.value) || 400) })} />
-        </label>
-      ) : null}
+      <div className="adminx-field adminx-matchups">
+        <span>Confrontos de prioridade</span>
+        {value.dispatchMatchups.map((rule, index) => (
+          <div className="adminx-matchup-row" key={`${rule.opponentEmail}-${index}`}>
+            <select value={rule.outcome} onChange={(event) => onChange({ ...value, dispatchMatchups: value.dispatchMatchups.map((item, itemIndex) => itemIndex === index ? { ...item, outcome: event.target.value === "loses" ? "loses" : "wins" } : item) })}>
+              <option value="wins">Ganha de</option>
+              <option value="loses">Perde para</option>
+            </select>
+            <select value={rule.opponentEmail} onChange={(event) => onChange({ ...value, dispatchMatchups: value.dispatchMatchups.map((item, itemIndex) => itemIndex === index ? { ...item, opponentEmail: event.target.value } : item) })}>
+              {competitors.filter((user) => user.role === "client" && user.email !== (value.originalEmail || value.email)).map((user) => <option key={user.email} value={user.email}>{user.email}</option>)}
+            </select>
+            <input aria-label="Diferença em milissegundos" min={400} max={10000} step={50} type="number" value={rule.delayMs} onChange={(event) => onChange({ ...value, dispatchMatchups: value.dispatchMatchups.map((item, itemIndex) => itemIndex === index ? { ...item, delayMs: Math.max(400, Number(event.target.value) || 400) } : item) })} />
+            <span>ms</span>
+            <button className="icon-button danger" title="Remover confronto" type="button" onClick={() => onChange({ ...value, dispatchMatchups: value.dispatchMatchups.filter((_, itemIndex) => itemIndex !== index) })}><Trash2 size={16} /></button>
+          </div>
+        ))}
+        <button className="button" type="button" onClick={() => {
+          const ownEmail = value.originalEmail || value.email;
+          const used = new Set(value.dispatchMatchups.map((rule) => rule.opponentEmail));
+          const opponent = competitors.find((user) => user.role === "client" && user.email !== ownEmail && !used.has(user.email));
+          if (opponent) onChange({ ...value, dispatchMatchups: [...value.dispatchMatchups, { opponentEmail: opponent.email, outcome: "wins", delayMs: 400 }] });
+        }}>Adicionar confronto</button>
+        {!value.dispatchMatchups.length ? <small>Sem confrontos: este cliente não ganha nem perde prioridade para ninguém.</small> : null}
+      </div>
       <input type="color" value={value.color} onChange={(event) => onChange({ ...value, color: event.target.value })} />
       <button className="button" type="button" onClick={onCancel}>Cancelar</button>
       <button className="button primary" disabled={busy || !value.email.trim() || (!value.originalEmail && !value.password.trim())} type="submit">
@@ -1585,7 +1597,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
               <button className="button" type="button" onClick={() => exportRoutes("csv")}><Download size={18} />Exportar rotas</button>
             </div>
             {editor ? <UserEditor value={editor} busy={busy} competitors={users.users} onChange={setEditor} onCancel={() => setEditor(undefined)} onSave={() => saveUser()} /> : null}
-            <ClientsTable users={users.users} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400 })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400 })} />
+            <ClientsTable users={users.users} onOpen={openClient} onEdit={(user) => setEditor({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400, dispatchMatchups: user.dispatchMatchups || [] })} onToggleBlock={(user) => saveUser({ originalEmail: user.email, email: user.email, password: "", role: user.role, blocked: !user.blocked, color: user.color, dispatchPriorityLevel: 0, dispatchBeatsEmail: user.dispatchBeatsEmail || "", dispatchAdvantageMs: user.dispatchAdvantageMs || 400, dispatchMatchups: user.dispatchMatchups || [] })} />
           </section>
         ) : null}
 
@@ -2131,7 +2143,7 @@ function ClientsTable({
               <td data-label="Painel"><StatusPill tone={user.blocked ? "red" : user.presenceStatus === "online" ? "green" : user.presenceStatus === "recent" ? "yellow" : "muted"}>{user.blocked ? "bloqueado" : user.presenceStatus}</StatusPill></td>
               <td data-label="Bot">{user.botStatus || "fechado"}</td>
               <td data-label="Monitoramento">{user.monitoringEnabled ? <StatusPill tone="green">ativo</StatusPill> : <StatusPill tone="muted">parado</StatusPill>}</td>
-              <td data-label="Confronto">{user.dispatchBeatsEmail ? `Ganha de ${user.dispatchBeatsEmail} · ${user.dispatchAdvantageMs || 400}ms` : "Não ganha de ninguém"}</td>
+              <td data-label="Confronto">{user.dispatchMatchups?.length ? user.dispatchMatchups.map((rule) => `${rule.outcome === "wins" ? "Ganha de" : "Perde para"} ${rule.opponentEmail} · ${rule.delayMs}ms`).join(" | ") : "Sem confrontos"}</td>
               <td data-label="Último visto">{formatShort(user.lastSeenAt)}</td>
               <td data-label="Uso">{formatDuration(user.totalUsageMs)}</td>
               <td data-label="Ações">

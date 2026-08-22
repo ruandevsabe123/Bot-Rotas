@@ -1,6 +1,6 @@
 import fs from "fs";
 import path from "path";
-import { LoginEvent, PanelUserRole } from "./shared/types";
+import { DispatchMatchupRule, LoginEvent, PanelUserRole } from "./shared/types";
 
 export type StoredPanelUser = {
   email: string;
@@ -11,6 +11,7 @@ export type StoredPanelUser = {
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
   dispatchAdvantageMs: number;
+  dispatchMatchups: DispatchMatchupRule[];
   createdAt: string;
   updatedAt: string;
   lastLoginAt?: string;
@@ -40,6 +41,7 @@ export class PanelUserStore {
     dispatchPriorityLevel?: number;
     dispatchBeatsEmail?: string;
     dispatchAdvantageMs?: number;
+    dispatchMatchups?: DispatchMatchupRule[];
   }) {
     const email = input.email.trim().toLowerCase();
     if (!email) throw new Error("Email obrigatório.");
@@ -55,6 +57,7 @@ export class PanelUserStore {
       if (input.dispatchPriorityLevel !== undefined) existing.dispatchPriorityLevel = normalizeDispatchPriorityLevel(input.dispatchPriorityLevel);
       if (input.dispatchBeatsEmail !== undefined) existing.dispatchBeatsEmail = normalizeDispatchBeatsEmail(input.dispatchBeatsEmail, email);
       if (input.dispatchAdvantageMs !== undefined) existing.dispatchAdvantageMs = normalizeDispatchAdvantageMs(input.dispatchAdvantageMs);
+      if (input.dispatchMatchups !== undefined) existing.dispatchMatchups = normalizeDispatchMatchups(input.dispatchMatchups, email);
       existing.updatedAt = now;
       this.save(users);
       return existing;
@@ -71,6 +74,7 @@ export class PanelUserStore {
       dispatchPriorityLevel: normalizeDispatchPriorityLevel(input.dispatchPriorityLevel),
       dispatchBeatsEmail: normalizeDispatchBeatsEmail(input.dispatchBeatsEmail, email),
       dispatchAdvantageMs: normalizeDispatchAdvantageMs(input.dispatchAdvantageMs),
+      dispatchMatchups: normalizeDispatchMatchups(input.dispatchMatchups, email),
       createdAt: now,
       updatedAt: now,
       totalUsageMs: 0,
@@ -177,6 +181,10 @@ export class PanelUserStore {
       dispatchPriorityLevel: normalizeDispatchPriorityLevel(input.dispatchPriorityLevel),
       dispatchBeatsEmail: normalizeDispatchBeatsEmail(input.dispatchBeatsEmail, input.email),
       dispatchAdvantageMs: normalizeDispatchAdvantageMs(input.dispatchAdvantageMs),
+      dispatchMatchups: normalizeDispatchMatchups(
+        Array.isArray(input.dispatchMatchups) ? input.dispatchMatchups : input.dispatchBeatsEmail ? [{ opponentEmail: input.dispatchBeatsEmail, outcome: "wins", delayMs: input.dispatchAdvantageMs }] : [],
+        input.email
+      ),
       createdAt: typeof input.createdAt === "string" ? input.createdAt : now,
       updatedAt: typeof input.updatedAt === "string" ? input.updatedAt : now,
       lastLoginAt: typeof input.lastLoginAt === "string" ? input.lastLoginAt : undefined,
@@ -224,4 +232,17 @@ export function normalizeDispatchAdvantageMs(value: unknown) {
   const numberValue = Number(value);
   if (!Number.isFinite(numberValue)) return 400;
   return Math.min(10_000, Math.max(400, Math.round(numberValue)));
+}
+
+export function normalizeDispatchMatchups(value: unknown, ownEmail = ""): DispatchMatchupRule[] {
+  if (!Array.isArray(value)) return [];
+  const own = String(ownEmail || "").trim().toLowerCase();
+  const unique = new Map<string, DispatchMatchupRule>();
+  for (const item of value) {
+    const opponentEmail = String(item?.opponentEmail || "").trim().toLowerCase();
+    if (!opponentEmail || opponentEmail === own) continue;
+    const outcome = item?.outcome === "loses" ? "loses" : "wins";
+    unique.set(opponentEmail, { opponentEmail, outcome, delayMs: normalizeDispatchAdvantageMs(item?.delayMs) });
+  }
+  return Array.from(unique.values());
 }

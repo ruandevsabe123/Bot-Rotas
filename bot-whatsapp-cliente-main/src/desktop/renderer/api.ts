@@ -240,6 +240,7 @@ export function saveAdminUser(payload: {
   dispatchPriorityLevel: number;
   dispatchBeatsEmail?: string;
   dispatchAdvantageMs?: number;
+  dispatchMatchups?: import("../../shared/types").DispatchMatchupRule[];
 }) {
   const isEdit = Boolean(payload.originalEmail);
   return fetchJson<AdminUsersSnapshot>(

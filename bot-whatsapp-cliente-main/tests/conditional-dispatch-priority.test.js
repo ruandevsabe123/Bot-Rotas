@@ -74,3 +74,44 @@ test("não ganha de ninguém não atrasa nenhum cliente", () => {
   assert.equal(priorities.get("alan@cliente.com"), 0);
   assert.equal(priorities.get("guilherme@cliente.com"), 0);
 });
+
+test("calcula hierarquia cumulativa para cinco clientes", () => {
+  const priorities = computeConditionalDispatchPriorities([
+    client("a@cliente.com", undefined, { matchups: [{ opponentEmail: "b@cliente.com", outcome: "wins", delayMs: 400 }] }),
+    client("b@cliente.com", undefined, { matchups: [{ opponentEmail: "c@cliente.com", outcome: "wins", delayMs: 450 }] }),
+    client("c@cliente.com", undefined, { matchups: [{ opponentEmail: "d@cliente.com", outcome: "wins", delayMs: 500 }] }),
+    client("d@cliente.com", undefined, { matchups: [{ opponentEmail: "e@cliente.com", outcome: "wins", delayMs: 550 }] }),
+    client("e@cliente.com", undefined)
+  ]);
+
+  assert.deepEqual(Object.fromEntries(priorities), {
+    "a@cliente.com": 0,
+    "b@cliente.com": 400,
+    "c@cliente.com": 850,
+    "d@cliente.com": 1350,
+    "e@cliente.com": 1900
+  });
+});
+
+test("regra perde para produz o mesmo confronto de forma intuitiva", () => {
+  const priorities = computeConditionalDispatchPriorities([
+    client("alan@cliente.com", undefined),
+    client("guilherme@cliente.com", undefined, { matchups: [{ opponentEmail: "alan@cliente.com", outcome: "loses", delayMs: 400 }] })
+  ]);
+  assert.equal(priorities.get("alan@cliente.com"), 0);
+  assert.equal(priorities.get("guilherme@cliente.com"), 400);
+});
+
+test("ignora a regra que fecharia um ciclo entre clientes", () => {
+  const priorities = computeConditionalDispatchPriorities([
+    client("a@cliente.com", undefined, { priorityUpdatedAt: "2026-08-21T12:03:00.000Z", matchups: [{ opponentEmail: "b@cliente.com", outcome: "wins", delayMs: 400 }] }),
+    client("b@cliente.com", undefined, { priorityUpdatedAt: "2026-08-21T12:02:00.000Z", matchups: [{ opponentEmail: "c@cliente.com", outcome: "wins", delayMs: 400 }] }),
+    client("c@cliente.com", undefined, { priorityUpdatedAt: "2026-08-21T12:01:00.000Z", matchups: [{ opponentEmail: "a@cliente.com", outcome: "wins", delayMs: 400 }] })
+  ]);
+
+  assert.deepEqual(Object.fromEntries(priorities), {
+    "a@cliente.com": 0,
+    "b@cliente.com": 400,
+    "c@cliente.com": 800
+  });
+});
