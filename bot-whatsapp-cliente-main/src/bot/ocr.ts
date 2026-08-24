@@ -45,6 +45,7 @@ export type DetectedRouteCode = {
 
 let tesseractJsWorkerPromise: ReturnType<typeof createWorker> | undefined;
 let tesseractJsCageWorkerPromise: ReturnType<typeof createWorker> | undefined;
+let nativeTesseractAvailable: boolean | undefined;
 
 export function normalizeOcrText(text: string) {
   return text
@@ -196,20 +197,50 @@ async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper:
   return results;
 }
 
-function readSingleRouteImageOcr(imagePath: string, label: string, psm = 6) {
+async function readSingleRouteImageOcr(imagePath: string, label: string, psm = 6) {
   if (label.startsWith("coluna-gaiola")) {
-    return readRouteImageOcrWithTesseractJs(imagePath, label, psm)
-      .then((reading) => findAllGaiolaCodesFromOcr(reading).length
-        ? reading
-        : readRouteImageOcrWithBinary(imagePath, label, psm))
-      .catch(() => readRouteImageOcrWithBinary(imagePath, label, psm));
+    return readCageOcrWithFallback(
+      () => readRouteImageOcrWithTesseractJs(imagePath, label, psm),
+      () => readRouteImageOcrWithBinary(imagePath, label, psm),
+      nativeTesseractAvailable === false
+    );
   }
   return readRouteImageOcrWithBinary(imagePath, label, psm)
     .catch(() => readRouteImageOcrWithTesseractJs(imagePath, label, psm));
 }
 
+export async function readCageOcrWithFallback(
+  readJs: () => Promise<RouteOcrResult>,
+  readBinary: () => Promise<RouteOcrResult>,
+  binaryUnavailable = false
+) {
+  let jsError: unknown;
+  try {
+    const reading = await readJs();
+    if (findAllGaiolaCodesFromOcr(reading).length || binaryUnavailable) return reading;
+    try {
+      return await readBinary();
+    } catch {
+      // A leitura JS concluída continua válida mesmo quando o binário opcional
+      // não existe ou rejeita esta variante.
+      return reading;
+    }
+  } catch (error) {
+    jsError = error;
+  }
+  try {
+    return await readBinary();
+  } catch (binaryError) {
+    throw jsError || binaryError;
+  }
+}
+
 function readRouteImageOcrWithBinary(imagePath: string, label: string, psm: number) {
   return new Promise<RouteOcrResult>((resolve, reject) => {
+    if (nativeTesseractAvailable === false) {
+      reject(new Error("Tesseract nativo indisponível; usando o motor JavaScript."));
+      return;
+    }
     const cageOnly = label.startsWith("coluna-gaiola");
     const cageOptions = cageOnly
       ? ["-c", "tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-"]
@@ -221,10 +252,14 @@ function readRouteImageOcrWithBinary(imagePath: string, label: string, psm: numb
       { timeout: 15000, maxBuffer: 1024 * 1024 * 4 },
       (error, stdout, stderr) => {
         if (error) {
-          reject(new Error(stderr?.trim() || error.message));
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") nativeTesseractAvailable = false;
+          const failure = new Error(stderr?.trim() || error.message) as NodeJS.ErrnoException;
+          failure.code = (error as NodeJS.ErrnoException).code;
+          reject(failure);
           return;
         }
 
+        nativeTesseractAvailable = true;
         const lines = parseTsvLines(stdout || "");
         resolve({
           text: lines.map((line) => line.text).join("\n"),
