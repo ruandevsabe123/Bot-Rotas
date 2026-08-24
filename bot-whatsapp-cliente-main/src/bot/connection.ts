@@ -12,6 +12,7 @@ import { extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborho
 import { readRouteImageOcrWithoutBlockingSocket, warmupIsolatedOcrWorker } from "./ocrIsolated";
 import { selectRankedDesiredCages } from "./ocrCageSelection";
 import { DispatchQueueStore } from "./dispatchQueue";
+import { OcrAnalysisHistoryStore } from "./ocrAnalysisHistoryStore";
 import { RouteStore } from "./routeStore";
 import { TelemetryStore } from "./telemetryStore";
 import { useSqliteAuthState } from "./sqliteAuthState";
@@ -74,6 +75,7 @@ export type BotServiceOptions = {
   routeStorePath?: string;
   dispatchQueuePath?: string;
   telemetryPath?: string;
+  ocrAnalysisHistoryPath?: string;
   logStorePath?: string;
   romaneioDir?: string;
   clientEmail?: string;
@@ -230,6 +232,7 @@ export class BotService extends EventEmitter {
   private routeStore: RouteStore;
   private dispatchQueueStore: DispatchQueueStore;
   private telemetryStore: TelemetryStore;
+  private ocrAnalysisHistoryStore: OcrAnalysisHistoryStore;
   private romaneioStore?: RomaneioStore;
   private logger: BotLogger;
   private authDir: string;
@@ -295,6 +298,7 @@ export class BotService extends EventEmitter {
     this.routeStore = new RouteStore(options.routeStorePath || path.resolve(process.cwd(), "route_history.json"));
     this.dispatchQueueStore = new DispatchQueueStore(options.dispatchQueuePath || path.resolve(process.cwd(), "dispatch_queue.json"));
     this.telemetryStore = new TelemetryStore(options.telemetryPath || path.resolve(process.cwd(), "dispatch_telemetry.json"));
+    this.ocrAnalysisHistoryStore = new OcrAnalysisHistoryStore(options.ocrAnalysisHistoryPath || path.resolve(process.cwd(), "ocr_analysis_history.json"));
     this.romaneioStore = options.romaneioDir ? new RomaneioStore(options.romaneioDir) : undefined;
     this.logger = new BotLogger(() => this.emitSnapshot(), options.logStorePath || path.resolve(process.cwd(), "bot_logs.json"));
     this.statusEventsPath = path.join(path.dirname(options.routeStorePath || path.resolve(process.cwd(), "route_history.json")), "status_events.json");
@@ -376,7 +380,8 @@ export class BotService extends EventEmitter {
       },
       routeDispatches: this.getRoutes(),
       statusEvents: this.statusEvents,
-      ocrRouteSelection: this.ocrRouteSelection
+      ocrRouteSelection: this.ocrRouteSelection,
+      ocrAnalysisHistory: this.ocrAnalysisHistoryStore.all()
     };
   }
 
@@ -2515,11 +2520,13 @@ export class BotService extends EventEmitter {
         this.logger.info(`IA - texto reconhecido: ${recognizedLines.slice(0, 3000) || "(vazio)"}`);
         this.ocrRouteSelection = {
           status: "error",
+          analysisId,
           options: [],
           source: ocr.source,
           processedAt: new Date().toISOString(),
           message: "Imagem analisada, mas nenhuma rota segura foi encontrada."
         };
+        this.rememberCurrentOcrAnalysis();
         this.emitSnapshot();
         return;
       }
@@ -2590,6 +2597,7 @@ export class BotService extends EventEmitter {
           options: [],
           message: failureMessage
         };
+        this.rememberCurrentOcrAnalysis();
         this.logger.warning(`[ROMANEIO] Cruzamento sem opções: leituras=${detectedRoutes.length}, seguras=${optionDetections.length}, romaneioCarregado=${Boolean(romaneioStatus?.loaded)}, rotasRomaneio=${romaneioStatus?.totalRoutes || 0}.`);
         this.emitSnapshot();
         return;
@@ -2622,6 +2630,7 @@ export class BotService extends EventEmitter {
               ? "Imagem analisada, mas nenhuma das gaiolas desejadas apareceu. O bot continua aguardando."
               : "Rotas identificadas, mas nenhuma respeita todos os filtros configurados e possui correspondência no romaneio. Envio bloqueado."
           };
+          this.rememberCurrentOcrAnalysis();
           this.logger.info(config.ocrSelectionMode === "cages"
             ? "[ROMANEIO] Nenhuma gaiola desejada foi encontrada nesta imagem."
             : "[ROMANEIO] Envio automático bloqueado: nenhuma rota identificada passou por todos os filtros configurados.");
@@ -2639,6 +2648,7 @@ export class BotService extends EventEmitter {
         }
       } else {
         this.ocrRouteSelection = readySelection;
+        this.rememberCurrentOcrAnalysis();
         this.logger.success(`[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s) e ${options.length} opção(ões) disponível(is) para aprovação manual.`);
       }
       this.emitSnapshot();
@@ -2652,10 +2662,12 @@ export class BotService extends EventEmitter {
       });
       this.ocrRouteSelection = {
         status: "error",
+        analysisId,
         options: [],
         processedAt: new Date().toISOString(),
         message: `Análise da IA falhou: ${this.getErrorMessage(error)}`
       };
+      this.rememberCurrentOcrAnalysis();
       this.emitSnapshot();
       this.logger.warning(`Análise da IA falhou: ${this.getErrorMessage(error)}`);
     } finally {
@@ -2852,6 +2864,7 @@ export class BotService extends EventEmitter {
         ? `${messages.length} gaiola(s) desejada(s) pronta(s) para envio automático.`
         : "Modo automático: melhor rota escolhida pelo bot."
     };
+    this.rememberCurrentOcrAnalysis();
     this.logger.success(mode === "manual"
       ? `[ROMANEIO] Cliente confirmou ${selected.length} rota(s): ${messages.join(" | ")}.`
       : desiredCagesMode
@@ -2949,6 +2962,10 @@ export class BotService extends EventEmitter {
 
   private resetOcrRouteSelection() {
     this.ocrRouteSelection = { status: "idle", options: [] };
+  }
+
+  private rememberCurrentOcrAnalysis() {
+    this.ocrAnalysisHistoryStore.upsert(this.ocrRouteSelection);
   }
 
   private cacheRomaneioDocumentCandidates(messages: any[], connectionId: number) {
@@ -3434,6 +3451,7 @@ export class BotService extends EventEmitter {
           totalMs: Math.max(0, finishedAt - startedAt)
         };
         this.ocrRouteSelection = { ...this.ocrRouteSelection, timing: completedTiming };
+        this.rememberCurrentOcrAnalysis();
         this.logger.success(`[ROMANEIO] Tempo total da imagem até o último envio: ${completedTiming.totalMs}ms.`);
         this.emitSnapshot();
       }).catch(() => undefined);

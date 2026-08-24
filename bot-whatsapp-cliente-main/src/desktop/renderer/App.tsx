@@ -3010,6 +3010,8 @@ export default function App() {
   const desiredCageSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [ocrRouteDialogOpen, setOcrRouteDialogOpen] = useState(false);
   const [automaticOcrAnalysisOpen, setAutomaticOcrAnalysisOpen] = useState(false);
+  const [ocrAnalysisHistoryOpen, setOcrAnalysisHistoryOpen] = useState(false);
+  const [historyOcrSelection, setHistoryOcrSelection] = useState<OcrRouteSelectionState>();
   const [incidentValid, setIncidentValid] = useState(true);
   const [incidentReason, setIncidentReason] = useState("");
   const [incidentClock, setIncidentClock] = useState(Date.now());
@@ -3218,6 +3220,14 @@ export default function App() {
       }
     }
   }, [snapshot.config.ocrSelectionMode, snapshot.config.targetDispatchMode, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
+
+  useEffect(() => {
+    const selection = snapshot.ocrRouteSelection;
+    if (!automaticOcrAnalysisOpen || snapshot.config.ocrSelectionMode === "manual") return;
+    if (!selection || !["ready", "error"].includes(selection.status) || selection.preparedMessages?.length) return;
+    const timer = window.setTimeout(() => setAutomaticOcrAnalysisOpen(false), 45_000);
+    return () => window.clearTimeout(timer);
+  }, [automaticOcrAnalysisOpen, snapshot.config.ocrSelectionMode, snapshot.ocrRouteSelection?.analysisId, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
 
   useEffect(() => {
     if (!desiredCagesTouchedRef.current) {
@@ -4053,6 +4063,33 @@ export default function App() {
               <strong>{((snapshot.imageUsage?.amountCents || 0) / 100).toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong>
             </div>
           </section>
+          <section className="quick-panel ocr-analysis-history-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="panel-label">Consultas anteriores</p>
+                <h2>Histórico de análises</h2>
+              </div>
+              <button className="button" type="button" onClick={() => setOcrAnalysisHistoryOpen((open) => !open)}>
+                <Clock3 size={18} /> {ocrAnalysisHistoryOpen ? "Ocultar" : "Ver histórico"}
+              </button>
+            </div>
+            {ocrAnalysisHistoryOpen ? (
+              <div className="ocr-analysis-history-list">
+                {(snapshot.ocrAnalysisHistory || []).map((analysis) => {
+                  const chosen = analysis.selectedOptionIds?.length
+                    ? analysis.options.filter((option) => analysis.selectedOptionIds?.includes(option.id))
+                    : analysis.options;
+                  return (
+                    <button className="ocr-analysis-history-item" key={analysis.analysisId || analysis.processedAt} type="button" onClick={() => setHistoryOcrSelection(analysis)}>
+                      <span><strong>{chosen.map((option) => option.gaiola).filter(Boolean).join(", ") || "Nenhuma rota encontrada"}</strong><small>{formatDate(analysis.processedAt)}</small></span>
+                      <small>{analysis.status === "confirmed" ? `${analysis.preparedMessages?.length || 0} mensagem(ns) preparada(s)` : uiText(analysis.message || "Análise concluída")}</small>
+                    </button>
+                  );
+                })}
+                {!snapshot.ocrAnalysisHistory?.length ? <p className="qr-empty">As próximas análises aparecerão aqui automaticamente.</p> : null}
+              </div>
+            ) : null}
+          </section>
           {false ? <MessagePreviewStrip
             title="Ranking de rotas"
             group={groupLabel}
@@ -4410,6 +4447,9 @@ export default function App() {
           selection={snapshot.ocrRouteSelection}
           onClose={() => setAutomaticOcrAnalysisOpen(false)}
         />
+      ) : null}
+      {historyOcrSelection ? (
+        <AutomaticOcrAnalysisDialog selection={historyOcrSelection} onClose={() => setHistoryOcrSelection(undefined)} />
       ) : null}
       {pendingClientIncident ? (
         <div className="modal-backdrop incident-lock-backdrop" role="presentation">

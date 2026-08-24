@@ -256,6 +256,7 @@ export type BotSnapshot = {
   routeDispatches?: RouteDispatch[];
   statusEvents?: BotStatusEvent[];
   ocrRouteSelection?: OcrRouteSelectionState;
+  ocrAnalysisHistory?: OcrRouteSelectionState[];
   imageUsage?: ClientImageUsageSnapshot;
 };
 
