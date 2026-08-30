@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection } from "./ocr";
+import { combineRouteImageBatch, extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection } from "./ocr";
 import { readRouteImageOcrWithoutBlockingSocket, warmupIsolatedOcrWorker } from "./ocrIsolated";
 import { selectRankedDesiredCages } from "./ocrCageSelection";
 import { DispatchQueueStore } from "./dispatchQueue";
@@ -121,6 +121,8 @@ const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
 const MAX_DISPATCH_PRIORITY_DELAY_MS = 120_000;
 const MAX_DISPATCH_PRIORITY_LEVEL = 5;
 const MAX_OUTGOING_MESSAGES = 2;
+const ROUTE_IMAGE_BATCH_QUIET_MS = 900;
+const ROUTE_IMAGE_BATCH_MAX = 12;
 const WARMUP_MESSAGE_COUNT = 15;
 // Maior que o keep-alive crítico (5s), evitando reconstrução no exato evento de abertura.
 const NOT_ACCEPTABLE_ALERT_THRESHOLD = 3;
@@ -206,6 +208,9 @@ export class BotService extends EventEmitter {
   private lastOcrInsight?: RouteOcrInsight;
   private ocrRouteSelection: OcrRouteSelectionState = { status: "idle", options: [] };
   private processingImageIds = new Set<string>();
+  private pendingRouteImageBatch: Array<{ msg: any; groupJid: string; messageId: string }> = [];
+  private routeImageBatchTimer?: NodeJS.Timeout;
+  private routeImageBatchProcessing = false;
   private ocrAnalysisDurationsMs: number[] = [];
   private latestRouteImageSequence = 0;
   private warmupMessagesSent = 0;
@@ -784,7 +789,7 @@ export class BotService extends EventEmitter {
     this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
-    this.latestRouteImageSequence += 1;
+    this.cancelPendingRouteImageBatch();
     if (targetDispatchMode === "ocr") warmupIsolatedOcrWorker();
     this.logger.info(`Modo ${modeLabel} selecionado. Os outros modos ficarão desligados.`);
 
@@ -1178,8 +1183,8 @@ export class BotService extends EventEmitter {
     this.pendingOcrReconnectDispatch = undefined;
     this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
+    this.cancelPendingRouteImageBatch();
     this.processingImageIds.clear();
-    this.latestRouteImageSequence += 1;
     this.dispatchQueueIdByCycle.clear();
     this.preparedTargetJid = "";
     this.preparedMessages = [];
@@ -1284,8 +1289,8 @@ export class BotService extends EventEmitter {
     this.acceptedMessageCountByCycle.clear();
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
+    this.cancelPendingRouteImageBatch();
     this.processingImageIds.clear();
-    this.latestRouteImageSequence += 1;
     this.estadoInicialDoGrupoCapturado = false;
     this.grupoJaFechouDepoisDoInicio = false;
     this.currentUserInTargetGroup = false;
@@ -1322,7 +1327,7 @@ export class BotService extends EventEmitter {
     this.pendingOcrMessages = [];
     this.resetOcrRouteSelection();
     this.lastOcrDispatchKey = "";
-    this.latestRouteImageSequence += 1;
+    this.cancelPendingRouteImageBatch();
     this.logger.success(`Grupo alterado para: ${config.grupoAlvoNome || config.grupoAlvoJid}`);
 
     if (this.sock && this.status === "connected") {
@@ -1677,7 +1682,7 @@ export class BotService extends EventEmitter {
       rotasMonitoradasDetalhadas: detailedRoutes,
       ...(targetDispatchMode ? { targetDispatchMode } : {})
     });
-    this.latestRouteImageSequence += 1;
+    this.cancelPendingRouteImageBatch();
     this.pendingOcrMessages = [];
     this.pendingOcrReconnectDispatch = undefined;
     this.acceptedMessageCountByCycle.clear();
@@ -2428,23 +2433,66 @@ export class BotService extends EventEmitter {
     const messageId = String(msg?.key?.id || "");
     if (!messageId || this.processingImageIds.has(messageId)) return;
 
-    const sequence = ++this.latestRouteImageSequence;
     this.processingImageIds.add(messageId);
-    setTimeout(() => {
-      void this.processRouteImage(msg, groupJid, sequence).finally(() => {
-        this.processingImageIds.delete(messageId);
+    this.pendingRouteImageBatch.push({ msg, groupJid, messageId });
+    if (this.routeImageBatchTimer) clearTimeout(this.routeImageBatchTimer);
+    const flush = () => {
+      this.routeImageBatchTimer = undefined;
+      if (this.routeImageBatchProcessing) {
+        this.routeImageBatchTimer = setTimeout(flush, ROUTE_IMAGE_BATCH_QUIET_MS);
+        return;
+      }
+      const batch = this.pendingRouteImageBatch.splice(0, ROUTE_IMAGE_BATCH_MAX);
+      if (!batch.length) return;
+      const sequence = ++this.latestRouteImageSequence;
+      this.routeImageBatchProcessing = true;
+      this.logger.info(batch.length > 1
+        ? `[ROMANEIO] ${batch.length} imagens recebidas juntas. Analisando como um único lote.`
+        : "[ROMANEIO] Imagem encaminhada para análise.");
+      void this.processRouteImageBatch(batch, sequence).finally(() => {
+        this.routeImageBatchProcessing = false;
+        for (const item of batch) this.processingImageIds.delete(item.messageId);
+        if (this.pendingRouteImageBatch.length) this.schedulePendingRouteImageBatch();
       });
-    }, this.criticalDispatchInProgress ? 3000 : 0);
+    };
+    if (this.pendingRouteImageBatch.length >= ROUTE_IMAGE_BATCH_MAX) flush();
+    else this.routeImageBatchTimer = setTimeout(flush, this.criticalDispatchInProgress ? 3000 : ROUTE_IMAGE_BATCH_QUIET_MS);
   }
 
-  private async processRouteImage(msg: any, groupJid: string, sequence: number) {
+  private cancelPendingRouteImageBatch() {
+    if (this.routeImageBatchTimer) clearTimeout(this.routeImageBatchTimer);
+    this.routeImageBatchTimer = undefined;
+    for (const item of this.pendingRouteImageBatch) this.processingImageIds.delete(item.messageId);
+    this.pendingRouteImageBatch = [];
+    this.latestRouteImageSequence += 1;
+  }
+
+  private schedulePendingRouteImageBatch() {
+    if (this.routeImageBatchTimer || this.routeImageBatchProcessing || !this.pendingRouteImageBatch.length) return;
+    this.routeImageBatchTimer = setTimeout(() => {
+      this.routeImageBatchTimer = undefined;
+      const batch = this.pendingRouteImageBatch.splice(0, ROUTE_IMAGE_BATCH_MAX);
+      const sequence = ++this.latestRouteImageSequence;
+      this.routeImageBatchProcessing = true;
+      void this.processRouteImageBatch(batch, sequence).finally(() => {
+        this.routeImageBatchProcessing = false;
+        for (const item of batch) this.processingImageIds.delete(item.messageId);
+        this.schedulePendingRouteImageBatch();
+      });
+    }, this.criticalDispatchInProgress ? 3000 : ROUTE_IMAGE_BATCH_QUIET_MS);
+  }
+
+  private async processRouteImageBatch(batch: Array<{ msg: any; groupJid: string; messageId: string }>, sequence: number) {
+    if (!batch.length) return;
+    if (sequence !== this.latestRouteImageSequence) return;
+    const groupJid = batch[0].groupJid;
     const config = this.configStore.load();
     const analysisSocket = this.sock;
     if (config.targetDispatchMode !== "ocr" || !analysisSocket) return;
 
-    const messageId = String(msg?.key?.id || Date.now());
+    const messageId = batch.map((item) => item.messageId).join("+");
     const analysisId = `${this.clientEmail}:${messageId}`;
-    const imagePath = path.join(os.tmpdir(), `bot-rota-${messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}.jpg`);
+    const imagePaths = batch.map((item, index) => path.join(os.tmpdir(), `bot-rota-${item.messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}-${index}.jpg`));
     const analysisStartedAtMs = Date.now();
     const analysisStartedAt = new Date(analysisStartedAtMs).toISOString();
     const groupName = this.groups.find((group) => group.id === groupJid)?.name || config.grupoAlvoNome || groupJid;
@@ -2471,17 +2519,13 @@ export class BotService extends EventEmitter {
       this.pendingOcrMessages = [];
       this.emitSnapshot();
 
-      const buffer = await downloadMediaMessage(
-        msg,
-        "buffer",
-        {},
-        {
+      for (let index = 0; index < batch.length; index += 1) {
+        const buffer = await downloadMediaMessage(batch[index].msg, "buffer", {}, {
           logger: P({ level: "silent" }),
           reuploadRequest: analysisSocket.updateMediaMessage
-        }
-      );
-
-      await fs.promises.writeFile(imagePath, buffer);
+        });
+        await fs.promises.writeFile(imagePaths[index], buffer);
+      }
       const downloadFinishedAtMs = Date.now();
       const fastFirst = this.groupState === "open";
       const preferCageCrop = fastFirst && config.ocrSelectionMode === "cages";
@@ -2490,11 +2534,16 @@ export class BotService extends EventEmitter {
           ? "[ROMANEIO] Grupo aberto: priorizando a coluna de gaiolas com consenso triplo."
           : "[ROMANEIO] Grupo aberto: usando análise progressiva rápida com consenso."
         : "[ROMANEIO] Grupo fechado: usando análise completa da imagem.");
-      const ocr = await readRouteImageOcrWithoutBlockingSocket(imagePath, {
-        maxReadings: preferCageCrop ? 3 : 6,
-        fastFirst,
-        preferCageCrop
-      });
+      const readings = [];
+      for (const imagePath of imagePaths) {
+        readings.push(await readRouteImageOcrWithoutBlockingSocket(imagePath, {
+          maxReadings: preferCageCrop ? 3 : 6,
+          fastFirst,
+          preferCageCrop
+        }));
+      }
+      // Consenso é calculado por tratamento visual, não pela quantidade de fotos.
+      const ocr = combineRouteImageBatch(readings);
       const ocrFinishedAtMs = Date.now();
       this.logger.info(`[ROMANEIO] Motor da leitura: ${ocr.source}.`);
       if (sequence !== this.latestRouteImageSequence) {
@@ -2675,7 +2724,7 @@ export class BotService extends EventEmitter {
         this.ocrAnalysisDurationsMs = [...this.ocrAnalysisDurationsMs, Date.now() - analysisStartedAtMs].slice(-10);
       }
       try {
-        fs.rmSync(imagePath, { force: true });
+        for (const imagePath of imagePaths) fs.rmSync(imagePath, { force: true });
       } catch {
         // Arquivo temporário já pode ter sido removido.
       }

@@ -171,15 +171,36 @@ export function isSafeAutomaticGaiolaDetection(detection: DetectedRouteCode) {
 export function calculateCageColumnCrop(imageWidth: number, imageHeight: number, resizedWidth: number, resizedHeight: number) {
   void imageWidth;
   void imageHeight;
-  // O WhatsApp preserva conteúdos iguais em telas com proporções diferentes.
-  // A faixa cobre GAIOLA tanto na borda quanto depois de DATA/HUB; o whitelist
-  // e a validação de código descartam os identificadores longos de AT.
-  const left = 0;
+  // O layout novo usa DATA/TURNO/ROTA e fundo escuro. A coluna procurada fica
+  // entre 8% e 42% da imagem; a faixa também continua cobrindo a antiga GAIOLA.
+  // Não tentamos mais encontrar "blocos escuros", pois no tema novo toda a
+  // tabela é escura e esse heurístico cortava justamente a coluna ROTA.
+  const left = Math.max(0, Math.floor(resizedWidth * 0.08));
   return {
     left,
     top: 0,
-    width: Math.max(1, Math.min(resizedWidth, Math.floor(resizedWidth * 0.28))),
+    width: Math.max(1, Math.min(resizedWidth - left, Math.floor(resizedWidth * 0.34))),
     height: resizedHeight
+  };
+}
+
+export function combineRouteImageBatch(readings: RouteOcrResult[]): RouteOcrResult {
+  if (!readings.length) return { text: "", lines: [], source: "lote-vazio", variants: [] };
+  const readingVariants = readings.map((reading) => reading.variants?.length ? reading.variants : [reading]);
+  const variantCount = Math.max(...readingVariants.map((items) => items.length));
+  const variants = Array.from({ length: variantCount }, (_, variantIndex) => {
+    const parts = readingVariants.flatMap((items) => items[variantIndex] ? [items[variantIndex]] : []);
+    return {
+      text: parts.map((part) => part.text).join("\n"),
+      lines: parts.flatMap((part) => part.lines),
+      source: parts.map((part) => part.source).join(" + lote + ")
+    };
+  });
+  return {
+    text: readings.map((reading) => reading.text).join("\n"),
+    lines: readings.flatMap((reading) => reading.lines),
+    source: readings.map((reading) => reading.source).join(" + lote + "),
+    variants
   };
 }
 
@@ -298,47 +319,9 @@ async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string
 }
 
 async function detectCageColumnCrop(imagePath: string, sharp: any, fallbackWidth: number, fallbackHeight: number) {
-  try {
-    const { data, info } = await sharp(imagePath).rotate().grayscale().raw().toBuffer({ resolveWithObject: true });
-    const width = Number(info.width || fallbackWidth);
-    const height = Number(info.height || fallbackHeight);
-    const yStart = Math.max(1, Math.floor(height * 0.11));
-    const yEnd = Math.max(yStart + 1, Math.floor(height * 0.96));
-    const yStep = Math.max(1, Math.floor((yEnd - yStart) / 120));
-    const darkColumns: boolean[] = [];
-    for (let x = 0; x < Math.floor(width * 0.36); x += 1) {
-      let samples = 0;
-      let dark = 0;
-      for (let y = yStart; y < yEnd; y += yStep) {
-        samples += 1;
-        if (data[y * width + x] < 105) dark += 1;
-      }
-      darkColumns.push(samples > 0 && dark / samples >= 0.45);
-    }
-    const runs: Array<[number, number]> = [];
-    let start = -1;
-    for (let x = 0; x <= darkColumns.length; x += 1) {
-      if (darkColumns[x] && start < 0) start = x;
-      if (!darkColumns[x] && start >= 0) {
-        runs.push([start, x]);
-        start = -1;
-      }
-    }
-    const hubRuns = runs.filter(([left, right]) => right - left >= width * 0.035);
-    if (hubRuns.length) {
-      const [left, right] = hubRuns.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]))[0];
-      const hubWidth = right - left;
-      const cageLeft = Math.max(0, right - Math.round(width * 0.004));
-      const cageWidth = Math.min(width - cageLeft, Math.max(Math.round(width * 0.085), Math.round(hubWidth * 1.12)));
-      return { left: cageLeft, top: 0, width: Math.max(1, cageWidth), height };
-    }
-    const edgeRun = runs.find(([left, right]) => left <= width * 0.015 && right - left < width * 0.035);
-    const cageLeft = edgeRun ? Math.max(0, edgeRun[1] - 1) : 0;
-    const cageWidth = Math.min(width - cageLeft, Math.max(1, Math.round(width * 0.11)));
-    return { left: cageLeft, top: 0, width: cageWidth, height };
-  } catch {
-    return { left: 0, top: 0, width: Math.max(1, Math.round(fallbackWidth * 0.12)), height: fallbackHeight };
-  }
+  void imagePath;
+  void sharp;
+  return calculateCageColumnCrop(fallbackWidth, fallbackHeight, fallbackWidth, fallbackHeight);
 }
 
 async function createPreprocessedImages(imagePath: string, preferCageCrop = false, mode: "all" | "cage" | "full" = "all") {

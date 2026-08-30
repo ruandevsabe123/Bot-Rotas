@@ -10,17 +10,31 @@ const {
   selectConsensusDetection,
   canUseFastOcrResult,
   isSafeAutomaticGaiolaDetection,
-  calculateCageColumnCrop
+  calculateCageColumnCrop,
+  combineRouteImageBatch
 } = require("../dist/bot/ocr.js");
 
-test("cobre GAIOLA nos layouts completo e já cortado sem depender da proporção", () => {
+test("cobre GAIOLA antiga e ROTA do layout escuro novo sem depender da proporção", () => {
   const full = calculateCageColumnCrop(1122, 640, 2244, 1280);
-  assert.deepEqual(full, { left: 0, top: 0, width: 628, height: 1280 });
+  assert.deepEqual(full, { left: 179, top: 0, width: 762, height: 1280 });
 
   const cropped = calculateCageColumnCrop(906, 447, 1812, 894);
-  assert.deepEqual(cropped, { left: 0, top: 0, width: 507, height: 894 });
-  assert.ok(full.width < 2244 * 0.29);
-  assert.ok(cropped.width < 1812 * 0.29);
+  assert.deepEqual(cropped, { left: 144, top: 0, width: 616, height: 894 });
+  assert.ok(full.left < 2244 * 0.1);
+  assert.ok(full.left + full.width > 2244 * 0.4);
+});
+
+test("lote de fotos preserva o consenso individual e reúne todas as rotas", () => {
+  const photo = (code, prefix) => ({
+    text: code,
+    lines: [],
+    source: prefix,
+    variants: ["a", "b", "c"].map((variant) => plainReading(code, `${prefix}-${variant}`))
+  });
+  const batch = combineRouteImageBatch([photo("A-18", "foto-1"), photo("C-31", "foto-2")]);
+  assert.equal(batch.variants.length, 3);
+  assert.deepEqual(findAllGaiolaCodesFromOcr(batch).map((item) => item.code).sort(), ["A-18", "C-31"]);
+  assert.ok(findAllGaiolaCodesFromOcr(batch).every((item) => item.safeForAutomatic));
 });
 
 function plainReading(text, source) {
