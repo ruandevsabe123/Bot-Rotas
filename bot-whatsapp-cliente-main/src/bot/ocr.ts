@@ -114,9 +114,14 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
     }
 
     if (fastReadingCount < selectedVariants.length) {
-      const remainingAttempts = await runOcrVariants(selectedVariants.slice(fastReadingCount));
-      readings = [...readings, ...remainingAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : [])];
-      errors = [...errors, ...remainingAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : [])];
+      // Os tratamentos de fallback são progressivos. Assim que uma leitura
+      // adicional fecha o consenso, evitamos gastar CPU nas demais imagens.
+      for (const variant of selectedVariants.slice(fastReadingCount)) {
+        const [attempt] = await runOcrVariants([variant]);
+        if (attempt?.reading) readings = [...readings, attempt.reading];
+        if (attempt?.error) errors = [...errors, attempt.error];
+        if (options.fastFirst && canUseFastOcrResult(readings)) break;
+      }
     }
 
     if (!readings.length) {

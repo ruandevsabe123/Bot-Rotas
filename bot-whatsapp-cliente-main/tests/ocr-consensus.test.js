@@ -179,6 +179,16 @@ test("encerra após o trio rápido quando cobre as rotas e isola um único ruíd
   assert.equal(detected.find((item) => item.code === "C-28").safeForAutomatic, false);
 });
 
+test("uma quarta leitura pode fechar o consenso sem executar todos os fallbacks", () => {
+  const first = plainReading("A-18\nA-20\nC-2\nC-11\nC-15\nC-20\nC-27\nC-31\nC-32\nD-8\nD-12\nE-23\nF-19", "l1");
+  const second = plainReading("A-20\nB-24\nC-2\nC-15\nC-17\nC-20\nC-27\nC-31\nC-32\nD-8\nD-12\nE-23\nF-19", "l2");
+  const third = plainReading("A-18\nA-20\nB-25\nC-2\nC-11\nC-17\nC-28\nC-27\nC-32\nD-8\nD-12\nE-23\nF-19", "l3");
+  const fourth = plainReading("A-18\nA-20\nB-24\nB-25\nC-15\nC-20\nD-8\nD-12\nE-23\nF-19", "l4");
+
+  assert.equal(canUseFastOcrResult([first, second, third]), false);
+  assert.equal(canUseFastOcrResult([first, second, third, fourth]), true);
+});
+
 test("automático exige duas confirmações independentes na análise completa", () => {
   assert.equal(isSafeAutomaticGaiolaDetection({
     ...detection("F-14", 92),
