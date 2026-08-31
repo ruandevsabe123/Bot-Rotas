@@ -133,17 +133,17 @@ test("mantém análise completa quando as leituras rápidas divergem", () => {
   ]), false);
 });
 
-test("automático exige confirmação de pelo menos metade das leituras", () => {
+test("automático exige duas confirmações independentes na análise completa", () => {
   assert.equal(isSafeAutomaticGaiolaDetection({
     ...detection("F-14", 92),
     safeForAutomatic: true,
-    evidenceCount: 2,
+    evidenceCount: 1,
     variantCount: 6
   }), false);
   assert.equal(isSafeAutomaticGaiolaDetection({
     ...detection("F-14", 92),
     safeForAutomatic: true,
-    evidenceCount: 3,
+    evidenceCount: 2,
     variantCount: 6
   }), true);
 });

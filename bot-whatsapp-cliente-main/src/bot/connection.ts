@@ -2528,16 +2528,16 @@ export class BotService extends EventEmitter {
       }
       const downloadFinishedAtMs = Date.now();
       const fastFirst = this.groupState === "open";
-      const preferCageCrop = fastFirst && config.ocrSelectionMode === "cages";
+      // Por escolha e por gaiolas compartilham exatamente a mesma leitura.
+      // Somente a decisão posterior (manual ou automática) é diferente.
+      const preferCageCrop = false;
       this.logger.info(fastFirst
-        ? preferCageCrop
-          ? "[ROMANEIO] Grupo aberto: priorizando a coluna de gaiolas com consenso triplo."
-          : "[ROMANEIO] Grupo aberto: usando análise progressiva rápida com consenso."
+        ? "[ROMANEIO] Grupo aberto: usando a mesma análise completa dos modos por escolha e por gaiolas."
         : "[ROMANEIO] Grupo fechado: usando análise completa da imagem.");
       const readings = [];
       for (const imagePath of imagePaths) {
         readings.push(await readRouteImageOcrWithoutBlockingSocket(imagePath, {
-          maxReadings: preferCageCrop ? 4 : 6,
+          maxReadings: 6,
           fastFirst,
           preferCageCrop
         }));

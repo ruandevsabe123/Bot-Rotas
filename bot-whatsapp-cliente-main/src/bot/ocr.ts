@@ -165,7 +165,10 @@ export function canUseFastOcrResult(readings: RouteOcrResult[]) {
 }
 
 export function isSafeAutomaticGaiolaDetection(detection: DetectedRouteCode) {
-  const requiredEvidence = Math.max(2, Math.ceil(Math.max(1, detection.variantCount) / 2));
+  // Duas leituras independentes já formam consenso. Exigir metade dos seis
+  // tratamentos fazia o automático rejeitar códigos que o modo por escolha
+  // exibia corretamente em duas versões da mesma imagem.
+  const requiredEvidence = 2;
   return detection.safeForAutomatic && detection.confidence >= 45 && detection.evidenceCount >= requiredEvidence;
 }
 
