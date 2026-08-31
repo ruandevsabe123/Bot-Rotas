@@ -31,6 +31,8 @@ export type RouteOcrResult = {
   variants?: RouteOcrResult[];
 };
 
+export type RouteImageLayoutPreset = "dark-modern" | "light-orange" | "light-left";
+
 export type DetectedRouteCode = {
   route: string;
   cidade?: string;
@@ -213,6 +215,24 @@ export function isDarkRouteImage(meanLuminance: number) {
   return Number.isFinite(meanLuminance) && meanLuminance < 128;
 }
 
+export function classifyRouteImageLayout(meanLuminance: number, orangeRatio = 0): RouteImageLayoutPreset {
+  if (isDarkRouteImage(meanLuminance)) return "dark-modern";
+  if (Number.isFinite(orangeRatio) && orangeRatio >= 0.04) return "light-orange";
+  return "light-left";
+}
+
+export function calculatePresetRouteCrop(preset: RouteImageLayoutPreset, imageWidth: number, imageHeight: number) {
+  if (preset === "dark-modern") return calculateDarkRouteColumnCrop(imageWidth, imageHeight);
+  const widthRatio = preset === "light-orange" ? 0.18 : 0.35;
+  return { left: 0, top: 0, width: Math.max(1, Math.floor(imageWidth * widthRatio)), height: imageHeight };
+}
+
+export function calculatePresetRouteAtCrop(preset: RouteImageLayoutPreset, imageWidth: number, imageHeight: number) {
+  if (preset === "dark-modern") return calculateDarkRouteAtColumnCrop(imageWidth, imageHeight);
+  const widthRatio = preset === "light-orange" ? 0.34 : 0.48;
+  return { left: 0, top: 0, width: Math.max(1, Math.floor(imageWidth * widthRatio)), height: imageHeight };
+}
+
 export function combineRouteImageBatch(readings: RouteOcrResult[]): RouteOcrResult {
   if (!readings.length) return { text: "", lines: [], source: "lote-vazio", variants: [] };
   const readingVariants = readings.map((reading) => reading.variants?.length ? reading.variants : [reading]);
@@ -352,6 +372,35 @@ async function detectCageColumnCrop(imagePath: string, sharp: any, fallbackWidth
   return calculateCageColumnCrop(fallbackWidth, fallbackHeight, fallbackWidth, fallbackHeight);
 }
 
+async function detectRouteImageLayoutPreset(imagePath: string, sharp: any, meanLuminance: number): Promise<RouteImageLayoutPreset> {
+  if (isDarkRouteImage(meanLuminance)) return "dark-modern";
+  try {
+    const { data, info } = await sharp(imagePath)
+      .rotate()
+      .resize({ width: 480, withoutEnlargement: true })
+      .removeAlpha()
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    const channels = Number(info.channels || 3);
+    const scanHeight = Math.max(1, Math.floor(Number(info.height || 1) * 0.25));
+    let orange = 0;
+    let samples = 0;
+    for (let y = 0; y < scanHeight; y += 2) {
+      for (let x = 0; x < Number(info.width || 1); x += 2) {
+        const offset = (y * Number(info.width || 1) + x) * channels;
+        const red = data[offset] || 0;
+        const green = data[offset + 1] || 0;
+        const blue = data[offset + 2] || 0;
+        samples += 1;
+        if (red >= 180 && green >= 35 && green <= 135 && blue <= 90 && red >= green * 1.6) orange += 1;
+      }
+    }
+    return classifyRouteImageLayout(meanLuminance, samples ? orange / samples : 0);
+  } catch {
+    return classifyRouteImageLayout(meanLuminance, 0);
+  }
+}
+
 async function createPreprocessedImages(imagePath: string, preferCageCrop = false, mode: "all" | "cage" | "full" = "all") {
   const generatedPaths: string[] = [];
   try {
@@ -372,24 +421,18 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const sourceWidth = metadata.width || resizeWidth;
     const sourceHeight = metadata.height || resizeHeight;
     const imageStats = await sharp(imagePath).rotate().grayscale().stats();
-    const darkLayout = isDarkRouteImage(Number(imageStats.channels?.[0]?.mean));
-    const cageCrop = darkLayout
-      ? calculateDarkRouteColumnCrop(sourceWidth, sourceHeight)
-      : await detectCageColumnCrop(imagePath, sharp, sourceWidth, sourceHeight);
-    const cageOriginalCrop = darkLayout
-      ? calculateDarkRouteAtColumnCrop(sourceWidth, sourceHeight)
-      : cageCrop;
+    const meanLuminance = Number(imageStats.channels?.[0]?.mean);
+    const layoutPreset = await detectRouteImageLayoutPreset(imagePath, sharp, meanLuminance);
+    const darkLayout = layoutPreset === "dark-modern";
+    const cageCrop = calculatePresetRouteCrop(layoutPreset, sourceWidth, sourceHeight);
+    const cageOriginalCrop = calculatePresetRouteAtCrop(layoutPreset, sourceWidth, sourceHeight);
     const cageBackground = darkLayout ? "black" : "white";
     const cagePipeline = () => {
       return sharp(imagePath).rotate().extract(cageCrop).grayscale();
     };
-    const focusedTableWidth = darkLayout
-      ? Math.max(900, Math.round(cageOriginalCrop.width * 2.2))
-      : resizeWidth;
+    const focusedTableWidth = Math.max(900, Math.round(cageOriginalCrop.width * 2.2));
     const focusedTablePipeline = () => {
-      let pipeline = sharp(imagePath).rotate();
-      if (darkLayout) pipeline = pipeline.extract(cageOriginalCrop);
-      return pipeline;
+      return sharp(imagePath).rotate().extract(cageOriginalCrop);
     };
 
     const fullJobs = [
@@ -449,15 +492,15 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     ]);
 
     const fullTableVariants = [
-      { path: enhancedPath, label: darkLayout ? "rota-at-contraste" : "contraste-e-nitidez", generated: true, psm: 6 },
-      { path: enhancedPath, label: darkLayout ? "rota-at-esparsa" : "texto-esparso", generated: false, psm: 11 },
-      { path: thresholdPath, label: darkLayout ? "rota-at-preto-e-branco" : "preto-e-branco", generated: true, psm: 6 },
+      { path: enhancedPath, label: `rota-at-${layoutPreset}-contraste`, generated: true, psm: 6 },
+      { path: enhancedPath, label: `rota-at-${layoutPreset}-esparsa`, generated: false, psm: 11 },
+      { path: thresholdPath, label: `rota-at-${layoutPreset}-preto-e-branco`, generated: true, psm: 6 },
     ];
     const cageColumnVariants = [
-      { path: cageEnhancedPath, label: "coluna-gaiola-4x", generated: true, psm: 6 },
-      { path: cageSoftPath, label: "coluna-gaiola-4x-suave", generated: true, psm: 6 },
-      { path: cageCompactPath, label: "coluna-gaiola-3x", generated: true, psm: 6 },
-      { path: cageOriginalPath, label: "coluna-gaiola-at-2x-original", generated: true, psm: 6 },
+      { path: cageEnhancedPath, label: `coluna-gaiola-${layoutPreset}-4x`, generated: true, psm: 6 },
+      { path: cageSoftPath, label: `coluna-gaiola-${layoutPreset}-4x-suave`, generated: true, psm: 6 },
+      { path: cageCompactPath, label: `coluna-gaiola-${layoutPreset}-3x`, generated: true, psm: 6 },
+      { path: cageOriginalPath, label: `coluna-gaiola-${layoutPreset}-at-2x-original`, generated: true, psm: 6 },
     ];
     const originalVariant = [
       { path: imagePath, label: "original", generated: false, psm: 11 }

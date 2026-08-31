@@ -14,7 +14,10 @@ const {
   combineRouteImageBatch,
   isDarkRouteImage,
   calculateDarkRouteColumnCrop,
-  calculateDarkRouteAtColumnCrop
+  calculateDarkRouteAtColumnCrop,
+  classifyRouteImageLayout,
+  calculatePresetRouteCrop,
+  calculatePresetRouteAtCrop
 } = require("../dist/bot/ocr.js");
 
 test("cobre GAIOLA antiga e ROTA do layout escuro novo sem depender da proporção", () => {
@@ -88,6 +91,19 @@ test("recorte de conferência inclui ROTA e AT sem chegar ao CLUSTER", () => {
   assert.ok(crop.left <= 910 * 0.2);
   assert.ok(crop.left + crop.width >= 910 * 0.55);
   assert.ok(crop.left + crop.width < 910 * 0.6);
+});
+
+test("seleciona automaticamente a predefinição visual da imagem", () => {
+  assert.equal(classifyRouteImageLayout(35, 0), "dark-modern");
+  assert.equal(classifyRouteImageLayout(230, 0.18), "light-orange");
+  assert.equal(classifyRouteImageLayout(230, 0.01), "light-left");
+});
+
+test("cada predefinição recorta ROTA e confirmação ROTA mais AT", () => {
+  assert.deepEqual(calculatePresetRouteCrop("light-orange", 900, 300), { left: 0, top: 0, width: 162, height: 300 });
+  assert.deepEqual(calculatePresetRouteAtCrop("light-orange", 900, 300), { left: 0, top: 0, width: 306, height: 300 });
+  assert.deepEqual(calculatePresetRouteCrop("light-left", 600, 700), { left: 0, top: 0, width: 210, height: 700 });
+  assert.deepEqual(calculatePresetRouteAtCrop("light-left", 600, 700), { left: 0, top: 0, width: 288, height: 700 });
 });
 
 test("lote de fotos preserva o consenso individual e reúne todas as rotas", () => {
