@@ -11,7 +11,8 @@ const {
   canUseFastOcrResult,
   isSafeAutomaticGaiolaDetection,
   calculateCageColumnCrop,
-  combineRouteImageBatch
+  combineRouteImageBatch,
+  shouldInvertCageCrop
 } = require("../dist/bot/ocr.js");
 
 test("cobre GAIOLA antiga e ROTA do layout escuro novo sem depender da proporção", () => {
@@ -22,6 +23,13 @@ test("cobre GAIOLA antiga e ROTA do layout escuro novo sem depender da proporç�
   assert.deepEqual(cropped, { left: 144, top: 0, width: 616, height: 894 });
   assert.ok(full.left < 2244 * 0.1);
   assert.ok(full.left + full.width > 2244 * 0.4);
+});
+
+test("inverte apenas tabela escura antes de enviar ao Tesseract", () => {
+  assert.equal(shouldInvertCageCrop(32), true);
+  assert.equal(shouldInvertCageCrop(127.9), true);
+  assert.equal(shouldInvertCageCrop(128), false);
+  assert.equal(shouldInvertCageCrop(238), false);
 });
 
 test("lote de fotos preserva o consenso individual e reúne todas as rotas", () => {

@@ -184,6 +184,10 @@ export function calculateCageColumnCrop(imageWidth: number, imageHeight: number,
   };
 }
 
+export function shouldInvertCageCrop(meanLuminance: number) {
+  return Number.isFinite(meanLuminance) && meanLuminance < 128;
+}
+
 export function combineRouteImageBatch(readings: RouteOcrResult[]): RouteOcrResult {
   if (!readings.length) return { text: "", lines: [], source: "lote-vazio", variants: [] };
   const readingVariants = readings.map((reading) => reading.variants?.length ? reading.variants : [reading]);
@@ -341,6 +345,13 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       ? Math.max(1, Math.round((metadata.height / metadata.width) * resizeWidth))
       : 1200;
     const cageCrop = await detectCageColumnCrop(imagePath, sharp, metadata.width || resizeWidth, metadata.height || resizeHeight);
+    const cageStats = await sharp(imagePath).rotate().extract(cageCrop).grayscale().stats();
+    const invertCage = shouldInvertCageCrop(Number(cageStats.channels?.[0]?.mean));
+    const cagePipeline = () => {
+      let pipeline = sharp(imagePath).rotate().extract(cageCrop).grayscale();
+      if (invertCage) pipeline = pipeline.negate();
+      return pipeline;
+    };
 
     const fullJobs = [
       () => sharp(imagePath)
@@ -363,33 +374,25 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .toFile(thresholdPath)
     ];
     const cageJobs = [
-      () => sharp(imagePath)
-        .rotate()
-        .extract(cageCrop)
+      () => cagePipeline()
         .resize({ width: cageCrop.width * 4, withoutEnlargement: false })
-        .grayscale()
         .normalize()
         .sharpen({ sigma: 0.6 })
         .extend({ top: 24, bottom: 50, left: 24, right: 24, background: "white" })
         .png()
         .toFile(cageEnhancedPath),
-      () => sharp(imagePath)
-        .rotate()
-        .extract(cageCrop)
+      () => cagePipeline()
         .resize({ width: cageCrop.width * 4, withoutEnlargement: false })
-        .grayscale()
         .normalize()
         .linear(1.12, -5)
         .extend({ top: 24, bottom: 50, left: 24, right: 24, background: "white" })
         .png()
         .toFile(cageSoftPath),
-      () => sharp(imagePath)
-        .rotate()
-        .extract(cageCrop)
+      () => cagePipeline()
         .resize({ width: cageCrop.width * 3, withoutEnlargement: false })
-        .grayscale()
         .normalize()
         .sharpen({ sigma: 0.7 })
+        .threshold(172)
         .extend({ top: 20, bottom: 40, left: 20, right: 20, background: "white" })
         .png()
         .toFile(cageCompactPath)
