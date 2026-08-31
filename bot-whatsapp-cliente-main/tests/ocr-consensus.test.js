@@ -133,6 +133,17 @@ test("mantém análise completa quando as leituras rápidas divergem", () => {
   ]), false);
 });
 
+test("encerra após o trio rápido quando cobre as rotas e isola um único ruído", () => {
+  const readings = [
+    plainReading("A-18\nA-20\nB-24\nC-2\nC-11\nC-15\nC-17\nC-20\nC-27\nC-31\nC-32\nD-8\nD-12", "esparsa"),
+    plainReading("A-18\nA-20\nB-25\nC-2\nC-11\nC-17\nC-27\nC-28\nC-32\nD-8\nD-12", "binaria"),
+    plainReading("A-18\nA-20\nB-24\nB-25\nC-2\nC-11\nC-15\nC-20\nC-27\nC-31\nC-32\nD-8\nD-12", "coluna")
+  ];
+  assert.equal(canUseFastOcrResult(readings), true);
+  const detected = findAllGaiolaCodesFromOcr({ ...readings[0], variants: readings });
+  assert.equal(detected.find((item) => item.code === "C-28").safeForAutomatic, false);
+});
+
 test("automático exige duas confirmações independentes na análise completa", () => {
   assert.equal(isSafeAutomaticGaiolaDetection({
     ...detection("F-14", 92),

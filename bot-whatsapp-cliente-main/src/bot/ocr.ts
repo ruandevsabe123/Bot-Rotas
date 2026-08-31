@@ -154,14 +154,17 @@ function combineOcrReadings(readings: RouteOcrResult[]): RouteOcrResult {
 
 export function canUseFastOcrResult(readings: RouteOcrResult[]) {
   if (readings.length < 2) return false;
-  const signatures = readings.map((reading) => findAllGaiolaCodesFromOcr(reading)
-    .map((route) => normalizeOcrText(route.code))
-    .filter(Boolean)
-    .sort()
-    .join("|"));
-  if (!signatures[0] || signatures.some((signature) => signature !== signatures[0])) return false;
   const detected = findAllGaiolaCodesFromOcr(combineOcrReadings(readings));
-  return detected.length > 0 && detected.every((route) => route.safeForAutomatic);
+  const safe = detected.filter(isSafeAutomaticGaiolaDetection);
+  const strongestReadingCount = Math.max(...readings.map((reading) => findAllGaiolaCodesFromOcr(reading).length));
+  const isolated = detected.filter((route) => !isSafeAutomaticGaiolaDetection(route) && route.confidence >= 45);
+  const minimumCoverage = Math.max(1, Math.ceil(strongestReadingCount * 0.85));
+  const minimumConsensusShare = Math.max(1, Math.ceil(detected.length * 0.85));
+  const toleratedIsolatedNoise = Math.max(1, Math.floor(strongestReadingCount * 0.1));
+  return strongestReadingCount > 0 &&
+    safe.length >= minimumCoverage &&
+    safe.length >= minimumConsensusShare &&
+    isolated.length <= toleratedIsolatedNoise;
 }
 
 export function isSafeAutomaticGaiolaDetection(detection: DetectedRouteCode) {
@@ -457,7 +460,19 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     if (mode === "full") return [...fullTableVariants, ...originalVariant];
     return preferCageCrop
       ? [...cageColumnVariants, ...fullTableVariants, ...originalVariant]
-      : [...fullTableVariants, ...cageColumnVariants, ...originalVariant];
+      : [
+          // Perfil rápido comprovado no layout novo: texto esparso completo,
+          // tabela binária e coluna binária compacta. Os demais ficam como
+          // fallback e só rodam quando o consenso inicial for insuficiente.
+          fullTableVariants[1],
+          fullTableVariants[2],
+          cageColumnVariants[2],
+          fullTableVariants[0],
+          cageColumnVariants[0],
+          cageColumnVariants[1],
+          cageColumnVariants[3],
+          ...originalVariant
+        ];
   } catch {
     for (const generatedPath of generatedPaths) {
       try {
