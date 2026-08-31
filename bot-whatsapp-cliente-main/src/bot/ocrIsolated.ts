@@ -15,6 +15,7 @@ const RETRYABLE_WORKER_ERROR = /SIGBUS|encerrou inesperadamente|worker da IA fal
 const pendingRequests = new Map<string, PendingRequest>();
 let worker: ChildProcess | undefined;
 let requestSequence = 0;
+let warmupRequested = false;
 
 export function shouldUseIsolatedOcr(env = process.env) {
   if (env.OCR_ISOLATED_PROCESS === "false") return false;
@@ -54,13 +55,19 @@ function requestIsolatedOcr(imagePath: string, options: OcrOptions) {
 }
 
 export function warmupIsolatedOcrWorker() {
-  if (shouldUseIsolatedOcr()) getWorker();
+  if (!shouldUseIsolatedOcr() || warmupRequested) return;
+  const activeWorker = getWorker();
+  warmupRequested = true;
+  activeWorker.send?.({ type: "warmup" }, (error) => {
+    if (error) warmupRequested = false;
+  });
 }
 
 export function shutdownIsolatedOcrWorker() {
   if (!worker) return;
   const current = worker;
   worker = undefined;
+  warmupRequested = false;
   current.removeAllListeners();
   current.kill();
   rejectAllPending("Worker da IA encerrado.");
@@ -92,6 +99,7 @@ function getWorker() {
   });
   worker.on("exit", (code, signal) => {
     worker = undefined;
+    warmupRequested = false;
     rejectAllPending(`Worker da IA encerrou inesperadamente (${code ?? signal ?? "sem código"}).`);
   });
   return worker;
@@ -118,6 +126,7 @@ function rejectAllPending(message: string) {
 function recycleWorker() {
   const current = worker;
   worker = undefined;
+  warmupRequested = false;
   current?.removeAllListeners();
   current?.kill();
 }

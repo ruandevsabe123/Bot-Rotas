@@ -47,7 +47,6 @@ export type DetectedRouteCode = {
 };
 
 let tesseractJsWorkerPromise: ReturnType<typeof createWorker> | undefined;
-let tesseractJsCageWorkerPromise: ReturnType<typeof createWorker> | undefined;
 let nativeTesseractAvailable: boolean | undefined;
 
 export function normalizeOcrText(text: string) {
@@ -543,19 +542,10 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
   }
 }
 
-function getTesseractJsWorker(cageOnly = false) {
-  if (cageOnly && !tesseractJsCageWorkerPromise) {
-    // Usa o mesmo modelo português do leitor completo. Além de reconhecer
-    // perfeitamente letras/números, evita o modelo ENG antigo que em alguns
-    // ambientes retornava texto vazio para a coluna já recortada.
-    tesseractJsCageWorkerPromise = createWorker("por", 1, {
-      logger: () => undefined
-    }).catch((error) => {
-      tesseractJsCageWorkerPromise = undefined;
-      throw error;
-    });
-  }
-  if (!cageOnly && !tesseractJsWorkerPromise) {
+function getTesseractJsWorker(_cageOnly = false) {
+  // Todas as variantes usam português e são executadas em sequência.
+  // Um worker único evita carregar duas cópias do mesmo modelo na memória.
+  if (!tesseractJsWorkerPromise) {
     tesseractJsWorkerPromise = createWorker("por", 1, {
       logger: () => undefined
     }).catch((error) => {
@@ -564,25 +554,23 @@ function getTesseractJsWorker(cageOnly = false) {
     });
   }
 
-  return cageOnly ? tesseractJsCageWorkerPromise! : tesseractJsWorkerPromise!;
+  return tesseractJsWorkerPromise;
 }
 
 export async function warmupRouteOcrEngine() {
-  await getTesseractJsWorker(true);
+  await getTesseractJsWorker();
 }
 
 export async function shutdownRouteOcrEngine() {
-  const workers = [tesseractJsWorkerPromise, tesseractJsCageWorkerPromise].filter(Boolean) as ReturnType<typeof createWorker>[];
+  const currentWorker = tesseractJsWorkerPromise;
   tesseractJsWorkerPromise = undefined;
-  tesseractJsCageWorkerPromise = undefined;
-  await Promise.all(workers.map(async (workerPromise) => {
-    try {
-      const worker = await workerPromise;
-      await worker.terminate();
-    } catch {
-      // O processo pode ter caído antes de liberar o motor da IA.
-    }
-  }));
+  if (!currentWorker) return;
+  try {
+    const worker = await currentWorker;
+    await worker.terminate();
+  } catch {
+    // O processo pode ter caído antes de liberar o motor da IA.
+  }
 }
 
 export function findConfiguredRouteCode(ocrText: string, routes: string[]) {
