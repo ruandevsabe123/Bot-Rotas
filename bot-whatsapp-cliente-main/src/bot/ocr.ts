@@ -383,20 +383,26 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const cagePipeline = () => {
       return sharp(imagePath).rotate().extract(cageCrop).grayscale();
     };
+    const focusedTableWidth = darkLayout
+      ? Math.max(900, Math.round(cageOriginalCrop.width * 2.2))
+      : resizeWidth;
+    const focusedTablePipeline = () => {
+      let pipeline = sharp(imagePath).rotate();
+      if (darkLayout) pipeline = pipeline.extract(cageOriginalCrop);
+      return pipeline;
+    };
 
     const fullJobs = [
-      () => sharp(imagePath)
-        .rotate()
-        .resize({ width: resizeWidth, withoutEnlargement: false })
+      () => focusedTablePipeline()
+        .resize({ width: focusedTableWidth, withoutEnlargement: false })
         .grayscale()
         .normalize()
         .linear(1.18, -8)
         .sharpen({ sigma: 1.05, m1: 1.05, m2: 2 })
         .png()
         .toFile(enhancedPath),
-      () => sharp(imagePath)
-        .rotate()
-        .resize({ width: resizeWidth, withoutEnlargement: false })
+      () => focusedTablePipeline()
+        .resize({ width: focusedTableWidth, withoutEnlargement: false })
         .grayscale()
         .normalize()
         .sharpen({ sigma: 0.9 })
@@ -443,9 +449,9 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     ]);
 
     const fullTableVariants = [
-      { path: enhancedPath, label: "contraste-e-nitidez", generated: true, psm: 6 },
-      { path: enhancedPath, label: "texto-esparso", generated: false, psm: 11 },
-      { path: thresholdPath, label: "preto-e-branco", generated: true, psm: 6 },
+      { path: enhancedPath, label: darkLayout ? "rota-at-contraste" : "contraste-e-nitidez", generated: true, psm: 6 },
+      { path: enhancedPath, label: darkLayout ? "rota-at-esparsa" : "texto-esparso", generated: false, psm: 11 },
+      { path: thresholdPath, label: darkLayout ? "rota-at-preto-e-branco" : "preto-e-branco", generated: true, psm: 6 },
     ];
     const cageColumnVariants = [
       { path: cageEnhancedPath, label: "coluna-gaiola-4x", generated: true, psm: 6 },
