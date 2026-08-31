@@ -184,7 +184,16 @@ export function calculateCageColumnCrop(imageWidth: number, imageHeight: number,
   };
 }
 
-export function shouldInvertCageCrop(meanLuminance: number) {
+export function calculateDarkRouteColumnCrop(imageWidth: number, imageHeight: number) {
+  return {
+    left: Math.max(0, Math.floor(imageWidth * 0.16)),
+    top: 0,
+    width: Math.max(1, Math.min(imageWidth, Math.floor(imageWidth * 0.23))),
+    height: imageHeight
+  };
+}
+
+export function isDarkRouteImage(meanLuminance: number) {
   return Number.isFinite(meanLuminance) && meanLuminance < 128;
 }
 
@@ -300,8 +309,7 @@ async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string
   const cageOnly = label.startsWith("coluna-gaiola");
   const worker = await getTesseractJsWorker(cageOnly);
   await worker.setParameters({
-    tessedit_pageseg_mode: String(psm) as any,
-    ...(cageOnly ? { tessedit_char_whitelist: "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-" } : {})
+    tessedit_pageseg_mode: String(psm) as any
   });
 
   const result = await worker.recognize(
@@ -344,13 +352,16 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const resizeHeight = metadata.width && metadata.height
       ? Math.max(1, Math.round((metadata.height / metadata.width) * resizeWidth))
       : 1200;
-    const cageCrop = await detectCageColumnCrop(imagePath, sharp, metadata.width || resizeWidth, metadata.height || resizeHeight);
-    const cageStats = await sharp(imagePath).rotate().extract(cageCrop).grayscale().stats();
-    const invertCage = shouldInvertCageCrop(Number(cageStats.channels?.[0]?.mean));
+    const sourceWidth = metadata.width || resizeWidth;
+    const sourceHeight = metadata.height || resizeHeight;
+    const imageStats = await sharp(imagePath).rotate().grayscale().stats();
+    const darkLayout = isDarkRouteImage(Number(imageStats.channels?.[0]?.mean));
+    const cageCrop = darkLayout
+      ? calculateDarkRouteColumnCrop(sourceWidth, sourceHeight)
+      : await detectCageColumnCrop(imagePath, sharp, sourceWidth, sourceHeight);
+    const cageBackground = darkLayout ? "black" : "white";
     const cagePipeline = () => {
-      let pipeline = sharp(imagePath).rotate().extract(cageCrop).grayscale();
-      if (invertCage) pipeline = pipeline.negate();
-      return pipeline;
+      return sharp(imagePath).rotate().extract(cageCrop).grayscale();
     };
 
     const fullJobs = [
@@ -378,14 +389,14 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .resize({ width: cageCrop.width * 4, withoutEnlargement: false })
         .normalize()
         .sharpen({ sigma: 0.6 })
-        .extend({ top: 24, bottom: 50, left: 24, right: 24, background: "white" })
+        .extend({ top: 24, bottom: 50, left: 24, right: 24, background: cageBackground })
         .png()
         .toFile(cageEnhancedPath),
       () => cagePipeline()
         .resize({ width: cageCrop.width * 4, withoutEnlargement: false })
         .normalize()
         .linear(1.12, -5)
-        .extend({ top: 24, bottom: 50, left: 24, right: 24, background: "white" })
+        .extend({ top: 24, bottom: 50, left: 24, right: 24, background: cageBackground })
         .png()
         .toFile(cageSoftPath),
       () => cagePipeline()
@@ -393,7 +404,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .normalize()
         .sharpen({ sigma: 0.7 })
         .threshold(172)
-        .extend({ top: 20, bottom: 40, left: 20, right: 20, background: "white" })
+        .extend({ top: 20, bottom: 40, left: 20, right: 20, background: cageBackground })
         .png()
         .toFile(cageCompactPath)
     ];
@@ -410,9 +421,9 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       { path: thresholdPath, label: "preto-e-branco", generated: true, psm: 6 },
     ];
     const cageColumnVariants = [
-      { path: cageEnhancedPath, label: "coluna-gaiola-4x", generated: true, psm: 11 },
-      { path: cageSoftPath, label: "coluna-gaiola-4x-suave", generated: true, psm: 11 },
-      { path: cageCompactPath, label: "coluna-gaiola-3x", generated: true, psm: 11 },
+      { path: cageEnhancedPath, label: "coluna-gaiola-4x", generated: true, psm: 6 },
+      { path: cageSoftPath, label: "coluna-gaiola-4x-suave", generated: true, psm: 6 },
+      { path: cageCompactPath, label: "coluna-gaiola-3x", generated: true, psm: 6 },
     ];
     const originalVariant = [
       { path: imagePath, label: "original", generated: false, psm: 11 }
@@ -436,7 +447,10 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
 
 function getTesseractJsWorker(cageOnly = false) {
   if (cageOnly && !tesseractJsCageWorkerPromise) {
-    tesseractJsCageWorkerPromise = createWorker("eng", 1, {
+    // Usa o mesmo modelo português do leitor completo. Além de reconhecer
+    // perfeitamente letras/números, evita o modelo ENG antigo que em alguns
+    // ambientes retornava texto vazio para a coluna já recortada.
+    tesseractJsCageWorkerPromise = createWorker("por", 1, {
       logger: () => undefined
     }).catch((error) => {
       tesseractJsCageWorkerPromise = undefined;
@@ -604,7 +618,7 @@ export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
 }
 
 function extractStandaloneGaiolaCode(text: string) {
-  const normalized = normalizeOcrToken(text).toUpperCase().replace(/[–—]/g, "-");
+  const normalized = normalizeDuplicatedGaiolaLetter(normalizeOcrToken(text)).toUpperCase().replace(/[–—]/g, "-");
   const match = normalized.match(/^([A-Z|1])\s*([-.:]?)\s*(\d{1,2})$/);
   if (!match) return "";
   if (/[|1]/.test(match[1]) && !match[2]) return "";
@@ -1039,10 +1053,14 @@ function extractOnlyGaiolaCode(text: string) {
 }
 
 function collectGaiolaCodes(text: string) {
-  const matches = [...text.matchAll(/\b([a-z])\s*[-.:]?\s*(\d{1,2})\b/gi)];
+  const matches = [...normalizeDuplicatedGaiolaLetter(text).matchAll(/\b([a-z])\s*[-.:]?\s*(\d{1,2})\b/gi)];
   return matches
     .map((match) => `${match[1] === "l" ? "I" : match[1].toUpperCase()}-${match[2]}`)
     .filter((code) => !/^AT-\d/i.test(code));
+}
+
+function normalizeDuplicatedGaiolaLetter(text: string) {
+  return String(text || "").replace(/\b([a-z])\1\s*([-.:])\s*(\d{1,2})\b/gi, "$1$2$3");
 }
 
 function extractMisreadLeadingICode(text: string) {

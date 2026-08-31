@@ -12,7 +12,8 @@ const {
   isSafeAutomaticGaiolaDetection,
   calculateCageColumnCrop,
   combineRouteImageBatch,
-  shouldInvertCageCrop
+  isDarkRouteImage,
+  calculateDarkRouteColumnCrop
 } = require("../dist/bot/ocr.js");
 
 test("cobre GAIOLA antiga e ROTA do layout escuro novo sem depender da proporção", () => {
@@ -25,11 +26,33 @@ test("cobre GAIOLA antiga e ROTA do layout escuro novo sem depender da proporç�
   assert.ok(full.left + full.width > 2244 * 0.4);
 });
 
-test("inverte apenas tabela escura antes de enviar ao Tesseract", () => {
-  assert.equal(shouldInvertCageCrop(32), true);
-  assert.equal(shouldInvertCageCrop(127.9), true);
-  assert.equal(shouldInvertCageCrop(128), false);
-  assert.equal(shouldInvertCageCrop(238), false);
+test("identifica o layout escuro sem alterar imagens claras antigas", () => {
+  assert.equal(isDarkRouteImage(32), true);
+  assert.equal(isDarkRouteImage(127.9), true);
+  assert.equal(isDarkRouteImage(128), false);
+  assert.equal(isDarkRouteImage(238), false);
+});
+
+test("corrige letra duplicada pelo tema escuro somente com consenso", () => {
+  const reading = (source) => plainReading("Cc-23\nCc-28\nCc-31", source);
+  const detected = findAllGaiolaCodesFromOcr({
+    ...reading("a"),
+    variants: [reading("a"), reading("b"), reading("c")]
+  });
+  assert.deepEqual(detected.map((item) => item.code), ["C-23", "C-28", "C-31"]);
+  assert.ok(detected.every((item) => item.safeForAutomatic));
+});
+
+test("no tema escuro recorta somente ROTA e deixa TURNO e AT de fora", () => {
+  assert.deepEqual(calculateDarkRouteColumnCrop(910, 780), {
+    left: 145,
+    top: 0,
+    width: 209,
+    height: 780
+  });
+  const crop = calculateDarkRouteColumnCrop(978, 800);
+  assert.ok(crop.left <= 978 * 0.2);
+  assert.ok(crop.left + crop.width >= 978 * 0.35);
 });
 
 test("lote de fotos preserva o consenso individual e reúne todas as rotas", () => {

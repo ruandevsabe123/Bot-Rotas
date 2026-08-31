@@ -2550,6 +2550,11 @@ export class BotService extends EventEmitter {
         this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
         return;
       }
+      const readingDiagnostics = (ocr.variants || [ocr]).map((variant, index) => {
+        const codes = findAllGaiolaCodesFromOcr(variant).map((item) => item.code);
+        return `L${index + 1}=${codes.length}[${codes.join(",")}]`;
+      });
+      this.logger.info(`[ROMANEIO] Conferência das leituras: ${readingDiagnostics.join(" | ")}.`);
       const detectedRoutes = findAllGaiolaCodesFromOcr(ocr);
       const detected = detectedRoutes[0];
       if (!detected) {
