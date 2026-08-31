@@ -233,6 +233,10 @@ export function calculatePresetRouteAtCrop(preset: RouteImageLayoutPreset, image
   return { left: 0, top: 0, width: Math.max(1, Math.floor(imageWidth * widthRatio)), height: imageHeight };
 }
 
+export function calculateFocusedOcrWidth(cropWidth: number) {
+  return Math.max(620, Math.min(1000, Math.round(cropWidth * 1.65)));
+}
+
 export function combineRouteImageBatch(readings: RouteOcrResult[]): RouteOcrResult {
   if (!readings.length) return { text: "", lines: [], source: "lote-vazio", variants: [] };
   const readingVariants = readings.map((reading) => reading.variants?.length ? reading.variants : [reading]);
@@ -430,7 +434,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const cagePipeline = () => {
       return sharp(imagePath).rotate().extract(cageCrop).grayscale();
     };
-    const focusedTableWidth = Math.max(900, Math.round(cageOriginalCrop.width * 2.2));
+    const focusedTableWidth = calculateFocusedOcrWidth(cageOriginalCrop.width);
     const focusedTablePipeline = () => {
       return sharp(imagePath).rotate().extract(cageOriginalCrop);
     };
@@ -469,7 +473,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .png()
         .toFile(cageSoftPath),
       () => cagePipeline()
-        .resize({ width: cageCrop.width * 3, withoutEnlargement: false })
+        .resize({ width: cageCrop.width * 2, withoutEnlargement: false })
         .normalize()
         .sharpen({ sigma: 0.7 })
         .threshold(172)
@@ -499,7 +503,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const cageColumnVariants = [
       { path: cageEnhancedPath, label: `coluna-gaiola-${layoutPreset}-4x`, generated: true, psm: 6 },
       { path: cageSoftPath, label: `coluna-gaiola-${layoutPreset}-4x-suave`, generated: true, psm: 6 },
-      { path: cageCompactPath, label: `coluna-gaiola-${layoutPreset}-3x`, generated: true, psm: 6 },
+      { path: cageCompactPath, label: `coluna-gaiola-${layoutPreset}-2x`, generated: true, psm: 6 },
       { path: cageOriginalPath, label: `coluna-gaiola-${layoutPreset}-at-2x-original`, generated: true, psm: 6 },
     ];
     const originalVariant = [
@@ -1149,6 +1153,15 @@ function collectGaiolaCodes(text: string) {
   return matches
     .map((match) => `${match[1] === "l" ? "I" : match[1].toUpperCase()}-${match[2]}`)
     .filter((code) => !/^AT-\d/i.test(code));
+}
+
+export function findAllPlannedAtCodesFromOcr(ocr: RouteOcrResult) {
+  const variants = ocr.variants?.length ? ocr.variants : [ocr];
+  const values = variants.flatMap((variant) => {
+    const source = `${variant.text}\n${variant.lines.map((line) => line.text).join("\n")}`.toUpperCase();
+    return [...source.matchAll(/\bAT[0-9A-Z]{10,20}\b/g)].map((match) => match[0]);
+  });
+  return [...new Set(values)];
 }
 
 function extractPlannedAtCode(text: string) {

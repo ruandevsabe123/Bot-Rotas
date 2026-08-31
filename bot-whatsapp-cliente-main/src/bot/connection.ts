@@ -8,7 +8,7 @@ import { EventEmitter } from "events";
 import { ConfigStore, DEFAULT_CONFIG } from "./config";
 import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
-import { combineRouteImageBatch, extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection } from "./ocr";
+import { combineRouteImageBatch, extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findAllPlannedAtCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection } from "./ocr";
 import { readRouteImageOcrWithoutBlockingSocket, warmupIsolatedOcrWorker } from "./ocrIsolated";
 import { selectRankedDesiredCages } from "./ocrCageSelection";
 import { DispatchQueueStore } from "./dispatchQueue";
@@ -2556,6 +2556,33 @@ export class BotService extends EventEmitter {
       });
       this.logger.info(`[ROMANEIO] Conferência das leituras: ${readingDiagnostics.join(" | ")}.`);
       const detectedRoutes = findAllGaiolaCodesFromOcr(ocr);
+      const plannedAtCodes = findAllPlannedAtCodesFromOcr(ocr);
+      if (this.romaneioStore && plannedAtCodes.length) {
+        const routesByAt = new Map(this.romaneioStore.routes()
+          .filter((route) => route.plannedAt)
+          .map((route) => [normalizarTexto(route.plannedAt || ""), route]));
+        for (const plannedAt of plannedAtCodes) {
+          const route = routesByAt.get(normalizarTexto(plannedAt));
+          if (!route?.gaiola) continue;
+          const current = detectedRoutes.find((item) => normalizarTexto(item.code) === normalizarTexto(route.gaiola));
+          if (current) {
+            current.plannedAt = current.plannedAt || plannedAt;
+            continue;
+          }
+          detectedRoutes.push({
+            route: route.rota,
+            cidade: route.cidade,
+            bairro: route.bairros[0]?.nome,
+            code: route.gaiola,
+            plannedAt,
+            line: `${route.gaiola} ${plannedAt}`,
+            confidence: 100,
+            evidenceCount: 1,
+            variantCount: ocr.variants?.length || 1,
+            safeForAutomatic: false
+          });
+        }
+      }
       const detected = detectedRoutes[0];
       if (!detected) {
         this.emit("image-analysis", {

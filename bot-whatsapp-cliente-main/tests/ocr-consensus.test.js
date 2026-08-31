@@ -17,7 +17,9 @@ const {
   calculateDarkRouteAtColumnCrop,
   classifyRouteImageLayout,
   calculatePresetRouteCrop,
-  calculatePresetRouteAtCrop
+  calculatePresetRouteAtCrop,
+  calculateFocusedOcrWidth,
+  findAllPlannedAtCodesFromOcr
 } = require("../dist/bot/ocr.js");
 
 test("cobre GAIOLA antiga e ROTA do layout escuro novo sem depender da proporção", () => {
@@ -104,6 +106,23 @@ test("cada predefinição recorta ROTA e confirmação ROTA mais AT", () => {
   assert.deepEqual(calculatePresetRouteAtCrop("light-orange", 900, 300), { left: 0, top: 0, width: 306, height: 300 });
   assert.deepEqual(calculatePresetRouteCrop("light-left", 600, 700), { left: 0, top: 0, width: 210, height: 700 });
   assert.deepEqual(calculatePresetRouteAtCrop("light-left", 600, 700), { left: 0, top: 0, width: 288, height: 700 });
+});
+
+test("limita os pixels do OCR focado sem deixar letras pequenas", () => {
+  assert.equal(calculateFocusedOcrWidth(410), 677);
+  assert.equal(calculateFocusedOcrWidth(280), 620);
+  assert.equal(calculateFocusedOcrWidth(900), 1000);
+});
+
+test("extrai ATs exatos das leituras para confirmação pelo romaneio", () => {
+  const readings = [
+    plainReading("C-17 AT2026083094LAB", "a"),
+    plainReading("AT2026083094LAB\nAT2026083094JFR", "b")
+  ];
+  assert.deepEqual(findAllPlannedAtCodesFromOcr({ ...readings[0], variants: readings }), [
+    "AT2026083094LAB",
+    "AT2026083094JFR"
+  ]);
 });
 
 test("lote de fotos preserva o consenso individual e reúne todas as rotas", () => {
