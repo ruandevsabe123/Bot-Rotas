@@ -43,6 +43,24 @@ test("corrige letra duplicada pelo tema escuro somente com consenso", () => {
   assert.ok(detected.every((item) => item.safeForAutomatic));
 });
 
+test("quarta leitura confirma código que apareceu isolado na terceira", () => {
+  const reading = (text, source) => plainReading(text, source);
+  const combined = combineRouteImageBatch([
+    {
+      ...reading("B-18", "foto"),
+      variants: [
+        reading("B-18", "normal"),
+        reading("B-18", "suave"),
+        reading("B-18\nC-2\nC-31", "binaria"),
+        reading("B-18\nC-2\nC-31", "original")
+      ]
+    }
+  ]);
+  const detected = findAllGaiolaCodesFromOcr(combined);
+  assert.deepEqual(detected.map((item) => item.code), ["B-18", "C-2", "C-31"]);
+  assert.ok(detected.every((item) => item.safeForAutomatic));
+});
+
 test("no tema escuro recorta somente ROTA e deixa TURNO e AT de fora", () => {
   assert.deepEqual(calculateDarkRouteColumnCrop(910, 780), {
     left: 145,

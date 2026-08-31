@@ -2537,7 +2537,7 @@ export class BotService extends EventEmitter {
       const readings = [];
       for (const imagePath of imagePaths) {
         readings.push(await readRouteImageOcrWithoutBlockingSocket(imagePath, {
-          maxReadings: preferCageCrop ? 3 : 6,
+          maxReadings: preferCageCrop ? 4 : 6,
           fastFirst,
           preferCageCrop
         }));
@@ -2666,10 +2666,10 @@ export class BotService extends EventEmitter {
         line: detected.line,
         processedAt: new Date().toISOString(),
         options,
-        detectedRouteCount: detectedRoutes.length,
+        detectedRouteCount: optionDetections.length,
         preferredCity: PREFERRED_IMAGE_CITY,
         preferredCityFound: detectedRoutes.some((route) => isPreferredImageCity(route.line)) || options.some((option) => isPreferredImageCity(option.cidade)),
-        message: `Imagem analisada. ${detectedRoutes.length} rota(s) encontrada(s) na foto e listada(s) pelo romaneio.`
+        message: `Imagem analisada. ${optionDetections.length} rota(s) segura(s) encontrada(s) na foto e listada(s) pelo romaneio.`
       } as const;
       if (config.ocrSelectionMode !== "manual") {
         const eligibleOptions = options.filter((option) =>

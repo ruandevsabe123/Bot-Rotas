@@ -349,6 +349,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const cageEnhancedPath = `${baseName}-cage-enhanced.png`;
     const cageSoftPath = `${baseName}-cage-soft.png`;
     const cageCompactPath = `${baseName}-cage-compact.png`;
+    const cageOriginalPath = `${baseName}-cage-original.png`;
     const resizeHeight = metadata.width && metadata.height
       ? Math.max(1, Math.round((metadata.height / metadata.width) * resizeWidth))
       : 1200;
@@ -406,10 +407,17 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .threshold(172)
         .extend({ top: 20, bottom: 40, left: 20, right: 20, background: cageBackground })
         .png()
-        .toFile(cageCompactPath)
+        .toFile(cageCompactPath),
+      () => sharp(imagePath)
+        .rotate()
+        .extract(cageCrop)
+        .resize({ width: cageCrop.width * 2, withoutEnlargement: false })
+        .extend({ top: 16, bottom: 32, left: 16, right: 16, background: cageBackground })
+        .png()
+        .toFile(cageOriginalPath)
     ];
     if (mode !== "cage") generatedPaths.push(enhancedPath, thresholdPath);
-    if (mode !== "full") generatedPaths.push(cageEnhancedPath, cageSoftPath, cageCompactPath);
+    if (mode !== "full") generatedPaths.push(cageEnhancedPath, cageSoftPath, cageCompactPath, cageOriginalPath);
     await Promise.all([
       ...(mode !== "cage" ? fullJobs.map((job) => job()) : []),
       ...(mode !== "full" ? cageJobs.map((job) => job()) : [])
@@ -424,6 +432,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       { path: cageEnhancedPath, label: "coluna-gaiola-4x", generated: true, psm: 6 },
       { path: cageSoftPath, label: "coluna-gaiola-4x-suave", generated: true, psm: 6 },
       { path: cageCompactPath, label: "coluna-gaiola-3x", generated: true, psm: 6 },
+      { path: cageOriginalPath, label: "coluna-gaiola-2x-original", generated: true, psm: 6 },
     ];
     const originalVariant = [
       { path: imagePath, label: "original", generated: false, psm: 11 }
