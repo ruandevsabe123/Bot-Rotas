@@ -13,7 +13,8 @@ const {
   calculateCageColumnCrop,
   combineRouteImageBatch,
   isDarkRouteImage,
-  calculateDarkRouteColumnCrop
+  calculateDarkRouteColumnCrop,
+  calculateDarkRouteAtColumnCrop
 } = require("../dist/bot/ocr.js");
 
 test("cobre GAIOLA antiga e ROTA do layout escuro novo sem depender da proporção", () => {
@@ -61,6 +62,14 @@ test("quarta leitura confirma código que apareceu isolado na terceira", () => {
   assert.ok(detected.every((item) => item.safeForAutomatic));
 });
 
+test("preserva AT ao ler ROTA e AT na mesma linha de conferência", () => {
+  const detected = findAllGaiolaCodesFromOcr(plainReading("C-11 AT2026083094KPO", "rota-at"));
+  assert.equal(detected.length, 1);
+  assert.equal(detected[0].code, "C-11");
+  assert.equal(detected[0].plannedAt, "AT2026083094KPO");
+  assert.equal(detected[0].safeForAutomatic, false);
+});
+
 test("no tema escuro recorta somente ROTA e deixa TURNO e AT de fora", () => {
   assert.deepEqual(calculateDarkRouteColumnCrop(910, 780), {
     left: 145,
@@ -71,6 +80,14 @@ test("no tema escuro recorta somente ROTA e deixa TURNO e AT de fora", () => {
   const crop = calculateDarkRouteColumnCrop(978, 800);
   assert.ok(crop.left <= 978 * 0.2);
   assert.ok(crop.left + crop.width >= 978 * 0.35);
+});
+
+test("recorte de conferência inclui ROTA e AT sem chegar ao CLUSTER", () => {
+  const crop = calculateDarkRouteAtColumnCrop(910, 780);
+  assert.deepEqual(crop, { left: 145, top: 0, width: 382, height: 780 });
+  assert.ok(crop.left <= 910 * 0.2);
+  assert.ok(crop.left + crop.width >= 910 * 0.55);
+  assert.ok(crop.left + crop.width < 910 * 0.6);
 });
 
 test("lote de fotos preserva o consenso individual e reúne todas as rotas", () => {

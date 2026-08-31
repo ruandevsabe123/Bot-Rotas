@@ -36,6 +36,7 @@ export type DetectedRouteCode = {
   cidade?: string;
   bairro?: string;
   code: string;
+  plannedAt?: string;
   line: string;
   confidence: number;
   evidenceCount: number;
@@ -189,6 +190,15 @@ export function calculateDarkRouteColumnCrop(imageWidth: number, imageHeight: nu
     left: Math.max(0, Math.floor(imageWidth * 0.16)),
     top: 0,
     width: Math.max(1, Math.min(imageWidth, Math.floor(imageWidth * 0.23))),
+    height: imageHeight
+  };
+}
+
+export function calculateDarkRouteAtColumnCrop(imageWidth: number, imageHeight: number) {
+  return {
+    left: Math.max(0, Math.floor(imageWidth * 0.16)),
+    top: 0,
+    width: Math.max(1, Math.min(imageWidth, Math.floor(imageWidth * 0.42))),
     height: imageHeight
   };
 }
@@ -360,6 +370,9 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const cageCrop = darkLayout
       ? calculateDarkRouteColumnCrop(sourceWidth, sourceHeight)
       : await detectCageColumnCrop(imagePath, sharp, sourceWidth, sourceHeight);
+    const cageOriginalCrop = darkLayout
+      ? calculateDarkRouteAtColumnCrop(sourceWidth, sourceHeight)
+      : cageCrop;
     const cageBackground = darkLayout ? "black" : "white";
     const cagePipeline = () => {
       return sharp(imagePath).rotate().extract(cageCrop).grayscale();
@@ -410,8 +423,8 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         .toFile(cageCompactPath),
       () => sharp(imagePath)
         .rotate()
-        .extract(cageCrop)
-        .resize({ width: cageCrop.width * 2, withoutEnlargement: false })
+        .extract(cageOriginalCrop)
+        .resize({ width: cageOriginalCrop.width * 2, withoutEnlargement: false })
         .extend({ top: 16, bottom: 32, left: 16, right: 16, background: cageBackground })
         .png()
         .toFile(cageOriginalPath)
@@ -432,7 +445,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       { path: cageEnhancedPath, label: "coluna-gaiola-4x", generated: true, psm: 6 },
       { path: cageSoftPath, label: "coluna-gaiola-4x-suave", generated: true, psm: 6 },
       { path: cageCompactPath, label: "coluna-gaiola-3x", generated: true, psm: 6 },
-      { path: cageOriginalPath, label: "coluna-gaiola-2x-original", generated: true, psm: 6 },
+      { path: cageOriginalPath, label: "coluna-gaiola-at-2x-original", generated: true, psm: 6 },
     ];
     const originalVariant = [
       { path: imagePath, label: "original", generated: false, psm: 11 }
@@ -576,6 +589,7 @@ export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
       const detected: DetectedRouteCode = {
         route: "",
         code,
+        plannedAt: extractPlannedAtCode(line.text),
         line: line.text,
         confidence: getGaiolaConfidence(line, code),
         evidenceCount: 1,
@@ -597,6 +611,7 @@ export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
       const detected: DetectedRouteCode = {
         route: "",
         code,
+        plannedAt: extractPlannedAtCode(row.text),
         line: row.text,
         confidence: Math.round(Math.min(word.confidence, row.confidence)),
         evidenceCount: 1,
@@ -618,6 +633,7 @@ export function findAllGaiolaCodesFromOcr(ocr: RouteOcrResult) {
     const { variantIndex: _variantIndex, ...cleanBest } = best;
     return {
       ...cleanBest,
+      plannedAt: evidence.find((item) => item.plannedAt)?.plannedAt || cleanBest.plannedAt,
       confidence: evidence.length ? Math.round(Math.min(...evidence.map((item) => item.confidence))) : best.confidence,
       evidenceCount: evidence.length,
       variantCount: variants.length,
@@ -1066,6 +1082,10 @@ function collectGaiolaCodes(text: string) {
   return matches
     .map((match) => `${match[1] === "l" ? "I" : match[1].toUpperCase()}-${match[2]}`)
     .filter((code) => !/^AT-\d/i.test(code));
+}
+
+function extractPlannedAtCode(text: string) {
+  return String(text || "").toUpperCase().match(/\bAT[0-9A-Z]{10,20}\b/)?.[0] || undefined;
 }
 
 function normalizeDuplicatedGaiolaLetter(text: string) {

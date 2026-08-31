@@ -2616,7 +2616,8 @@ export class BotService extends EventEmitter {
 
       const optionDetections = config.ocrSelectionMode === "manual"
         ? detectedRoutes
-        : detectedRoutes.filter(isSafeAutomaticGaiolaDetection);
+        : detectedRoutes.filter((route) =>
+          isSafeAutomaticGaiolaDetection(route) || this.isExactRomaneioAtDetection(route));
       const unrankedOptions = optionDetections
         .flatMap((route) => this.buildOcrRouteOptions(route, config.ocrSelectionMode === "manual"))
         .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index);
@@ -2926,15 +2927,25 @@ export class BotService extends EventEmitter {
       : `[ROMANEIO] Bot escolheu automaticamente a melhor rota: ${messages.join(" | ")}.`);
   }
 
-  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; line?: string; confidence?: number }, allowAmbiguousCodeCorrection = false): OcrRouteOption[] {
+  private isExactRomaneioAtDetection(detected: { code?: string; plannedAt?: string; confidence?: number }) {
+    if (!this.romaneioStore || !detected.code || !detected.plannedAt || (detected.confidence || 0) < 45) return false;
+    const wantedCode = normalizarTexto(detected.code);
+    const wantedAt = normalizarTexto(detected.plannedAt);
+    return this.romaneioStore.routes().some((route) =>
+      normalizarTexto(route.gaiola) === wantedCode && normalizarTexto(route.plannedAt || "") === wantedAt);
+  }
+
+  private buildOcrRouteOptions(detected: { route?: string; bairro?: string; code?: string; plannedAt?: string; line?: string; confidence?: number }, allowAmbiguousCodeCorrection = false): OcrRouteOption[] {
     if (!detected.code) return [];
     const fallback = () => [this.toOcrFallbackOption(detected)];
     if (!this.romaneioStore) return fallback();
 
     try {
       const detectedCodes = getOcrGaiolaCodeCandidates(detected.code, allowAmbiguousCodeCorrection);
+      const usePlannedAt = this.isExactRomaneioAtDetection(detected);
       const exactGaiolaOptions = detectedCodes
         .flatMap((code) => this.romaneioStore!.rankForDetected({ gaiola: code, bairro: detected.bairro })
+          .filter((route) => !usePlannedAt || normalizarTexto(route.plannedAt || "") === normalizarTexto(detected.plannedAt || ""))
           .filter((route) => this.ocrRouteLooksCompatible(route, { ...detected, code })));
 
       const matched = exactGaiolaOptions
