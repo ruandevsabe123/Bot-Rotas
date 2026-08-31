@@ -15,9 +15,21 @@ export type ConditionalPriorityClient = {
 
 type Edge = { winner: string; loser: string; delayMs: number; updatedAt: string; owner: string };
 
+export type ConditionalDispatchBlocker = { email: string; delayMs: number };
+
 export function computeConditionalDispatchPriorities(clients: ConditionalPriorityClient[]) {
+  const plan = computeConditionalDispatchPlan(clients);
+  return new Map([...plan].map(([email, item]) => [email, item.delayMs]));
+}
+
+export function computeConditionalDispatchBlockers(clients: ConditionalPriorityClient[]) {
+  const plan = computeConditionalDispatchPlan(clients);
+  return new Map([...plan].map(([email, item]) => [email, item.blockers]));
+}
+
+function computeConditionalDispatchPlan(clients: ConditionalPriorityClient[]) {
   const normalized = clients.map((client) => ({ ...client, email: client.email.trim().toLowerCase() }));
-  const priorities = new Map(normalized.map((client) => [client.email, 0]));
+  const plan = new Map(normalized.map((client) => [client.email, { delayMs: 0, blockers: [] as ConditionalDispatchBlocker[] }]));
   const competitorsByGroup = new Map<string, ConditionalPriorityClient[]>();
 
   for (const client of normalized) {
@@ -55,10 +67,21 @@ export function computeConditionalDispatchPriorities(clients: ConditionalPriorit
     }
 
     const groupPriorities = longestDelays(Array.from(emails), graph);
-    for (const [email, delayMs] of groupPriorities) priorities.set(email, delayMs);
+    const blockersByLoser = new Map<string, ConditionalDispatchBlocker[]>();
+    for (const [winner, edges] of graph) {
+      for (const edge of edges) {
+        blockersByLoser.set(edge.loser, [
+          ...(blockersByLoser.get(edge.loser) || []),
+          { email: winner, delayMs: edge.delayMs }
+        ]);
+      }
+    }
+    for (const [email, delayMs] of groupPriorities) {
+      plan.set(email, { delayMs, blockers: blockersByLoser.get(email) || [] });
+    }
   }
 
-  return priorities;
+  return plan;
 }
 
 function rulesFor(client: ConditionalPriorityClient): DispatchMatchupRule[] {

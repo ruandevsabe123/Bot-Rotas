@@ -57,6 +57,50 @@ test("usa R$ 0,70 como padrão e preserva telemetria da análise", () => {
   assert.equal(store.clientSnapshot("cliente@teste.com").amountCents, 70);
 });
 
+test("validação automática antiga cria consumo quando a análise ainda não estava ligada", () => {
+  const store = new ImageUsageStore(tempFile("usage-legacy-validation.json"));
+  const input = {
+    routeDispatchId: "rota-legada-1",
+    clientEmail: "cliente@teste.com",
+    messageId: "mensagem-enviada-1",
+    result: "detected",
+    gaiola: "C-17",
+    groupJid: "motoristas@g.us",
+    analysisFinishedAt: "2026-08-31T10:00:00.000Z"
+  };
+
+  assert.equal(store.decideValidatedRoute(input, "Líder: Teste"), true);
+  assert.equal(store.decideValidatedRoute(input, "Líder: Teste"), false);
+  assert.equal(store.snapshot().totals.total, 1);
+  assert.equal(store.snapshot().totals.billable, 1);
+  assert.equal(store.clientSnapshot("cliente@teste.com").amountCents, 70);
+});
+
+test("validação legada reaproveita análise pendente próxima sem cobrar duas vezes", () => {
+  const store = new ImageUsageStore(tempFile("usage-legacy-link.json"));
+  store.record({
+    id: "foto-pendente",
+    clientEmail: "cliente@teste.com",
+    messageId: "foto-1",
+    result: "detected",
+    gaiola: "C-17",
+    analysisFinishedAt: "2026-08-31T10:00:00.000Z"
+  });
+
+  store.decideValidatedRoute({
+    routeDispatchId: "rota-legada-2",
+    clientEmail: "cliente@teste.com",
+    messageId: "mensagem-enviada-2",
+    result: "detected",
+    gaiola: "C-17",
+    analysisFinishedAt: "2026-08-31T10:01:00.000Z"
+  }, "Líder: Teste");
+
+  assert.equal(store.snapshot().totals.total, 1);
+  assert.equal(store.get("foto-pendente").routeDispatchId, "rota-legada-2");
+  assert.equal(store.get("foto-pendente").decision, "billable");
+});
+
 test("permite substituir o total mensal calculado por cliente", () => {
   const filePath = tempFile("usage-total-manual.json");
   const store = new ImageUsageStore(filePath);

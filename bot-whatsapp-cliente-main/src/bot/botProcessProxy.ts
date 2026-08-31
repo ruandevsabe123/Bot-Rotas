@@ -151,6 +151,12 @@ export class BotProcessProxy extends EventEmitter {
   setWarmupMessageSettings(...args: any[]) { return this.call("setWarmupMessageSettings", ...args); }
   setDispatchPriorityLevel(level: number) { return this.call("setDispatchPriorityLevel", level); }
   setDispatchPriorityDelayMs(delayMs: number) { return this.call("setDispatchPriorityDelayMs", delayMs); }
+  resolveDispatchGate(id: string, result: { token?: string; waitedMs?: number; error?: string }) {
+    const child = this.child;
+    if (!child?.connected) return false;
+    child.send?.({ type: "dispatch-gate-response", id, ...result });
+    return true;
+  }
   saveRoutePreset(name: string, routes: { cidade: string; bairro: string }[]) { return this.call("saveRoutePreset", name, routes); }
   deleteRoutePreset(id: string) { return this.call("deleteRoutePreset", id); }
   setGeneralSettings(settings: any) { return this.call("setGeneralSettings", settings); }
@@ -219,6 +225,14 @@ export class BotProcessProxy extends EventEmitter {
     }
     if (message.type === "route-auto-validated") {
       this.emit("route-auto-validated", message);
+      return;
+    }
+    if (message.type === "dispatch-gate-request") {
+      this.emit("dispatch-gate-request", message);
+      return;
+    }
+    if (message.type === "dispatch-gate-relay") {
+      this.emit("dispatch-gate-relay", message);
       return;
     }
     if (message.type === "response") {

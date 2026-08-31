@@ -1,5 +1,5 @@
 import type { BotServiceOptions } from "./connection";
-import type { BotSnapshot, ImageUsageEntry } from "../shared/types";
+import type { BotSnapshot, ImageUsageEntry, RouteDispatch } from "../shared/types";
 
 export type BotWorkerInitMessage = {
   type: "init";
@@ -17,10 +17,19 @@ export type BotWorkerShutdownMessage = {
   type: "shutdown";
 };
 
+export type BotWorkerDispatchGateResponseMessage = {
+  type: "dispatch-gate-response";
+  id: string;
+  token?: string;
+  waitedMs?: number;
+  error?: string;
+};
+
 export type BotWorkerIncomingMessage =
   | BotWorkerInitMessage
   | BotWorkerCallMessage
-  | BotWorkerShutdownMessage;
+  | BotWorkerShutdownMessage
+  | BotWorkerDispatchGateResponseMessage;
 
 export type BotWorkerReadyMessage = {
   type: "ready";
@@ -55,6 +64,22 @@ export type BotWorkerRouteAutoValidatedMessage = {
   routeId: string;
   analysisId?: string;
   leaderName?: string;
+  route?: RouteDispatch;
+};
+
+export type BotWorkerDispatchGateRequestMessage = {
+  type: "dispatch-gate-request";
+  id: string;
+  clientEmail: string;
+  groupKey: string;
+  eventDetectedAt: number;
+};
+
+export type BotWorkerDispatchGateRelayMessage = {
+  type: "dispatch-gate-relay";
+  token: string;
+  clientEmail: string;
+  relayedAt: number;
 };
 
 export type BotWorkerOutgoingMessage =
@@ -63,4 +88,6 @@ export type BotWorkerOutgoingMessage =
   | BotWorkerSnapshotMessage
   | BotWorkerSnapshotDirtyMessage
   | BotWorkerImageAnalysisMessage
-  | BotWorkerRouteAutoValidatedMessage;
+  | BotWorkerRouteAutoValidatedMessage
+  | BotWorkerDispatchGateRequestMessage
+  | BotWorkerDispatchGateRelayMessage;

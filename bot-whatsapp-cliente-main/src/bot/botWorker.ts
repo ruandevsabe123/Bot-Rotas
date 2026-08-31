@@ -48,6 +48,12 @@ let snapshotTimer: NodeJS.Timeout | undefined;
 let shuttingDown = false;
 let reportedCritical = false;
 let callQueue = Promise.resolve();
+let dispatchGateSequence = 0;
+const pendingDispatchGates = new Map<string, {
+  resolve: (grant: { token: string; waitedMs: number }) => void;
+  reject: (error: Error) => void;
+  timer: NodeJS.Timeout;
+}>();
 
 // Tente favorecer o processo que mantÃ©m o socket. Render pode negar prioridade
 // negativa; nesse caso o worker segue na prioridade normal e o OCR fica em +10.
@@ -95,6 +101,21 @@ async function initialize(message: Extract<BotWorkerIncomingMessage, { type: "in
   bot.on("route-auto-validated", (validation) => {
     setImmediate(() => send({ type: "route-auto-validated", ...validation }));
   });
+  bot.setDispatchGateHandlers(
+    (request) => {
+      const id = `${process.pid}-${Date.now()}-${++dispatchGateSequence}`;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pendingDispatchGates.delete(id);
+          reject(new Error("A coordenação central do disparo excedeu 125 segundos."));
+        }, 125_000);
+        timer.unref?.();
+        pendingDispatchGates.set(id, { resolve, reject, timer });
+        send({ type: "dispatch-gate-request", id, ...request });
+      });
+    },
+    (token, clientEmail, relayedAt) => send({ type: "dispatch-gate-relay", token, clientEmail, relayedAt })
+  );
   send({ type: "ready", snapshot: bot.getSnapshot() });
 }
 
@@ -119,6 +140,11 @@ async function shutdown() {
   if (shuttingDown) return;
   shuttingDown = true;
   if (snapshotTimer) clearTimeout(snapshotTimer);
+  for (const [id, pending] of pendingDispatchGates) {
+    pendingDispatchGates.delete(id);
+    clearTimeout(pending.timer);
+    pending.reject(new Error("Worker do bot encerrado durante a coordenação do disparo."));
+  }
   await bot?.stop().catch(() => undefined);
   shutdownIsolatedOcrWorker();
   process.disconnect?.();
@@ -136,6 +162,15 @@ process.on("message", (message: BotWorkerIncomingMessage) => {
   }
   if (message.type === "shutdown") {
     void shutdown();
+    return;
+  }
+  if (message.type === "dispatch-gate-response") {
+    const pending = pendingDispatchGates.get(message.id);
+    if (!pending) return;
+    pendingDispatchGates.delete(message.id);
+    clearTimeout(pending.timer);
+    if (message.error || !message.token) pending.reject(new Error(message.error || "Coordenação respondeu sem autorização."));
+    else pending.resolve({ token: message.token, waitedMs: Number(message.waitedMs || 0) });
     return;
   }
   if (message.type === "call") {

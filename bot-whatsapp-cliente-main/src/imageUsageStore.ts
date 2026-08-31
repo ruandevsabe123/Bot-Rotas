@@ -24,6 +24,11 @@ type RecordAnalysisInput = {
   analysisDurationMs?: number;
 };
 
+type ValidatedRouteUsageInput = Omit<RecordAnalysisInput, "id"> & {
+  analysisId?: string;
+  routeDispatchId: string;
+};
+
 const MAX_ENTRIES = 50_000;
 
 export class ImageUsageStore {
@@ -97,6 +102,20 @@ export class ImageUsageStore {
     return changed;
   }
 
+  decideValidatedRoute(input: ValidatedRouteUsageInput, reviewedBy: string) {
+    const normalizedEmail = input.clientEmail.trim().toLowerCase();
+    const exact = this.data.entries.find((entry) =>
+      (input.analysisId && entry.id === input.analysisId) || entry.routeDispatchId === input.routeDispatchId
+    );
+    const legacy = exact || (!input.analysisId ? this.findLegacyAnalysisForRoute(input, normalizedEmail) : undefined);
+    const entry = legacy || this.record({
+      ...input,
+      id: input.analysisId || `validated-route:${normalizedEmail}:${input.routeDispatchId}`,
+      clientEmail: normalizedEmail
+    });
+    return this.decideForRoute(entry.id, input.routeDispatchId, "billable", reviewedBy);
+  }
+
   setDefaultAmount(clientEmail: string, amountCents: number) {
     const email = clientEmail.trim().toLowerCase();
     this.data.defaultAmounts[email] = this.normalizeAmount(amountCents);
@@ -153,6 +172,23 @@ export class ImageUsageStore {
       defaultAmountCents: this.defaultAmount(clientEmail),
       manualTotalAmountCents
     };
+  }
+
+  private findLegacyAnalysisForRoute(input: ValidatedRouteUsageInput, clientEmail: string) {
+    const targetTime = Date.parse(input.analysisFinishedAt || input.analysisStartedAt || "");
+    const targetGaiola = String(input.gaiola || "").trim().toLowerCase();
+    const targetRoute = String(input.route || "").trim().toLowerCase();
+    return this.data.entries
+      .filter((entry) => entry.clientEmail === clientEmail && entry.result === "detected" && !entry.routeDispatchId)
+      .map((entry) => {
+        const entryTime = Date.parse(entry.analysisFinishedAt || entry.analysisStartedAt || entry.createdAt);
+        const distanceMs = Number.isFinite(targetTime) && Number.isFinite(entryTime) ? Math.abs(entryTime - targetTime) : Number.MAX_SAFE_INTEGER;
+        const sameGaiola = Boolean(targetGaiola && String(entry.gaiola || "").trim().toLowerCase() === targetGaiola);
+        const sameRoute = Boolean(targetRoute && String(entry.route || "").trim().toLowerCase() === targetRoute);
+        return { entry, distanceMs, sameIdentity: sameGaiola || sameRoute };
+      })
+      .filter((candidate) => candidate.sameIdentity || candidate.distanceMs <= 2 * 60 * 60_000)
+      .sort((left, right) => Number(right.sameIdentity) - Number(left.sameIdentity) || left.distanceMs - right.distanceMs)[0]?.entry;
   }
 
   private defaultAmount(clientEmail: string) {

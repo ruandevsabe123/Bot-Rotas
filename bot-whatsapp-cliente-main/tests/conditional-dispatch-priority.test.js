@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { computeConditionalDispatchPriorities } = require("../dist/services/conditionalDispatchPriority.js");
+const { computeConditionalDispatchBlockers, computeConditionalDispatchPriorities } = require("../dist/services/conditionalDispatchPriority.js");
 
 function client(email, beatsEmail, overrides = {}) {
   return {
@@ -100,6 +100,28 @@ test("regra perde para produz o mesmo confronto de forma intuitiva", () => {
   ]);
   assert.equal(priorities.get("alan@cliente.com"), 0);
   assert.equal(priorities.get("guilherme@cliente.com"), 400);
+});
+
+test("informa ao coordenador exatamente qual vencedor bloqueia cada perdedor", () => {
+  const clients = [
+    client("alan@cliente.com", undefined, { matchups: [{ opponentEmail: "guilherme@cliente.com", outcome: "wins", delayMs: 450 }] }),
+    client("guilherme@cliente.com", undefined)
+  ];
+  const blockers = computeConditionalDispatchBlockers(clients);
+
+  assert.deepEqual(blockers.get("alan@cliente.com"), []);
+  assert.deepEqual(blockers.get("guilherme@cliente.com"), [{ email: "alan@cliente.com", delayMs: 450 }]);
+});
+
+test("hierarquia bloqueia cada cliente pelo vencedor imediatamente anterior", () => {
+  const blockers = computeConditionalDispatchBlockers([
+    client("a@cliente.com", undefined, { matchups: [{ opponentEmail: "b@cliente.com", outcome: "wins", delayMs: 400 }] }),
+    client("b@cliente.com", undefined, { matchups: [{ opponentEmail: "c@cliente.com", outcome: "wins", delayMs: 500 }] }),
+    client("c@cliente.com", undefined)
+  ]);
+
+  assert.deepEqual(blockers.get("b@cliente.com"), [{ email: "a@cliente.com", delayMs: 400 }]);
+  assert.deepEqual(blockers.get("c@cliente.com"), [{ email: "b@cliente.com", delayMs: 500 }]);
 });
 
 test("ignora a regra que fecharia um ciclo entre clientes", () => {

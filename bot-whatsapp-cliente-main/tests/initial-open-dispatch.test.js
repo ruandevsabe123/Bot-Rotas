@@ -483,6 +483,54 @@ test("prioridade aceita atraso exato configurado pelo administrador", () => {
   }
 });
 
+test("coordenação central impede relay até o servidor autorizar e confirma o vencedor", async () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 132;
+    const relays = [];
+    const confirmations = [];
+    let releaseGate;
+    bot.setDispatchGateHandlers(
+      () => new Promise((resolve) => { releaseGate = resolve; }),
+      (token, email) => confirmations.push({ token, email })
+    );
+    bot.sock = {
+      relayMessage: async (_jid, _message, options) => {
+        relays.push(options.messageId);
+      }
+    };
+    bot.preparedRelayMessages = [{ key: { id: "first" }, message: { conversation: "Cliente A-1" } }];
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const startedAt = Date.now();
+    const timeline = bot.createDispatchTimeline(startedAt, startedAt, "race", "group_update");
+    const dispatch = bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1"],
+      132,
+      startedAt,
+      startedAt,
+      "automatic",
+      timeline
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    assert.deepEqual(relays, []);
+    releaseGate({ token: "gate-132", waitedMs: 25 });
+    await dispatch;
+    assert.deepEqual(relays, ["first"]);
+    assert.deepEqual(confirmations, [{ token: "gate-132", email: "cliente@teste.com" }]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("conexão aquecida libera a faixa paralela sem histórico de três disparos", () => {
   const { bot, directory } = createBot();
   try {

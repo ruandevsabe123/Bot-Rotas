@@ -88,6 +88,9 @@ export type BotServiceOptions = {
   deferSnapshotPayload?: boolean;
 };
 
+export type DispatchGateGrant = { token: string; waitedMs: number };
+export type DispatchGateRequest = { clientEmail: string; groupKey: string; eventDetectedAt: number };
+
 type MonitoringMode = "target" | "test";
 type OpeningSignal = NonNullable<RouteDispatchTimeline["openingSignal"]>;
 
@@ -246,6 +249,8 @@ export class BotService extends EventEmitter {
   private clientEmail = "";
   private dispatchPriorityLevel = 0;
   private dispatchPriorityDelayMs = 0;
+  private dispatchGateRequester?: (request: DispatchGateRequest) => Promise<DispatchGateGrant>;
+  private dispatchGateRelayReporter?: (token: string, clientEmail: string, relayedAt: number) => void;
   private adminPhoneNumbers = new Set<string>();
   private extraAdminPhoneNumbers: string[] = [];
   private leaderContacts = new Map<string, string>();
@@ -392,6 +397,14 @@ export class BotService extends EventEmitter {
 
   getRoutes() {
     return this.routeStore.all();
+  }
+
+  setDispatchGateHandlers(
+    requester?: (request: DispatchGateRequest) => Promise<DispatchGateGrant>,
+    relayReporter?: (token: string, clientEmail: string, relayedAt: number) => void
+  ) {
+    this.dispatchGateRequester = requester;
+    this.dispatchGateRelayReporter = relayReporter;
   }
 
   private refreshRuntimeSettings(config = this.configStore.load()) {
@@ -3225,7 +3238,8 @@ export class BotService extends EventEmitter {
           this.emit("route-auto-validated", {
             routeId: reactedRoute.id,
             analysisId: reactedRoute.ocr?.analysisId,
-            leaderName: routeReaction.leaderName || senderPhone || "Líder identificado"
+            leaderName: routeReaction.leaderName || senderPhone || "Líder identificado",
+            route: reactedRoute
           });
           void this.sendSelfNotification([
             "✅ ROTA CONFIRMADA",
@@ -3775,7 +3789,23 @@ export class BotService extends EventEmitter {
 
       const priority = this.getDispatchPriorityProfile();
       timeline.dispatchPriority = priority;
-      if (this.shouldApplyDispatchPriorityDelay(trigger) && priority.delayMs > 0) {
+      let dispatchGateToken = "";
+      const coordinatedByServer = this.shouldApplyDispatchPriorityDelay(trigger) && Boolean(this.dispatchGateRequester);
+      if (coordinatedByServer) {
+        const grant = await this.dispatchGateRequester!({
+          clientEmail: this.clientEmail,
+          groupKey: jid,
+          eventDetectedAt
+        });
+        dispatchGateToken = grant.token;
+        if (grant.waitedMs > 0) {
+          timeline.priorityDelayMs = grant.waitedMs;
+          this.addTimelineEvent(timeline, "Sincronização do disparo concluída", Date.now(), "info");
+        }
+        if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
+          throw new Error("Ciclo cancelado durante a sincronização do disparo.");
+        }
+      } else if (this.shouldApplyDispatchPriorityDelay(trigger) && priority.delayMs > 0) {
         timeline.priorityDelayMs = priority.delayMs;
         this.addTimelineEvent(timeline, "Prioridade de corrida aplicada", Date.now(), "info", `Nível ${priority.level}: ${priority.delayMs}ms`);
         await this.delay(priority.delayMs);
@@ -3829,6 +3859,9 @@ export class BotService extends EventEmitter {
           )
           .then((messageId) => {
             if (!messageId) return messageId;
+            if (index === 0 && dispatchGateToken) {
+              this.dispatchGateRelayReporter?.(dispatchGateToken, this.clientEmail, Date.now());
+            }
             const acceptedCount = (this.acceptedMessageCountByCycle.get(cycleId) || 0) + 1;
             this.acceptedMessageCountByCycle.set(cycleId, acceptedCount);
             if (this.pendingOcrReconnectDispatch?.interruptedCycleId === cycleId) {

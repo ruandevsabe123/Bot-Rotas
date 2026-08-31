@@ -14,8 +14,9 @@ import { ImageUsageStore } from "./imageUsageStore";
 import { PushNotificationStore } from "./pushNotificationStore";
 import { getCurrentRelease, shouldShowCurrentReleaseToClients } from "./releaseNotes";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
-import { computeConditionalDispatchPriorities } from "./services/conditionalDispatchPriority";
-import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, DispatchMatchupRule, LeaderContact, PanelUserRole, UserPresenceStatus } from "./shared/types";
+import { computeConditionalDispatchBlockers, computeConditionalDispatchPriorities, ConditionalPriorityClient } from "./services/conditionalDispatchPriority";
+import { DispatchRaceCoordinator } from "./services/dispatchRaceCoordinator";
+import { AdminLogEntry, AdminMonitorSnapshot, AdminRoutesSnapshot, AdminSupportMessagesSnapshot, AdminUserDetail, AdminUsersSnapshot, BotSnapshot, DispatchMatchupRule, LeaderContact, PanelUserRole, RouteDispatch, UserPresenceStatus } from "./shared/types";
 
 const port = Number(process.env.PORT || 3000);
 const staticDir = path.resolve(process.cwd(), "dist", "desktop", "renderer");
@@ -198,6 +199,7 @@ let lastAdminPendingRouteIds: Set<string> | undefined;
 const pendingSnapshotBots = new Map<string, BotProcessProxy>();
 let snapshotFanoutScheduled = false;
 const appliedConditionalPriority = new Map<string, { level: number; delayMs: number; workerPid?: number }>();
+const dispatchRaceCoordinator = new DispatchRaceCoordinator();
 let conditionalPriorityTimer: NodeJS.Timeout | undefined;
 
 function scheduleConditionalPrioritySync() {
@@ -210,22 +212,7 @@ function scheduleConditionalPrioritySync() {
 }
 
 async function syncConditionalDispatchPriorities() {
-  const priorities = computeConditionalDispatchPriorities(Array.from(bots.entries()).map(([email, bot]) => {
-    const snapshot = bot.getSnapshot();
-    const targetGroupKey = String(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome || "").trim().toLowerCase();
-    return {
-      email,
-      configuredLevel: panelUsers.get(email)?.dispatchPriorityLevel || 0,
-      beatsEmail: panelUsers.get(email)?.dispatchBeatsEmail,
-      advantageMs: panelUsers.get(email)?.dispatchAdvantageMs,
-      matchups: panelUsers.get(email)?.dispatchMatchups,
-      priorityUpdatedAt: panelUsers.get(email)?.updatedAt,
-      connected: snapshot.status === "connected",
-      monitoringEnabled: snapshot.monitoringEnabled,
-      monitoringMode: snapshot.monitoringMode,
-      targetGroupKey
-    };
-  }));
+  const priorities = computeConditionalDispatchPriorities(getConditionalPriorityClients());
 
   await Promise.all(Array.from(bots.entries()).map(async ([email, bot]) => {
     const nextDelayMs = priorities.get(email) || 0;
@@ -241,6 +228,25 @@ async function syncConditionalDispatchPriorities() {
       console.error(`Falha ao sincronizar prioridade condicional de ${email}:`, error);
     }
   }));
+}
+
+function getConditionalPriorityClients(): ConditionalPriorityClient[] {
+  return Array.from(bots.entries()).map(([email, bot]) => {
+    const snapshot = bot.getSnapshot();
+    const targetGroupKey = String(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome || "").trim().toLowerCase();
+    return {
+      email,
+      configuredLevel: panelUsers.get(email)?.dispatchPriorityLevel || 0,
+      beatsEmail: panelUsers.get(email)?.dispatchBeatsEmail,
+      advantageMs: panelUsers.get(email)?.dispatchAdvantageMs,
+      matchups: panelUsers.get(email)?.dispatchMatchups,
+      priorityUpdatedAt: panelUsers.get(email)?.updatedAt,
+      connected: snapshot.status === "connected",
+      monitoringEnabled: snapshot.monitoringEnabled,
+      monitoringMode: snapshot.monitoringMode,
+      targetGroupKey
+    };
+  });
 }
 
 function scheduleSnapshotFanout(email: string, bot: BotProcessProxy) {
@@ -388,14 +394,31 @@ function getBotForEmail(email: string) {
       }
     });
   });
-  nextBot.on("route-auto-validated", (validation: { routeId: string; analysisId?: string; leaderName?: string }) => {
+  nextBot.on("route-auto-validated", (validation: { routeId: string; analysisId?: string; leaderName?: string; route?: RouteDispatch }) => {
     setImmediate(() => {
       const reviewedBy = `Líder: ${validation.leaderName || "identificado"}`;
-      if (imageUsageStore.decideForRoute(validation.analysisId, validation.routeId, "billable", reviewedBy)) {
+      const route = validation.route || nextBot.getRoutes().find((item) => item.id === validation.routeId);
+      if (approveRouteImageUsage(route, normalizedEmail, reviewedBy)) {
         console.log(`[IA] Consumo aprovado automaticamente por reação do líder: ${normalizedEmail} / ${validation.routeId}.`);
       }
       scheduleSnapshotFanout(normalizedEmail, nextBot);
     });
+  });
+  nextBot.on("dispatch-gate-request", (request: { id: string; clientEmail: string; groupKey: string; eventDetectedAt: number }) => {
+    const blockers = computeConditionalDispatchBlockers(getConditionalPriorityClients()).get(normalizedEmail) || [];
+    void dispatchRaceCoordinator.request({
+      clientEmail: normalizedEmail,
+      groupKey: request.groupKey,
+      eventDetectedAt: request.eventDetectedAt,
+      blockers
+    }).then((grant) => {
+      nextBot.resolveDispatchGate(request.id, grant);
+    }).catch((error) => {
+      nextBot.resolveDispatchGate(request.id, { error: error instanceof Error ? error.message : String(error) });
+    });
+  });
+  nextBot.on("dispatch-gate-relay", (relay: { token: string; clientEmail: string; relayedAt: number }) => {
+    dispatchRaceCoordinator.confirmRelay(relay.token, normalizedEmail, relay.relayedAt);
   });
 
   bots.set(normalizedEmail, nextBot);
@@ -710,11 +733,30 @@ async function validateAdminRoute(routeId: string, adminEmail: string) {
     const bot = getBotForEmail(email);
     const route = bot.getRoutes().find((item) => item.id === routeId);
     if (await bot.validateRoute(routeId, adminEmail)) {
-      imageUsageStore.decideForRoute(route?.ocr?.analysisId, routeId, "billable", adminEmail);
+      approveRouteImageUsage(route, email, adminEmail);
       return true;
     }
   }
   return false;
+}
+
+function approveRouteImageUsage(route: RouteDispatch | undefined, clientEmail: string, reviewedBy: string) {
+  if (!route?.ocr) return false;
+  const processedAt = route.ocr.processedAt || route.createdAt;
+  return imageUsageStore.decideValidatedRoute({
+    analysisId: route.ocr.analysisId,
+    routeDispatchId: route.id,
+    clientEmail,
+    messageId: route.sentMessageIds[0] || route.id,
+    result: "detected",
+    route: route.ocr.route,
+    bairro: route.ocr.bairro,
+    gaiola: route.ocr.code,
+    confidence: route.ocr.confidence,
+    groupJid: route.groupJid,
+    groupName: route.groupName,
+    analysisFinishedAt: processedAt
+  }, reviewedBy);
 }
 
 async function rejectAdminRoute(routeId: string, adminEmail: string, reason?: string) {
