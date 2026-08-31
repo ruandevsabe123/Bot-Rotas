@@ -107,7 +107,7 @@ async function initialize(message: Extract<BotWorkerIncomingMessage, { type: "in
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
           pendingDispatchGates.delete(id);
-          reject(new Error("A coordenação central do disparo excedeu 125 segundos."));
+          reject(new Error("O ciclo do grupo expirou antes do envio."));
         }, 125_000);
         timer.unref?.();
         pendingDispatchGates.set(id, { resolve, reject, timer });
@@ -143,7 +143,7 @@ async function shutdown() {
   for (const [id, pending] of pendingDispatchGates) {
     pendingDispatchGates.delete(id);
     clearTimeout(pending.timer);
-    pending.reject(new Error("Worker do bot encerrado durante a coordenação do disparo."));
+    pending.reject(new Error("O bot foi encerrado antes de concluir o envio."));
   }
   await bot?.stop().catch(() => undefined);
   shutdownIsolatedOcrWorker();
@@ -169,7 +169,7 @@ process.on("message", (message: BotWorkerIncomingMessage) => {
     if (!pending) return;
     pendingDispatchGates.delete(message.id);
     clearTimeout(pending.timer);
-    if (message.error || !message.token) pending.reject(new Error(message.error || "Coordenação respondeu sem autorização."));
+    if (message.error || !message.token) pending.reject(new Error(message.error || "Não foi possível concluir o envio neste ciclo."));
     else pending.resolve({ token: message.token, waitedMs: Number(message.waitedMs || 0) });
     return;
   }

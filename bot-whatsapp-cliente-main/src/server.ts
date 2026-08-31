@@ -826,9 +826,13 @@ function sanitizeTimelineForClient(timeline: any) {
   if (!timeline || typeof timeline !== "object") return timeline;
   const { dispatchPriority, priorityDelayMs, ...safeTimeline } = timeline;
   safeTimeline.events = Array.isArray(timeline.events)
-    ? timeline.events.filter((event: any) => event?.label !== "Prioridade de corrida aplicada")
+    ? timeline.events.filter((event: any) => !/(prioridade|sincroniza|coordena)/i.test(String(event?.label || "")))
     : timeline.events;
   return safeTimeline;
+}
+
+function isPrivateDispatchLog(message: string) {
+  return /(prioridade de corrida|sincroniza.{0,8}do disparo|coordena.{0,12}(disparo|relay)|configurado para (vencer|perder)|disparo bloqueado)/i.test(String(message || ""));
 }
 
 function sanitizeClientSnapshot(snapshot: BotSnapshot): BotSnapshot {
@@ -861,7 +865,9 @@ function getClientSnapshot(email: string) {
   const snapshot = sanitizeClientSnapshot(getBotForEmail(email).getSnapshot());
   return {
     ...snapshot,
-    logs: snapshot.logs.map((log) => ({ ...log, message: presentAiTerminology(log.message) })),
+    logs: snapshot.logs
+      .filter((log) => !isPrivateDispatchLog(log.message))
+      .map((log) => ({ ...log, message: presentAiTerminology(log.message) })),
     imageUsage: imageUsageStore.clientSnapshot(email)
   };
 }

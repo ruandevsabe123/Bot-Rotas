@@ -41,7 +41,7 @@ test("perdedor continua bloqueado quando o vencedor não confirma o relay", asyn
       eventDetectedAt,
       blockers: [{ email: "alan@teste.com", delayMs: 5 }]
     }),
-    /configurado para vencer não confirmou/
+    /ciclo do grupo expirou/
   );
 });
 

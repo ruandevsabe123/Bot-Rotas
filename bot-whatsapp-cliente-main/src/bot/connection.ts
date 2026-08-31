@@ -3798,12 +3798,8 @@ export class BotService extends EventEmitter {
           eventDetectedAt
         });
         dispatchGateToken = grant.token;
-        if (grant.waitedMs > 0) {
-          timeline.priorityDelayMs = grant.waitedMs;
-          this.addTimelineEvent(timeline, "Sincronização do disparo concluída", Date.now(), "info");
-        }
         if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
-          throw new Error("Ciclo cancelado durante a sincronização do disparo.");
+          throw new Error("O ciclo do grupo foi encerrado antes do envio.");
         }
       } else if (this.shouldApplyDispatchPriorityDelay(trigger) && priority.delayMs > 0) {
         timeline.priorityDelayMs = priority.delayMs;

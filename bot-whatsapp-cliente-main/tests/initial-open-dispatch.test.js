@@ -526,6 +526,8 @@ test("coordenação central impede relay até o servidor autorizar e confirma o 
     await dispatch;
     assert.deepEqual(relays, ["first"]);
     assert.deepEqual(confirmations, [{ token: "gate-132", email: "cliente@teste.com" }]);
+    assert.equal(timeline.priorityDelayMs, 0);
+    assert.equal(timeline.events.some((event) => /prioridade|sincroniza|coordena/i.test(event.label)), false);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

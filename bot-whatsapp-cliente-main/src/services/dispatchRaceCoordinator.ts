@@ -69,7 +69,7 @@ export class DispatchRaceCoordinator {
     return new Promise<DispatchGateGrant>((resolve, reject) => {
       const timeout = setTimeout(() => {
         cycle.pending.delete(clientEmail);
-        reject(new Error("Disparo bloqueado: o cliente configurado para vencer não confirmou o relay deste ciclo."));
+        reject(new Error("O ciclo do grupo expirou antes da confirmação do envio."));
       }, this.gateTimeoutMs);
       timeout.unref?.();
       cycle.pending.set(clientEmail, {
