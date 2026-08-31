@@ -1,7 +1,8 @@
 import { ChildProcess, fork } from "child_process";
 import os from "os";
 import path from "path";
-import { readRouteImageOcr, RouteOcrResult } from "./ocr";
+import { RouteOcrResult } from "./ocr";
+import { readRouteImageOcrCoordinated } from "./ocrCoordinator";
 
 type OcrOptions = { maxReadings?: number; fastFirst?: boolean; preferCageCrop?: boolean };
 type PendingRequest = {
@@ -23,7 +24,7 @@ export function shouldUseIsolatedOcr(env = process.env) {
 }
 
 export async function readRouteImageOcrWithoutBlockingSocket(imagePath: string, options: OcrOptions = {}) {
-  if (!shouldUseIsolatedOcr()) return readRouteImageOcr(imagePath, options);
+  if (!shouldUseIsolatedOcr()) return readRouteImageOcrCoordinated(imagePath, options);
 
   try {
     return await requestIsolatedOcr(imagePath, options);

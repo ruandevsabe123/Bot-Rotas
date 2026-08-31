@@ -1,4 +1,5 @@
-import { readRouteImageOcr, shutdownRouteOcrEngine, warmupRouteOcrEngine } from "./ocr";
+import { shutdownRouteOcrEngine, warmupRouteOcrEngine } from "./ocr";
+import { readRouteImageOcrCoordinated } from "./ocrCoordinator";
 import { acquireGlobalOcrLock } from "./ocrGlobalLock";
 
 let analysisQueue = Promise.resolve();
@@ -24,10 +25,8 @@ process.on("message", (message: any) => {
   if (message.type !== "analyze" || typeof message.id !== "string") return;
 
   analysisQueue = analysisQueue.then(async () => {
-    let release: (() => Promise<void>) | undefined;
     try {
-      release = await acquireGlobalOcrLock();
-      const result = await readRouteImageOcr(String(message.imagePath || ""), message.options || {});
+      const result = await readRouteImageOcrCoordinated(String(message.imagePath || ""), message.options || {});
       process.send?.({ type: "result", id: message.id, result });
     } catch (error) {
       process.send?.({
@@ -35,8 +34,6 @@ process.on("message", (message: any) => {
         id: message.id,
         error: error instanceof Error ? error.message : String(error)
       });
-    } finally {
-      await release?.();
     }
   });
 });
