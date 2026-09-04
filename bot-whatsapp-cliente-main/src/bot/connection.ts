@@ -89,7 +89,9 @@ export type BotServiceOptions = {
 };
 
 export type DispatchGateGrant = { token: string; waitedMs: number };
-export type DispatchGateRequest = { clientEmail: string; groupKey: string; eventDetectedAt: number };
+export type DispatchGateRequest = { clientEmail: string; groupKey: string; eventDetectedAt: number; eventKey?: string };
+export type DispatchRaceEventState = "processing" | "ready" | "unavailable";
+export type DispatchRaceEvent = { clientEmail: string; groupKey: string; eventDetectedAt: number; eventKey: string; state: DispatchRaceEventState };
 
 type MonitoringMode = "target" | "test";
 type OpeningSignal = NonNullable<RouteDispatchTimeline["openingSignal"]>;
@@ -251,6 +253,8 @@ export class BotService extends EventEmitter {
   private dispatchPriorityDelayMs = 0;
   private dispatchGateRequester?: (request: DispatchGateRequest) => Promise<DispatchGateGrant>;
   private dispatchGateRelayReporter?: (token: string, clientEmail: string, relayedAt: number) => void;
+  private dispatchGateFailureReporter?: (token: string, clientEmail: string, failedAt: number) => void;
+  private dispatchRaceEventReporter?: (event: DispatchRaceEvent) => void;
   private adminPhoneNumbers = new Set<string>();
   private extraAdminPhoneNumbers: string[] = [];
   private leaderContacts = new Map<string, string>();
@@ -401,10 +405,14 @@ export class BotService extends EventEmitter {
 
   setDispatchGateHandlers(
     requester?: (request: DispatchGateRequest) => Promise<DispatchGateGrant>,
-    relayReporter?: (token: string, clientEmail: string, relayedAt: number) => void
+    relayReporter?: (token: string, clientEmail: string, relayedAt: number) => void,
+    failureReporter?: (token: string, clientEmail: string, failedAt: number) => void,
+    eventReporter?: (event: DispatchRaceEvent) => void
   ) {
     this.dispatchGateRequester = requester;
     this.dispatchGateRelayReporter = relayReporter;
+    this.dispatchGateFailureReporter = failureReporter;
+    this.dispatchRaceEventReporter = eventReporter;
   }
 
   private refreshRuntimeSettings(config = this.configStore.load()) {
@@ -2508,6 +2516,14 @@ export class BotService extends EventEmitter {
     const imagePaths = batch.map((item, index) => path.join(os.tmpdir(), `bot-rota-${item.messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}-${index}.jpg`));
     const analysisStartedAtMs = Date.now();
     const analysisStartedAt = new Date(analysisStartedAtMs).toISOString();
+    let dispatchRaceReady = false;
+    this.dispatchRaceEventReporter?.({
+      clientEmail: this.clientEmail,
+      groupKey: groupJid,
+      eventDetectedAt: analysisStartedAtMs,
+      eventKey: messageId,
+      state: "processing"
+    });
     const groupName = this.groups.find((group) => group.id === groupJid)?.name || config.grupoAlvoNome || groupJid;
     const analysisContext = () => {
       const analysisFinishedAtMs = Date.now();
@@ -2734,11 +2750,13 @@ export class BotService extends EventEmitter {
         }
         this.ocrRouteSelection = readySelection;
         this.applyOcrRouteSelection(automaticOptions, "automatic");
+        dispatchRaceReady = true;
         this.logger.success(config.ocrSelectionMode === "cages"
           ? `[ROMANEIO] ${automaticOptions.length} gaiola(s) desejada(s) encontrada(s) e preparada(s) para envio.`
           : `[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s); melhor opção selecionada automaticamente.`);
         const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
         if (!sentImmediately) {
+          dispatchRaceReady = false;
           this.logger.info("[ROMANEIO] Melhor rota escolhida automaticamente e preparada para quando o grupo abrir.");
         }
       } else {
@@ -2766,6 +2784,15 @@ export class BotService extends EventEmitter {
       this.emitSnapshot();
       this.logger.warning(`Análise da IA falhou: ${this.getErrorMessage(error)}`);
     } finally {
+      if (!dispatchRaceReady) {
+        this.dispatchRaceEventReporter?.({
+          clientEmail: this.clientEmail,
+          groupKey: groupJid,
+          eventDetectedAt: analysisStartedAtMs,
+          eventKey: messageId,
+          state: "unavailable"
+        });
+      }
       if (sequence === this.latestRouteImageSequence) {
         this.ocrAnalysisDurationsMs = [...this.ocrAnalysisDurationsMs, Date.now() - analysisStartedAtMs].slice(-10);
       }
@@ -2863,8 +2890,8 @@ export class BotService extends EventEmitter {
     }
     this.grupoJaFechouDepoisDoInicio = false;
     this.logger.info(trigger === "automatic"
-      ? "[ROMANEIO] Grupo já estava aberto: melhor rota enviada imediatamente após a imagem."
-      : "[ROMANEIO] Grupo já estava aberto: rota confirmada enviada imediatamente.");
+      ? "[ROMANEIO] Grupo já estava aberto: disparo da melhor rota iniciado imediatamente após a imagem."
+      : "[ROMANEIO] Grupo já estava aberto: disparo da rota confirmada iniciado imediatamente.");
     this.emitSnapshot();
     return true;
   }
@@ -3777,6 +3804,8 @@ export class BotService extends EventEmitter {
     trigger: RouteDispatch["trigger"] = "automatic",
     timeline = this.createDispatchTimeline(eventDetectedAt, sendStartedAt, "race")
   ) {
+    let dispatchGateToken = "";
+    let dispatchGateSettled = false;
     try {
       const sock = this.sock;
       if (!sock) {
@@ -3789,13 +3818,13 @@ export class BotService extends EventEmitter {
 
       const priority = this.getDispatchPriorityProfile();
       timeline.dispatchPriority = priority;
-      let dispatchGateToken = "";
       const coordinatedByServer = this.shouldApplyDispatchPriorityDelay(trigger) && Boolean(this.dispatchGateRequester);
       if (coordinatedByServer) {
         const grant = await this.dispatchGateRequester!({
           clientEmail: this.clientEmail,
           groupKey: jid,
-          eventDetectedAt
+          eventDetectedAt,
+          eventKey: this.getDispatchRaceEventKey()
         });
         dispatchGateToken = grant.token;
         if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
@@ -3854,10 +3883,12 @@ export class BotService extends EventEmitter {
             this.retryTargetMessageAfterFailure(jid, mensagens[index], messageNumber, cycleId, error, timeline)
           )
           .then((messageId) => {
-            if (!messageId) return messageId;
             if (index === 0 && dispatchGateToken) {
-              this.dispatchGateRelayReporter?.(dispatchGateToken, this.clientEmail, Date.now());
+              dispatchGateSettled = true;
+              if (messageId) this.dispatchGateRelayReporter?.(dispatchGateToken, this.clientEmail, Date.now());
+              else this.dispatchGateFailureReporter?.(dispatchGateToken, this.clientEmail, Date.now());
             }
+            if (!messageId) return messageId;
             const acceptedCount = (this.acceptedMessageCountByCycle.get(cycleId) || 0) + 1;
             this.acceptedMessageCountByCycle.set(cycleId, acceptedCount);
             if (this.pendingOcrReconnectDispatch?.interruptedCycleId === cycleId) {
@@ -3876,6 +3907,13 @@ export class BotService extends EventEmitter {
             this.addTimelineEvent(timeline, `Mensagem ${messageNumber} confirmada`, ackAt, "success");
             this.logger.info(`Mensagem alvo ${messageNumber} aceita pelo servidor do WhatsApp. Aguardando retorno no grupo.`);
             return messageId;
+          })
+          .catch((error) => {
+            if (index === 0 && dispatchGateToken && !dispatchGateSettled) {
+              dispatchGateSettled = true;
+              this.dispatchGateFailureReporter?.(dispatchGateToken, this.clientEmail, Date.now());
+            }
+            throw error;
           });
         if (index === 0 && !speculativeSecondLane) {
           void finalPromise.then(releaseFirstMessageLane, releaseFirstMessageLane);
@@ -3926,6 +3964,10 @@ export class BotService extends EventEmitter {
         timeline
       });
     } catch (error) {
+      if (dispatchGateToken && !dispatchGateSettled) {
+        dispatchGateSettled = true;
+        this.dispatchGateFailureReporter?.(dispatchGateToken, this.clientEmail, Date.now());
+      }
       this.logger.error(`Erro inesperado no disparo agressivo: ${this.getErrorMessage(error)}`);
       this.addTimelineEvent(timeline, "Erro inesperado", Date.now(), "error", this.getErrorMessage(error));
       this.updateRouteDispatch(cycleId, 0, mensagens.length, timeline, true);
@@ -4394,6 +4436,13 @@ export class BotService extends EventEmitter {
     const initialWarmup = this.runWarmKeepAlive(reason, config);
     void initialWarmup.catch(() => undefined);
     return initialWarmup;
+  }
+
+  private getDispatchRaceEventKey() {
+    if (this.preparedTargetDispatchMode !== "ocr") return undefined;
+    const analysisId = String(this.lastOcrInsight?.analysisId || "");
+    const clientPrefix = `${this.clientEmail}:`;
+    return analysisId.startsWith(clientPrefix) ? analysisId.slice(clientPrefix.length) : analysisId || undefined;
   }
 
   private scheduleClosingWarmup() {

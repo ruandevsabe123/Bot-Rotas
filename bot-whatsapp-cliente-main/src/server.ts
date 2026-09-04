@@ -404,12 +404,13 @@ function getBotForEmail(email: string) {
       scheduleSnapshotFanout(normalizedEmail, nextBot);
     });
   });
-  nextBot.on("dispatch-gate-request", (request: { id: string; clientEmail: string; groupKey: string; eventDetectedAt: number }) => {
+  nextBot.on("dispatch-gate-request", (request: { id: string; clientEmail: string; groupKey: string; eventDetectedAt: number; eventKey?: string }) => {
     const blockers = computeConditionalDispatchBlockers(getConditionalPriorityClients()).get(normalizedEmail) || [];
     void dispatchRaceCoordinator.request({
       clientEmail: normalizedEmail,
       groupKey: request.groupKey,
       eventDetectedAt: request.eventDetectedAt,
+      eventKey: request.eventKey,
       blockers
     }).then((grant) => {
       nextBot.resolveDispatchGate(request.id, grant);
@@ -419,6 +420,15 @@ function getBotForEmail(email: string) {
   });
   nextBot.on("dispatch-gate-relay", (relay: { token: string; clientEmail: string; relayedAt: number }) => {
     dispatchRaceCoordinator.confirmRelay(relay.token, normalizedEmail, relay.relayedAt);
+  });
+  nextBot.on("dispatch-gate-failure", (failure: { token: string; clientEmail: string; failedAt: number }) => {
+    dispatchRaceCoordinator.failRelay(failure.token, normalizedEmail);
+  });
+  nextBot.on("dispatch-race-event", (event: { groupKey: string; eventDetectedAt: number; eventKey: string; state: "processing" | "ready" | "unavailable" }) => {
+    dispatchRaceCoordinator.announce({ ...event, clientEmail: normalizedEmail });
+  });
+  nextBot.on("worker-exit", () => {
+    dispatchRaceCoordinator.cancelClient(normalizedEmail, "O envio anterior foi interrompido e será recuperado automaticamente.");
   });
 
   bots.set(normalizedEmail, nextBot);

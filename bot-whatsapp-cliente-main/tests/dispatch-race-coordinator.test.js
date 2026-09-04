@@ -66,3 +66,124 @@ test("internet mais rápida do perdedor não o libera antes do vencedor chegar",
   await loserPromise;
   assert.equal(loserReleased, true);
 });
+
+test("cliente armado sem intenção real de envio não prende o outro", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 1_000, 25);
+  const startedAt = Date.now();
+  const grant = await coordinator.request({
+    clientEmail: "guilherme@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt: startedAt,
+    eventKey: "imagem-sem-rota-no-outro",
+    blockers: [{ email: "alan@teste.com", delayMs: 400 }]
+  });
+
+  assert.ok(grant.token);
+  assert.ok(Date.now() - startedAt >= 20);
+  assert.ok(Date.now() - startedAt < 500);
+});
+
+test("falha definitiva do primeiro envio libera o cliente de contingência", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 1_000, 100);
+  const eventDetectedAt = Date.now();
+  const winner = await coordinator.request({
+    clientEmail: "alan@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-compartilhada",
+    blockers: []
+  });
+  const loser = coordinator.request({
+    clientEmail: "guilherme@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-compartilhada",
+    blockers: [{ email: "alan@teste.com", delayMs: 400 }]
+  });
+
+  assert.equal(coordinator.failRelay(winner.token, "alan@teste.com"), true);
+  const fallback = await loser;
+  assert.ok(fallback.token);
+  assert.ok(fallback.waitedMs < 400);
+});
+
+test("imagens diferentes nunca compartilham a confirmação da disputa", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 1_000, 30);
+  const eventDetectedAt = Date.now();
+  const unrelatedWinner = await coordinator.request({
+    clientEmail: "alan@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-a",
+    blockers: []
+  });
+  coordinator.confirmRelay(unrelatedWinner.token, "alan@teste.com");
+
+  const startedAt = Date.now();
+  await coordinator.request({
+    clientEmail: "guilherme@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt: eventDetectedAt + 5,
+    eventKey: "imagem-b",
+    blockers: [{ email: "alan@teste.com", delayMs: 400 }]
+  });
+  assert.ok(Date.now() - startedAt >= 25);
+  assert.ok(Date.now() - startedAt < 400);
+});
+
+test("queda do processo principal libera a contingência sem esperar timeout", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 1_000, 100);
+  const eventDetectedAt = Date.now();
+  await coordinator.request({
+    clientEmail: "alan@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-com-queda",
+    blockers: []
+  });
+  const fallback = coordinator.request({
+    clientEmail: "guilherme@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-com-queda",
+    blockers: [{ email: "alan@teste.com", delayMs: 400 }]
+  });
+
+  coordinator.cancelClient("alan@teste.com");
+  assert.ok((await fallback).token);
+});
+
+test("análise ativa da mesma imagem mantém a ordem sem depender da velocidade", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 1_000, 20);
+  const eventDetectedAt = Date.now();
+  coordinator.announce({
+    clientEmail: "alan@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-em-analise",
+    state: "processing"
+  });
+  let released = false;
+  const fallback = coordinator.request({
+    clientEmail: "guilherme@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-em-analise",
+    blockers: [{ email: "alan@teste.com", delayMs: 400 }]
+  }).then((grant) => {
+    released = true;
+    return grant;
+  });
+
+  await delay(45);
+  assert.equal(released, false);
+  coordinator.announce({
+    clientEmail: "alan@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-em-analise",
+    state: "unavailable"
+  });
+  assert.ok((await fallback).token);
+  assert.equal(released, true);
+});

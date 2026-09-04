@@ -114,7 +114,9 @@ async function initialize(message: Extract<BotWorkerIncomingMessage, { type: "in
         send({ type: "dispatch-gate-request", id, ...request });
       });
     },
-    (token, clientEmail, relayedAt) => send({ type: "dispatch-gate-relay", token, clientEmail, relayedAt })
+    (token, clientEmail, relayedAt) => send({ type: "dispatch-gate-relay", token, clientEmail, relayedAt }),
+    (token, clientEmail, failedAt) => send({ type: "dispatch-gate-failure", token, clientEmail, failedAt }),
+    (event) => send({ type: "dispatch-race-event", ...event })
   );
   send({ type: "ready", snapshot: bot.getSnapshot() });
 }

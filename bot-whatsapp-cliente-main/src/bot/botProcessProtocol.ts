@@ -1,4 +1,4 @@
-import type { BotServiceOptions } from "./connection";
+import type { BotServiceOptions, DispatchRaceEventState } from "./connection";
 import type { BotSnapshot, ImageUsageEntry, RouteDispatch } from "../shared/types";
 
 export type BotWorkerInitMessage = {
@@ -73,6 +73,7 @@ export type BotWorkerDispatchGateRequestMessage = {
   clientEmail: string;
   groupKey: string;
   eventDetectedAt: number;
+  eventKey?: string;
 };
 
 export type BotWorkerDispatchGateRelayMessage = {
@@ -80,6 +81,22 @@ export type BotWorkerDispatchGateRelayMessage = {
   token: string;
   clientEmail: string;
   relayedAt: number;
+};
+
+export type BotWorkerDispatchGateFailureMessage = {
+  type: "dispatch-gate-failure";
+  token: string;
+  clientEmail: string;
+  failedAt: number;
+};
+
+export type BotWorkerDispatchRaceEventMessage = {
+  type: "dispatch-race-event";
+  clientEmail: string;
+  groupKey: string;
+  eventDetectedAt: number;
+  eventKey: string;
+  state: DispatchRaceEventState;
 };
 
 export type BotWorkerOutgoingMessage =
@@ -90,4 +107,6 @@ export type BotWorkerOutgoingMessage =
   | BotWorkerImageAnalysisMessage
   | BotWorkerRouteAutoValidatedMessage
   | BotWorkerDispatchGateRequestMessage
-  | BotWorkerDispatchGateRelayMessage;
+  | BotWorkerDispatchGateRelayMessage
+  | BotWorkerDispatchGateFailureMessage
+  | BotWorkerDispatchRaceEventMessage;

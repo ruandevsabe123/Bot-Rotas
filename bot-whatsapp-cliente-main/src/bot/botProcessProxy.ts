@@ -235,6 +235,14 @@ export class BotProcessProxy extends EventEmitter {
       this.emit("dispatch-gate-relay", message);
       return;
     }
+    if (message.type === "dispatch-gate-failure") {
+      this.emit("dispatch-gate-failure", message);
+      return;
+    }
+    if (message.type === "dispatch-race-event") {
+      this.emit("dispatch-race-event", message);
+      return;
+    }
     if (message.type === "response") {
       const pending = this.pending.get(message.id);
       if (!pending) return;
@@ -286,6 +294,7 @@ export class BotProcessProxy extends EventEmitter {
 
   private handleExit(error: Error) {
     if (this.intentionalShutdown || this.restartTimer) return;
+    this.emit("worker-exit", error);
     this.recoveryIntent = {
       running: ["connected", "connecting", "waiting_qr", "reconnecting"].includes(this.snapshot.status),
       monitoringEnabled: Boolean(this.snapshot.monitoringEnabled),

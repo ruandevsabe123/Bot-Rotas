@@ -533,6 +533,54 @@ test("coordenação central impede relay até o servidor autorizar e confirma o 
   }
 });
 
+test("falha definitiva do primeiro relay avisa a contingência central", async () => {
+  const { bot, directory } = createBot();
+  try {
+    bot.monitoringEnabled = true;
+    bot.monitoringMode = "target";
+    bot.sendCycleId = 133;
+    bot.preparedTargetDispatchMode = "ocr";
+    bot.lastOcrInsight = { analysisId: "cliente@teste.com:IMAGEM-133" };
+    const failures = [];
+    let gateRequest;
+    bot.setDispatchGateHandlers(
+      async (request) => {
+        gateRequest = request;
+        return { token: "gate-133", waitedMs: 0 };
+      },
+      () => undefined,
+      (token, email) => failures.push({ token, email })
+    );
+    bot.sock = {
+      relayMessage: async () => { throw new Error("relay indisponível"); }
+    };
+    bot.preparedRelayMessages = [{ key: { id: "failed-first" }, message: { conversation: "Cliente A-1" } }];
+    bot.retryTargetMessageAfterFailure = async () => false;
+    bot.updateRouteDispatch = () => undefined;
+    bot.recordDispatchMetrics = () => undefined;
+    bot.stopMonitoringAfterTargetDispatch = () => undefined;
+    bot.emitSnapshot = () => undefined;
+    bot.addStatusEvent = () => undefined;
+
+    const startedAt = Date.now();
+    await bot.sendAggressiveTargetSequence(
+      "motoristas@g.us",
+      ["Cliente A-1"],
+      133,
+      startedAt,
+      startedAt,
+      "automatic",
+      bot.createDispatchTimeline(startedAt, startedAt, "race", "image_ready")
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+
+    assert.equal(gateRequest.eventKey, "IMAGEM-133");
+    assert.deepEqual(failures, [{ token: "gate-133", email: "cliente@teste.com" }]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("conexão aquecida libera a faixa paralela sem histórico de três disparos", () => {
   const { bot, directory } = createBot();
   try {
