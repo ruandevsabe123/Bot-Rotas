@@ -3,6 +3,7 @@ import crypto from "crypto";
 export type DispatchGateBlocker = {
   email: string;
   delayMs: number;
+  strict?: boolean;
 };
 
 export type DispatchGateRequest = {
@@ -98,7 +99,11 @@ export class DispatchRaceCoordinator {
     this.cycleByToken.set(token, cycle);
 
     const blockers = input.blockers
-      .map((blocker) => ({ email: normalizeEmail(blocker.email), delayMs: normalizeDelay(blocker.delayMs) }))
+      .map((blocker) => ({
+        email: normalizeEmail(blocker.email),
+        delayMs: normalizeDelay(blocker.delayMs),
+        strict: blocker.strict === true
+      }))
       .filter((blocker) => blocker.email && blocker.email !== clientEmail);
     if (!blockers.length) return Promise.resolve({ token, waitedMs: 0 });
 
@@ -188,6 +193,10 @@ export class DispatchRaceCoordinator {
     if (!pending || pending.releaseTimer) return;
     const joinedBlockers = pending.blockers.filter((blocker) => cycle.tokens.has(blocker.email));
     const absentBlockers = pending.blockers.filter((blocker) => !cycle.tokens.has(blocker.email));
+    // O servidor só envia blockers estritos quando confirmou que os dois bots
+    // estão conectados, armados e no mesmo grupo. Nesse caso, jamais libere o
+    // perdedor apenas porque o processo do vencedor demorou a entrar no ciclo.
+    if (absentBlockers.some((blocker) => blocker.strict)) return;
     const knownActiveBlockers = absentBlockers.filter((blocker) => {
       const state = cycle.participantStates.get(blocker.email);
       return state === "processing" || state === "ready";
@@ -210,9 +219,10 @@ export class DispatchRaceCoordinator {
       pending.joinTimer = undefined;
     }
 
-    // Estar armado nao basta: so bloqueia quem realmente tentou enviar no
-    // mesmo evento. Falha definitiva do vencedor transforma o outro em backup.
-    const activeBlockers = joinedBlockers.filter((blocker) => !cycle.failed.has(blocker.email));
+    // Regras comuns ainda permitem contingência quando o primeiro envio falha.
+    // Regras estritas continuam bloqueadas: o cliente marcado para perder não
+    // pode virar vencedor por atraso, queda ou diferença de internet.
+    const activeBlockers = joinedBlockers.filter((blocker) => blocker.strict || !cycle.failed.has(blocker.email));
     if (!activeBlockers.length) {
       this.resolvePending(cycle, clientEmail, pending);
       return;

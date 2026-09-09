@@ -15,7 +15,7 @@ export type ConditionalPriorityClient = {
 
 type Edge = { winner: string; loser: string; delayMs: number; updatedAt: string; owner: string };
 
-export type ConditionalDispatchBlocker = { email: string; delayMs: number };
+export type ConditionalDispatchBlocker = { email: string; delayMs: number; strict: boolean };
 
 export function computeConditionalDispatchPriorities(clients: ConditionalPriorityClient[]) {
   const plan = computeConditionalDispatchPlan(clients);
@@ -72,7 +72,9 @@ function computeConditionalDispatchPlan(clients: ConditionalPriorityClient[]) {
       for (const edge of edges) {
         blockersByLoser.set(edge.loser, [
           ...(blockersByLoser.get(edge.loser) || []),
-          { email: winner, delayMs: edge.delayMs }
+          // Uma regra de confronto é determinística: o perdedor nunca pode
+          // ser liberado por timeout de entrada ou por falha do vencedor.
+          { email: winner, delayMs: edge.delayMs, strict: true }
         ]);
       }
     }

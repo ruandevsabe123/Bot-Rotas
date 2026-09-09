@@ -110,7 +110,7 @@ test("informa ao coordenador exatamente qual vencedor bloqueia cada perdedor", (
   const blockers = computeConditionalDispatchBlockers(clients);
 
   assert.deepEqual(blockers.get("alan@cliente.com"), []);
-  assert.deepEqual(blockers.get("guilherme@cliente.com"), [{ email: "alan@cliente.com", delayMs: 450 }]);
+  assert.deepEqual(blockers.get("guilherme@cliente.com"), [{ email: "alan@cliente.com", delayMs: 450, strict: true }]);
 });
 
 test("hierarquia bloqueia cada cliente pelo vencedor imediatamente anterior", () => {
@@ -120,8 +120,8 @@ test("hierarquia bloqueia cada cliente pelo vencedor imediatamente anterior", ()
     client("c@cliente.com", undefined)
   ]);
 
-  assert.deepEqual(blockers.get("b@cliente.com"), [{ email: "a@cliente.com", delayMs: 400 }]);
-  assert.deepEqual(blockers.get("c@cliente.com"), [{ email: "b@cliente.com", delayMs: 500 }]);
+  assert.deepEqual(blockers.get("b@cliente.com"), [{ email: "a@cliente.com", delayMs: 400, strict: true }]);
+  assert.deepEqual(blockers.get("c@cliente.com"), [{ email: "b@cliente.com", delayMs: 500, strict: true }]);
 });
 
 test("ignora a regra que fecharia um ciclo entre clientes", () => {

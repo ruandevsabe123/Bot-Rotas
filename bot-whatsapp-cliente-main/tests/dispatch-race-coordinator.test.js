@@ -187,3 +187,55 @@ test("análise ativa da mesma imagem mantém a ordem sem depender da velocidade"
   assert.ok((await fallback).token);
   assert.equal(released, true);
 });
+
+test("confronto estrito espera o vencedor mesmo quando ele entra depois da janela curta", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 1_000, 20);
+  const eventDetectedAt = Date.now();
+  let loserReleased = false;
+  const loser = coordinator.request({
+    clientEmail: "guilherme@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-estrita",
+    blockers: [{ email: "alan@teste.com", delayMs: 35, strict: true }]
+  }).then((grant) => {
+    loserReleased = true;
+    return grant;
+  });
+
+  await delay(60);
+  assert.equal(loserReleased, false);
+  const winner = await coordinator.request({
+    clientEmail: "alan@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt: eventDetectedAt + 60,
+    eventKey: "imagem-estrita",
+    blockers: []
+  });
+  assert.equal(coordinator.confirmRelay(winner.token, "alan@teste.com"), true);
+  const grant = await loser;
+  assert.equal(loserReleased, true);
+  assert.ok(grant.waitedMs >= 85);
+});
+
+test("confronto estrito não libera o perdedor quando o vencedor falha", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 90, 10);
+  const eventDetectedAt = Date.now();
+  const winner = await coordinator.request({
+    clientEmail: "alan@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-com-falha-estrita",
+    blockers: []
+  });
+  const loser = coordinator.request({
+    clientEmail: "guilherme@teste.com",
+    groupKey: "grupo@g.us",
+    eventDetectedAt,
+    eventKey: "imagem-com-falha-estrita",
+    blockers: [{ email: "alan@teste.com", delayMs: 35, strict: true }]
+  });
+
+  assert.equal(coordinator.failRelay(winner.token, "alan@teste.com"), true);
+  await assert.rejects(loser, /expirou/i);
+});
