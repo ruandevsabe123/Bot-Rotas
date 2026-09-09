@@ -19,7 +19,8 @@ const {
   calculatePresetRouteCrop,
   calculatePresetRouteAtCrop,
   calculateFocusedOcrWidth,
-  findAllPlannedAtCodesFromOcr
+  findAllPlannedAtCodesFromOcr,
+  reconcileGaiolaDetectionsWithRomaneio
 } = require("../dist/bot/ocr.js");
 
 test("cobre GAIOLA antiga e ROTA do layout escuro novo sem depender da proporção", () => {
@@ -559,3 +560,67 @@ test("recupera todas as gaiolas quando o OCR agrupa várias linhas da tabela em 
 
   assert.deepEqual(result.map((item) => item.code), codes);
 });
+
+test("usa o AT do romaneio para corrigir I-17 truncado como I-1", () => {
+  const plannedAt = "AT202609059DJOX";
+  const routes = [romaneioRoute("I-17", plannedAt)];
+  const result = reconcileGaiolaDetectionsWithRomaneio([
+    { ...detection("I-1", 91), plannedAt },
+    { ...detection("I-17", 88), plannedAt }
+  ], [plannedAt], routes);
+
+  assert.deepEqual(result.map((item) => item.code), ["I-17"]);
+  assert.equal(result[0].plannedAt, plannedAt);
+});
+
+test("remove I-1 truncado quando a imagem tem um unico AT exato de I-17", () => {
+  const plannedAt = "AT202609059DJOX";
+  const result = reconcileGaiolaDetectionsWithRomaneio([
+    detection("I-1", 91)
+  ], [plannedAt], [romaneioRoute("I-17", plannedAt)]);
+
+  assert.deepEqual(result.map((item) => item.code), ["I-17"]);
+});
+
+test("bloqueia conflito I-1 e I-17 sem AT em vez de adivinhar", () => {
+  const result = reconcileGaiolaDetectionsWithRomaneio([
+    { ...detection("I-1", 91), safeForAutomatic: true, evidenceCount: 2 },
+    { ...detection("I-17", 90), safeForAutomatic: true, evidenceCount: 2 }
+  ], [], []);
+
+  assert.equal(result.length, 2);
+  assert.ok(result.every((item) => !isSafeAutomaticGaiolaDetection(item)));
+});
+
+test("preserva I-1 e I-17 quando cada linha tem seu proprio AT exato", () => {
+  const atI1 = "AT202609059AAAA";
+  const atI17 = "AT202609059DJOX";
+  const result = reconcileGaiolaDetectionsWithRomaneio([
+    { ...detection("I-1", 91), plannedAt: atI1 },
+    { ...detection("I-17", 90), plannedAt: atI17 }
+  ], [atI1, atI17], [romaneioRoute("I-1", atI1), romaneioRoute("I-17", atI17)]);
+
+  assert.deepEqual(result.map((item) => item.code).sort(), ["I-1", "I-17"]);
+});
+
+test("nao libera gaiola com letra I sem confirmacao exata do AT", () => {
+  const result = reconcileGaiolaDetectionsWithRomaneio([
+    { ...detection("I-17", 95), safeForAutomatic: true, evidenceCount: 3 }
+  ], [], [romaneioRoute("I-17", "AT202609059DJOX")]);
+
+  assert.equal(result[0].code, "I-17");
+  assert.equal(isSafeAutomaticGaiolaDetection(result[0]), false);
+});
+
+function romaneioRoute(gaiola, plannedAt) {
+  return {
+    rota: "001",
+    gaiola,
+    plannedAt,
+    cidade: "Campos dos Goytacazes",
+    distanciaKm: 1,
+    pacotes: 1,
+    paradas: 1,
+    bairros: [{ nome: "Parque Corrientes", percentual: 100, pacotes: 1 }]
+  };
+}

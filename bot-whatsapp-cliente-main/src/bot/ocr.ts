@@ -3,7 +3,7 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { createWorker } from "tesseract.js";
-import { MonitoredRoute } from "../shared/types";
+import { MonitoredRoute, RomaneioRouteSummary } from "../shared/types";
 
 type OcrWord = {
   text: string;
@@ -1146,6 +1146,147 @@ function collectGaiolaCodes(text: string) {
   return matches
     .map((match) => `${match[1] === "l" ? "I" : match[1].toUpperCase()}-${match[2]}`)
     .filter((code) => !/^AT-\d/i.test(code));
+}
+
+/**
+ * Usa o Planned AT do romaneio como identidade definitiva da linha.
+ *
+ * O Tesseract pode ler I-17 como I-1 em um tratamento e corretamente em
+ * outro. Somar os dois resultados sem considerar o AT faria o automático
+ * preparar duas gaiolas. Quando o AT existe no romaneio, ele elimina essa
+ * ambiguidade; quando não existe, conflitos desse tipo ficam inseguros para
+ * o envio automático em vez de o bot tentar adivinhar.
+ */
+export function reconcileGaiolaDetectionsWithRomaneio(
+  detections: DetectedRouteCode[],
+  plannedAtCodes: string[],
+  routes: RomaneioRouteSummary[]
+) {
+  const routesByAt = buildUniqueRoutesByPlannedAt(routes);
+  const exactRoutes = plannedAtCodes
+    .map((plannedAt) => routesByAt.get(normalizePlannedAtIdentity(plannedAt)))
+    .filter((route): route is RomaneioRouteSummary => Boolean(route?.gaiola));
+  const exactCodeKeys = new Set(exactRoutes.map((route) => normalizeGaiolaIdentity(route.gaiola)));
+
+  const reconciled = detections.map((detected) => {
+    const route = detected.plannedAt
+      ? routesByAt.get(normalizePlannedAtIdentity(detected.plannedAt))
+      : undefined;
+    if (!route?.gaiola) return { ...detected };
+    return detectionFromExactRomaneioRoute(detected, route, detected.plannedAt!);
+  });
+
+  for (const route of exactRoutes) {
+    const codeKey = normalizeGaiolaIdentity(route.gaiola);
+    if (reconciled.some((detected) => normalizeGaiolaIdentity(detected.code) === codeKey)) continue;
+    reconciled.push(detectionFromExactRomaneioRoute(undefined, route, route.plannedAt || ""));
+  }
+
+  const withoutTruncatedI = reconciled.filter((detected) => {
+    const codeKey = normalizeGaiolaIdentity(detected.code);
+    if (exactCodeKeys.has(codeKey)) return true;
+    // Com apenas um AT exato na imagem, I-1 ao lado de I-17 é a leitura
+    // truncada da mesma linha. Não removemos prefixos em tabelas com vários
+    // ATs porque I-1 e I-17 também podem ser duas linhas reais.
+    return exactCodeKeys.size !== 1 || ![...exactCodeKeys].some((exactCode) =>
+      isTruncatedLeadingICode(codeKey, exactCode));
+  });
+
+  const ambiguousCodes = findUnresolvedLeadingIConflicts(withoutTruncatedI, exactCodeKeys);
+  const merged = new Map<string, DetectedRouteCode>();
+  for (const detected of withoutTruncatedI) {
+    const key = normalizeGaiolaIdentity(detected.code);
+    // A letra I é visualmente igual a 1/l em várias fontes. Para ela, o
+    // automático só recebe liberação quando algum AT exato da imagem confirma
+    // a gaiola no romaneio. Sem AT, ela continua visível no manual, mas não é
+    // enviada no chute.
+    const needsExactLeadingIConfirmation = /^I-\d{1,2}$/.test(key) && !exactCodeKeys.has(key);
+    const candidate = ambiguousCodes.has(key) || needsExactLeadingIConfirmation
+      ? { ...detected, safeForAutomatic: false }
+      : detected;
+    const current = merged.get(key);
+    if (!current || candidate.confidence > current.confidence) {
+      merged.set(key, current ? {
+        ...candidate,
+        plannedAt: candidate.plannedAt || current.plannedAt
+      } : candidate);
+      continue;
+    }
+    current.evidenceCount = Math.max(current.evidenceCount, candidate.evidenceCount);
+    current.variantCount = Math.max(current.variantCount, candidate.variantCount);
+    current.safeForAutomatic = current.safeForAutomatic || candidate.safeForAutomatic;
+    current.plannedAt ||= candidate.plannedAt;
+  }
+  return [...merged.values()];
+}
+
+function buildUniqueRoutesByPlannedAt(routes: RomaneioRouteSummary[]) {
+  const unique = new Map<string, RomaneioRouteSummary>();
+  const ambiguous = new Set<string>();
+  for (const route of routes) {
+    const key = normalizePlannedAtIdentity(route.plannedAt || "");
+    if (!key) continue;
+    const current = unique.get(key);
+    if (current && normalizeGaiolaIdentity(current.gaiola) !== normalizeGaiolaIdentity(route.gaiola)) {
+      ambiguous.add(key);
+      continue;
+    }
+    unique.set(key, route);
+  }
+  for (const key of ambiguous) unique.delete(key);
+  return unique;
+}
+
+function detectionFromExactRomaneioRoute(
+  detected: DetectedRouteCode | undefined,
+  route: RomaneioRouteSummary,
+  plannedAt: string
+): DetectedRouteCode {
+  return {
+    route: route.rota,
+    cidade: route.cidade,
+    bairro: route.bairros[0]?.nome,
+    code: route.gaiola,
+    plannedAt: plannedAt || route.plannedAt,
+    line: detected?.line || `${route.gaiola} ${plannedAt || route.plannedAt || ""}`.trim(),
+    confidence: detected?.confidence || 100,
+    evidenceCount: detected?.evidenceCount || 1,
+    variantCount: detected?.variantCount || 1,
+    safeForAutomatic: detected?.safeForAutomatic || false
+  };
+}
+
+function normalizePlannedAtIdentity(value: string) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function normalizeGaiolaIdentity(value: string) {
+  const match = String(value || "").trim().toUpperCase().match(/^([A-Z])-?(\d{1,2})$/);
+  return match ? `${match[1]}-${match[2]}` : String(value || "").trim().toUpperCase();
+}
+
+function isTruncatedLeadingICode(shortCode: string, fullCode: string) {
+  const shortMatch = shortCode.match(/^I-(\d{1,2})$/);
+  const fullMatch = fullCode.match(/^I-(\d{1,2})$/);
+  return Boolean(shortMatch && fullMatch &&
+    shortMatch[1].length < fullMatch[1].length &&
+    fullMatch[1].startsWith(shortMatch[1]));
+}
+
+function findUnresolvedLeadingIConflicts(detections: DetectedRouteCode[], exactCodeKeys: Set<string>) {
+  const keys = [...new Set(detections.map((detected) => normalizeGaiolaIdentity(detected.code)))]
+    .filter((code) => /^I-\d{1,2}$/.test(code));
+  const ambiguous = new Set<string>();
+  for (const left of keys) {
+    for (const right of keys) {
+      if (left === right || exactCodeKeys.has(left) || exactCodeKeys.has(right)) continue;
+      if (isTruncatedLeadingICode(left, right) || isTruncatedLeadingICode(right, left)) {
+        ambiguous.add(left);
+        ambiguous.add(right);
+      }
+    }
+  }
+  return ambiguous;
 }
 
 export function findAllPlannedAtCodesFromOcr(ocr: RouteOcrResult) {
