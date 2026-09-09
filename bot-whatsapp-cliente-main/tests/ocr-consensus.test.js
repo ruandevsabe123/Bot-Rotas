@@ -603,13 +603,43 @@ test("preserva I-1 e I-17 quando cada linha tem seu proprio AT exato", () => {
   assert.deepEqual(result.map((item) => item.code).sort(), ["I-1", "I-17"]);
 });
 
-test("nao libera gaiola com letra I sem confirmacao exata do AT", () => {
+test("nao libera gaiola I de um digito sem confirmacao exata do AT", () => {
   const result = reconcileGaiolaDetectionsWithRomaneio([
-    { ...detection("I-17", 95), safeForAutomatic: true, evidenceCount: 3 }
-  ], [], [romaneioRoute("I-17", "AT202609059DJOX")]);
+    { ...detection("I-1", 95), safeForAutomatic: true, evidenceCount: 3 }
+  ], [], [romaneioRoute("I-1", "AT202609059AAAA")]);
 
-  assert.equal(result[0].code, "I-17");
+  assert.equal(result[0].code, "I-1");
   assert.equal(isSafeAutomaticGaiolaDetection(result[0]), false);
+});
+
+test("libera gaiolas I de dois digitos por consenso mesmo sem ler o AT", () => {
+  const result = reconcileGaiolaDetectionsWithRomaneio([
+    { ...detection("I-19", 95), safeForAutomatic: true, evidenceCount: 2, variantCount: 2 },
+    { ...detection("I-32", 94), safeForAutomatic: true, evidenceCount: 2, variantCount: 2 }
+  ], [], [
+    romaneioRoute("I-19", "AT202609059D9HI"),
+    romaneioRoute("I-32", "AT202609059D9ZC")
+  ]);
+
+  assert.deepEqual(result.map((item) => item.code), ["I-19", "I-32"]);
+  assert.ok(result.every((item) => isSafeAutomaticGaiolaDetection(item)));
+});
+
+test("preserva as quatro gaiolas dos recortes claros enviados pelo cliente", () => {
+  const reading = (source) => plainReading("J-16\nI-19\nD-22\nI-32", source);
+  const detected = findAllGaiolaCodesFromOcr({
+    ...reading("foto"),
+    variants: [reading("normal"), reading("suave")]
+  });
+  const result = reconcileGaiolaDetectionsWithRomaneio(detected, [], [
+    romaneioRoute("J-16", "AT202609059DKKH"),
+    romaneioRoute("I-19", "AT202609059D9HI"),
+    romaneioRoute("D-22", "AT202609059CZP3"),
+    romaneioRoute("I-32", "AT202609059D9ZC")
+  ]);
+
+  assert.deepEqual(result.map((item) => item.code), ["J-16", "I-19", "D-22", "I-32"]);
+  assert.ok(result.every((item) => isSafeAutomaticGaiolaDetection(item)));
 });
 
 function romaneioRoute(gaiola, plannedAt) {

@@ -1196,11 +1196,10 @@ export function reconcileGaiolaDetectionsWithRomaneio(
   const merged = new Map<string, DetectedRouteCode>();
   for (const detected of withoutTruncatedI) {
     const key = normalizeGaiolaIdentity(detected.code);
-    // A letra I é visualmente igual a 1/l em várias fontes. Para ela, o
-    // automático só recebe liberação quando algum AT exato da imagem confirma
-    // a gaiola no romaneio. Sem AT, ela continua visível no manual, mas não é
-    // enviada no chute.
-    const needsExactLeadingIConfirmation = /^I-\d{1,2}$/.test(key) && !exactCodeKeys.has(key);
+    // A letra I é visualmente igual a 1/l em várias fontes. Apenas códigos de
+    // um dígito exigem AT: I-1 pode ser I-10..I-19 truncado. Códigos completos
+    // como I-19/I-32 continuam válidos pelo consenso do OCR rápido.
+    const needsExactLeadingIConfirmation = /^I-\d$/.test(key) && !exactCodeKeys.has(key);
     const candidate = ambiguousCodes.has(key) || needsExactLeadingIConfirmation
       ? { ...detected, safeForAutomatic: false }
       : detected;
