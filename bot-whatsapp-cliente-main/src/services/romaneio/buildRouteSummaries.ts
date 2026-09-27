@@ -6,7 +6,9 @@ export function buildRouteSummaries(rows: RomaneioRow[]): RomaneioRouteSummary[]
 
   for (const row of rows) {
     const key = [normalizeRomaneioText(row.rota), row.gaiola.toUpperCase(), row.plannedAt || ""].join("|");
-    groups.set(key, [...(groups.get(key) || []), row]);
+    const group = groups.get(key);
+    if (group) group.push(row);
+    else groups.set(key, [row]);
   }
 
   return Array.from(groups.values())
@@ -30,8 +32,8 @@ function buildSummary(rows: RomaneioRow[]): RomaneioRouteSummary {
     });
   }
 
-  const pacotes = Math.max(...rows.map((row) => row.numOfOrder || 0), uniquePackages.size, rows.length);
-  const paradas = Math.max(...rows.map((row) => row.stop || 0), uniqueStops.size, 0);
+  const pacotes = rows.reduce((maximum, row) => Math.max(maximum, row.numOfOrder || 0), Math.max(uniquePackages.size, rows.length));
+  const paradas = rows.reduce((maximum, row) => Math.max(maximum, row.stop || 0), uniqueStops.size);
   const bairros = Array.from(bairroCounts.values())
     .map(({ nome, count }) => ({
       nome,
@@ -45,7 +47,7 @@ function buildSummary(rows: RomaneioRow[]): RomaneioRouteSummary {
     gaiola: first.gaiola,
     plannedAt: first.plannedAt,
     cidade: first.cidade,
-    distanciaKm: Math.max(...rows.map((row) => row.distanciaKm || 0), 0),
+    distanciaKm: rows.reduce((maximum, row) => Math.max(maximum, row.distanciaKm || 0), 0),
     pacotes,
     paradas,
     tempoEstimado: first.tempoEstimado,

@@ -52,7 +52,7 @@ export type BotConfig = {
   alwaysWarmMode: boolean;
   keepAliveIntervalMs: number;
   ocrManualRouteSelection: boolean;
-  ocrSelectionMode: "best" | "manual" | "cages";
+  ocrSelectionMode: "neighborhoods" | "best" | "manual" | "cages"; // Legacy values migrate on load.
   ocrDesiredCages: string[];
   // 0 envia todas as gaiolas desejadas encontradas; valores positivos limitam
   // o envio às melhores opções do ranking.
@@ -677,6 +677,12 @@ export type GeneralSettingsPayload = {
 };
 
 export type DesktopApi = {
+  getRomaneio?: () => Promise<RomaneioSnapshot>;
+  uploadRomaneio?: (fileName: string, data: ArrayBuffer) => Promise<RomaneioSnapshot>;
+  clearRomaneio?: () => Promise<RomaneioSnapshot>;
+  saveRomaneioSettings?: (settings: Partial<RomaneioSettings>) => Promise<RomaneioSettings>;
+  locateRomaneio?: () => Promise<RomaneioLocateResult>;
+  confirmRomaneio?: (candidateId: string) => Promise<RomaneioSnapshot>;
   reportRendererHeartbeat: () => void;
   getSnapshot: () => Promise<BotSnapshot>;
   startBot: () => Promise<BotSnapshot>;
@@ -709,5 +715,5 @@ export type DesktopApi = {
   confirmOcrRoutes: (payload: { optionIds: string[] }) => Promise<BotSnapshot>;
   submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) => Promise<BotSnapshot>;
   snoozeRouteIncident: (payload: { routeId: string }) => Promise<BotSnapshot>;
-  onSnapshot: (callback: (snapshot: BotSnapshot) => void) => () => void;
+  onSnapshot: (callback: (snapshot: BotSnapshot) => void, onError?: (error: unknown) => void) => () => void;
 };

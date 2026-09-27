@@ -1,5 +1,5 @@
 import fs from "fs";
-import path from "path";
+import { writeJsonAtomicAsync } from "../storageJson";
 import { OcrRouteSelectionState } from "../shared/types";
 
 const MAX_ANALYSES = 30;
@@ -7,6 +7,7 @@ const MAX_ANALYSES = 30;
 export class OcrAnalysisHistoryStore {
   private items: OcrRouteSelectionState[];
   private saveTimer?: NodeJS.Timeout;
+  private saveChain: Promise<void> = Promise.resolve();
 
   constructor(private readonly filePath: string) {
     this.items = this.load();
@@ -35,14 +36,19 @@ export class OcrAnalysisHistoryStore {
     }
   }
 
+  flush() {
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = undefined;
+    const snapshot = JSON.parse(JSON.stringify(this.items)) as OcrRouteSelectionState[];
+    this.saveChain = this.saveChain.catch(() => undefined).then(() => writeJsonAtomicAsync(this.filePath, snapshot));
+    return this.saveChain;
+  }
+
   private scheduleSave() {
     if (this.saveTimer) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = undefined;
-      const payload = JSON.stringify(this.items, null, 2);
-      void fs.promises.mkdir(path.dirname(this.filePath), { recursive: true })
-        .then(() => fs.promises.writeFile(this.filePath, payload))
-        .catch(() => undefined);
+      void this.flush().catch(() => console.error("Não foi possível persistir o histórico de análises."));
     }, 100);
     this.saveTimer.unref?.();
   }

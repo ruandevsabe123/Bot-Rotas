@@ -9,3 +9,15 @@ auth_info
 bot_logs.json
 route_history.json
 config.json
+.env
+.env.*
+panel_users.json
+push_notifications.json
+revoked_sessions.json
+leaders.json
+support_messages.json
+image_usage.json*
+*.traineddata
+**/__pycache__
+*.tmp
+.audit-artifacts

@@ -12,7 +12,7 @@ test("mantém chaves e assinatura de notificação depois de reiniciar", () => {
     const first = new PushNotificationStore(filePath);
     const publicKey = first.publicKey();
     first.upsert("Cliente@Email.com", "client", {
-      endpoint: "https://push.example/subscription-1",
+      endpoint: "https://fcm.googleapis.com/subscription-1",
       expirationTime: null,
       keys: { p256dh: "test-p256dh", auth: "test-auth" }
     });

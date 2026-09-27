@@ -48,6 +48,7 @@ type RaceCycle = {
   anchorAt: number;
   createdAt: number;
   tokens: Map<string, string>;
+  requests: Map<string, Promise<DispatchGateGrant>>;
   relayedAt: Map<string, number>;
   failed: Set<string>;
   participantStates: Map<string, DispatchRaceEventState | "intent" | "relayed">;
@@ -62,6 +63,9 @@ const CYCLE_RETENTION_MS = 180_000;
 export class DispatchRaceCoordinator {
   private readonly cycles = new Map<string, RaceCycle>();
   private readonly cycleByToken = new Map<string, RaceCycle>();
+  // Keep each client's latest image declaration until a newer image replaces
+  // it: groups can remain closed much longer than the normal cycle retention.
+  private readonly latestImageCycleByClient = new Map<string, string>();
 
   constructor(
     private readonly cycleWindowMs = DEFAULT_CYCLE_WINDOW_MS,
@@ -77,10 +81,16 @@ export class DispatchRaceCoordinator {
     if (!clientEmail || !groupKey || !eventKey) return false;
     const detectedAt = Number.isFinite(input.eventDetectedAt) ? input.eventDetectedAt : Date.now();
     const cycle = this.findOrCreateCycle(groupKey, detectedAt, eventKey);
+    this.rememberImageCycle(clientEmail, cycle);
+    // Analysis notifications can arrive after a relay notification. They must
+    // never replace a confirmed send with an earlier processing state.
+    if (cycle.relayedAt.has(clientEmail)) return true;
     cycle.participantStates.set(clientEmail, input.state);
     if (input.state === "unavailable") cycle.failed.add(clientEmail);
     else cycle.failed.delete(clientEmail);
-    for (const pendingEmail of cycle.pending.keys()) this.evaluate(cycle, pendingEmail);
+    // A participant announcing a different image can also unblock a request
+    // which arrived before its analysis announcement reached the server.
+    this.evaluateGroupCycles(groupKey);
     return true;
   }
 
@@ -91,6 +101,10 @@ export class DispatchRaceCoordinator {
     const detectedAt = Number.isFinite(input.eventDetectedAt) ? input.eventDetectedAt : Date.now();
     const eventKey = normalizeEventKey(input.eventKey);
     const cycle = this.findOrCreateCycle(groupKey, detectedAt, eventKey);
+    if (eventKey) this.rememberImageCycle(clientEmail, cycle);
+    else this.latestImageCycleByClient.delete(clientEmail);
+    const existing = cycle.requests.get(clientEmail);
+    if (existing) return existing;
     const token = crypto.randomUUID();
     cycle.failed.delete(clientEmail);
     cycle.relayedAt.delete(clientEmail);
@@ -105,11 +119,17 @@ export class DispatchRaceCoordinator {
         strict: blocker.strict === true
       }))
       .filter((blocker) => blocker.email && blocker.email !== clientEmail);
-    if (!blockers.length) return Promise.resolve({ token, waitedMs: 0 });
+    if (!blockers.length) {
+      const grant = Promise.resolve({ token, waitedMs: 0 });
+      cycle.requests.set(clientEmail, grant);
+      this.evaluateGroupCycles(groupKey);
+      return grant;
+    }
 
-    return new Promise<DispatchGateGrant>((resolve, reject) => {
+    const request = new Promise<DispatchGateGrant>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.removePending(cycle, clientEmail);
+        this.failRelay(token, clientEmail);
         reject(new Error("O ciclo do grupo expirou antes da confirmação do envio."));
       }, this.gateTimeoutMs);
       timeout.unref?.();
@@ -122,9 +142,10 @@ export class DispatchRaceCoordinator {
         reject,
         timeout
       });
-      this.evaluate(cycle, clientEmail);
-      for (const pendingEmail of cycle.pending.keys()) this.evaluate(cycle, pendingEmail);
+      this.evaluateGroupCycles(groupKey);
     });
+    cycle.requests.set(clientEmail, request);
+    return request;
   }
 
   confirmRelay(token: string, clientEmail: string, relayedAt = Date.now()) {
@@ -132,6 +153,7 @@ export class DispatchRaceCoordinator {
     if (!cycle) return false;
     const email = normalizeEmail(clientEmail);
     if (cycle.tokens.get(email) !== token) return false;
+    if (cycle.relayedAt.has(email)) return true;
     cycle.relayedAt.set(email, relayedAt);
     cycle.participantStates.set(email, "relayed");
     for (const pendingEmail of cycle.pending.keys()) this.evaluate(cycle, pendingEmail);
@@ -151,6 +173,7 @@ export class DispatchRaceCoordinator {
 
   cancelClient(clientEmail: string, reason = "Disparo cancelado pelo coordenador.") {
     const email = normalizeEmail(clientEmail);
+    this.latestImageCycleByClient.delete(email);
     for (const cycle of this.cycles.values()) {
       const pending = cycle.pending.get(email);
       if (pending) {
@@ -179,6 +202,7 @@ export class DispatchRaceCoordinator {
       anchorAt: detectedAt,
       createdAt: Date.now(),
       tokens: new Map(),
+      requests: new Map(),
       relayedAt: new Map(),
       failed: new Set(),
       participantStates: new Map(),
@@ -192,7 +216,11 @@ export class DispatchRaceCoordinator {
     const pending = cycle.pending.get(clientEmail);
     if (!pending || pending.releaseTimer) return;
     const joinedBlockers = pending.blockers.filter((blocker) => cycle.tokens.has(blocker.email));
-    const absentBlockers = pending.blockers.filter((blocker) => !cycle.tokens.has(blocker.email));
+    // An image without an eligible route is not a competing send. Even a
+    // strict matchup cannot wait for a request that this client will not make.
+    const absentBlockers = pending.blockers.filter((blocker) =>
+      !cycle.tokens.has(blocker.email) && cycle.participantStates.get(blocker.email) !== "unavailable"
+      && !this.isParticipatingInDifferentImage(cycle, blocker.email));
     // O servidor só envia blockers estritos quando confirmou que os dois bots
     // estão conectados, armados e no mesmo grupo. Nesse caso, jamais libere o
     // perdedor apenas porque o processo do vencedor demorou a entrar no ciclo.
@@ -238,6 +266,26 @@ export class DispatchRaceCoordinator {
     pending.releaseTimer.unref?.();
   }
 
+  private evaluateGroupCycles(groupKey: string) {
+    for (const cycle of this.cycles.values()) {
+      if (cycle.groupKey !== groupKey) continue;
+      for (const clientEmail of cycle.pending.keys()) this.evaluate(cycle, clientEmail);
+    }
+  }
+
+  private rememberImageCycle(clientEmail: string, cycle: RaceCycle) {
+    const previous = this.cycles.get(this.latestImageCycleByClient.get(clientEmail) || "");
+    if (!previous || previous.anchorAt <= cycle.anchorAt) this.latestImageCycleByClient.set(clientEmail, cycle.id);
+  }
+
+  private isParticipatingInDifferentImage(cycle: RaceCycle, clientEmail: string) {
+    if (!cycle.eventKey || cycle.participantStates.has(clientEmail)) return false;
+    const other = this.cycles.get(this.latestImageCycleByClient.get(clientEmail) || "");
+    if (!other || other.groupKey !== cycle.groupKey || !other.eventKey || other.eventKey === cycle.eventKey) return false;
+    const state = other.participantStates.get(clientEmail);
+    return state === "processing" || state === "ready" || state === "intent";
+  }
+
   private resolvePending(cycle: RaceCycle, clientEmail: string, pending: PendingGate) {
     this.removePending(cycle, clientEmail);
     pending.resolve({ token: pending.token, waitedMs: Math.max(0, Date.now() - pending.requestedAt) });
@@ -254,8 +302,9 @@ export class DispatchRaceCoordinator {
 
   private prune() {
     const oldest = Date.now() - CYCLE_RETENTION_MS;
+    const retainedImageCycles = new Set(this.latestImageCycleByClient.values());
     for (const [id, cycle] of this.cycles) {
-      if (cycle.createdAt >= oldest || cycle.pending.size) continue;
+      if (cycle.createdAt >= oldest || cycle.pending.size || retainedImageCycles.has(id)) continue;
       this.cycles.delete(id);
       for (const token of cycle.tokens.values()) this.cycleByToken.delete(token);
     }

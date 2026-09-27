@@ -2,6 +2,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { BotConfig, BotGroup, MonitoredRoute } from "../../../shared/types";
 import { uiText } from "../uiText";
+import { getNeighborhoodPreferences, moveNeighborhoodPreference as moveRoute, neighborhoodPreferenceLabel, normalizeNeighborhoodPreferences as normalizeMonitoredRoutes } from "../neighborhoodPreferences";
 
 type Props = {
   kind: "target" | "test";
@@ -63,40 +64,8 @@ function parseCodes(value: string) {
     .filter(Boolean);
 }
 
-function parseRoutes(value: string) {
-  return value
-    .split(/\r?\n|,/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function createEmptyRoute(): MonitoredRoute {
   return { cidade: "", bairro: "" };
-}
-
-function normalizeRouteKey(route: MonitoredRoute) {
-  return route.bairro.trim().toLowerCase();
-}
-
-function normalizeMonitoredRoutes(routes: MonitoredRoute[]) {
-  const seen = new Set<string>();
-  return routes
-    .map((item) => ({ cidade: item.cidade.trim(), bairro: item.bairro.trim() }))
-    .filter((item) => item.bairro)
-    .filter((item) => {
-      const key = normalizeRouteKey(item);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-}
-
-function moveRoute(routes: MonitoredRoute[], fromIndex: number, toIndex: number) {
-  if (toIndex < 0 || toIndex >= routes.length) return routes;
-  const nextRoutes = [...routes];
-  const [route] = nextRoutes.splice(fromIndex, 1);
-  nextRoutes.splice(toIndex, 0, route);
-  return nextRoutes;
 }
 
 export function GroupMessageCard({ kind, targetMode = "manual", config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup, onSaveRoutePreset, onDeleteRoutePreset }: Props) {
@@ -124,19 +93,18 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     [config.codigosMensagensAlvo, config.codigosMensagensTeste, config.rotasMonitoradas, config.rotasMonitoradasDetalhadas, isImageTarget, isTarget]
   );
   const savedCodesKey = savedCodes.join("\n");
+  const savedPreferencesKey = JSON.stringify(getNeighborhoodPreferences(config));
+  const nextPreferences = normalizeMonitoredRoutes(monitoredRoutes);
+  const hasIncompletePreference = monitoredRoutes.some((route) => route.cidade.trim() && !route.bairro.trim());
+  const hasMessageSettings = isImageTarget ? nextPreferences.length > 0 && !hasIncompletePreference : parseCodes(codes).length > 0;
 
   useEffect(() => {
     setGroup(isTarget ? config.grupoAlvoNome || "" : config.grupoTesteNome || "");
     setSelectedGroupId(isTarget ? config.grupoAlvoJid || "" : config.grupoTesteJid || "");
     setSenderName(config.nomeEnvio);
     setCodes(savedCodesKey);
-    setMonitoredRoutes(
-      config.rotasMonitoradasDetalhadas?.length
-        ? config.rotasMonitoradasDetalhadas
-        : config.rotasMonitoradas?.length
-        ? config.rotasMonitoradas.map((bairro) => ({ cidade: "", bairro }))
-        : [createEmptyRoute()]
-    );
+    const savedPreferences = getNeighborhoodPreferences(config);
+    setMonitoredRoutes(savedPreferences.length ? savedPreferences.map((route) => ({ ...route })) : [createEmptyRoute()]);
     setManualCodes((config.codigosMensagensAlvo || []).join("\n"));
     setMessageCount(config.testMessageCount || 15);
     setIntervalMs(config.testMessageIntervalMs || 0);
@@ -149,7 +117,8 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     config.testMessageCount,
     config.testMessageIntervalMs,
     isTarget,
-    savedCodesKey
+    savedCodesKey,
+    savedPreferencesKey
   ]);
 
   useEffect(() => {
@@ -164,10 +133,11 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     const foundByName = groups.find((item) => item.name.toLowerCase() === group.trim().toLowerCase());
     const chosenGroup = selectedGroup || foundByName;
     const value = chosenGroup ? chosenGroup.name : group.trim();
+    if (busy) return;
     const nextRoutes = isImageTarget ? normalizeMonitoredRoutes(monitoredRoutes) : [];
     const nextCodes = isImageTarget ? nextRoutes.map((item) => item.bairro) : parseCodes(codes);
 
-    if (!value || !senderName.trim() || !nextCodes.length) return;
+    if (!value || !senderName.trim() || !nextCodes.length || (isImageTarget && hasIncompletePreference)) return;
     setCodes(nextCodes.join("\n"));
     onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes, isImageTarget ? "ocr" : "manual");
   }
@@ -185,7 +155,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   }
 
   const previewMessages = isImageTarget
-    ? normalizeMonitoredRoutes(monitoredRoutes).map((route, index) => `Prioridade ${index + 1}: ${route.bairro}`)
+    ? nextPreferences.map((route, index) => `Preferência ${index + 1}: ${neighborhoodPreferenceLabel(route)}`)
     : parseCodes(codes).map((code) => `${senderName.trim() || config.nomeEnvio} ${code.toUpperCase()}`.trim());
   const query = group.trim().toLowerCase();
   const filteredGroups = groups
@@ -247,12 +217,12 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
 
         {isImageTarget ? (
           <div className="ocr-primary-copy">
-            <strong>Ranking automático por imagem</strong>
-            <span>Todos os bairros da foto serão analisados. O romaneio e os filtros definem a ordem.</span>
+            <strong>Bairros por ordem de preferência</strong>
+            <span>O bot procura seus bairros na imagem e prepara uma única mensagem para a gaiola da primeira preferência disponível com leitura segura.</span>
           </div>
         ) : null}
 
-        {false && isImageTarget ? (
+        {isImageTarget ? (
           <section className="ocr-route-fields">
             <div className="settings-grid compact-settings">
               <label>
@@ -261,7 +231,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </label>
               <button
                 className="button secondary"
-                disabled={busy || !presetName.trim() || !normalizeMonitoredRoutes(monitoredRoutes).length || !onSaveRoutePreset}
+                disabled={busy || !presetName.trim() || !nextPreferences.length || hasIncompletePreference || !onSaveRoutePreset}
                 type="button"
                 onClick={() => onSaveRoutePreset?.(presetName.trim(), normalizeMonitoredRoutes(monitoredRoutes))}
               >
@@ -277,7 +247,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               <div className="ocr-route-actions">
                 <button
                   className="button secondary"
-                  disabled={!selectedPresetId}
+                  disabled={busy || !selectedPresetId}
                   type="button"
                   onClick={() => {
                     const preset = (config.routePresets || []).find((item) => item.id === selectedPresetId);
@@ -295,30 +265,47 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </div>
             </div>
             <div className="ocr-route-heading">
-              <span>Ranking</span>
-              <span>Bairro</span>
+              <span>Preferência</span>
+              <span>Bairro e cidade</span>
             </div>
             {monitoredRoutes.map((route, index) => (
               <div className="ocr-route-row" key={`ocr-route-${index}`}>
-                <span className="ocr-route-index">Prioridade {index + 1}</span>
+                <span className="ocr-route-index">{index + 1}ª opção</span>
+                <div className="ocr-neighborhood-inputs">
                 <input
+                  aria-label={`Bairro da preferência ${index + 1}`}
+                  maxLength={200}
+                  disabled={busy}
                   value={route.bairro}
                   onChange={(event) => {
                     const nextRoutes = [...monitoredRoutes];
                     nextRoutes[index] = { ...route, bairro: event.target.value };
                     setMonitoredRoutes(nextRoutes);
                   }}
-                  placeholder="Parque Penha"
+                  placeholder="Bairro: Parque Penha"
                 />
+                <input
+                  aria-label={`Cidade da preferência ${index + 1} (opcional)`}
+                  value={route.cidade}
+                  maxLength={200}
+                  disabled={busy}
+                  onChange={(event) => {
+                    const nextRoutes = [...monitoredRoutes];
+                    nextRoutes[index] = { ...route, cidade: event.target.value };
+                    setMonitoredRoutes(nextRoutes);
+                  }}
+                  placeholder="Cidade (opcional)"
+                />
+                </div>
                 {monitoredRoutes.length > 1 ? (
                   <div className="ocr-route-rank-actions">
-                    <button className="icon-button" disabled={index === 0} title="Subir no ranking" type="button" onClick={() => setMonitoredRoutes(moveRoute(monitoredRoutes, index, index - 1))}>
+                    <button className="icon-button" disabled={busy || index === 0} title="Aumentar preferência" type="button" onClick={() => setMonitoredRoutes(moveRoute(monitoredRoutes, index, index - 1))}>
                       <ArrowUp size={16} />
                     </button>
-                    <button className="icon-button" disabled={index === monitoredRoutes.length - 1} title="Descer no ranking" type="button" onClick={() => setMonitoredRoutes(moveRoute(monitoredRoutes, index, index + 1))}>
+                    <button className="icon-button" disabled={busy || index === monitoredRoutes.length - 1} title="Diminuir preferência" type="button" onClick={() => setMonitoredRoutes(moveRoute(monitoredRoutes, index, index + 1))}>
                       <ArrowDown size={16} />
                     </button>
-                    <button className="icon-button" title="Remover rota" type="button" onClick={() => setMonitoredRoutes(monitoredRoutes.filter((_, itemIndex) => itemIndex !== index))}>
+                    <button className="icon-button" title="Remover bairro" disabled={busy} type="button" onClick={() => setMonitoredRoutes(monitoredRoutes.filter((_, itemIndex) => itemIndex !== index))}>
                       ×
                     </button>
                   </div>
@@ -326,10 +313,11 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </div>
             ))}
             <div className="ocr-route-actions">
-              <button className="button secondary" type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute()])}>
-                Adicionar outra rota
+              <button className="button secondary" disabled={busy} type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute()])}>
+                Adicionar outro bairro
               </button>
-              <small>{normalizeMonitoredRoutes(monitoredRoutes).length} rota(s) no ranking. A ordem salva define qual rota o bot tenta pegar primeiro.</small>
+              <small>{nextPreferences.length} bairro(s) configurado(s). Use as setas para ordenar suas preferências. A cidade ajuda a distinguir bairros com o mesmo nome; quando preenchida, ela também precisa ser identificada na imagem.</small>
+              {hasIncompletePreference ? <small role="alert">Preencha o bairro da linha que contém somente a cidade.</small> : null}
             </div>
           </section>
         ) : (
@@ -374,11 +362,11 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
           </div>
         ) : null}
 
-        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || (!isImageTarget && !codes.trim())} type="submit">
+        <button className="button primary" disabled={busy || !group.trim() || !senderName.trim() || !hasMessageSettings} type="submit">
           {label.action}
         </button>
         {isTarget ? (
-          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || (!isImageTarget && !codes.trim())} type="button" onClick={(event) => submit(event, true)}>
+          <button className="button skull-button" disabled={busy || !group.trim() || !senderName.trim() || !hasMessageSettings} type="button" onClick={(event) => submit(event, true)}>
             <span aria-hidden="true">☠</span>
             Salvar e iniciar
           </button>
@@ -390,7 +378,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
         ) : null}
 
         <div className="message-preview compact-preview">
-          <strong>{previewMessages.length} {isImageTarget ? "rota(s)" : "mensagem(ns)"}</strong>
+          <strong>{previewMessages.length} {isImageTarget ? "preferência(s) de bairro" : "mensagem(ns)"}</strong>
           {previewMessages.slice(0, 3).map((message, index) => (
             <span key={`${message}-${index}`}>{uiText(message)}</span>
           ))}

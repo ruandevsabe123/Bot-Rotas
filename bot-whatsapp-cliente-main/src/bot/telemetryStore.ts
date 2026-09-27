@@ -1,6 +1,6 @@
 import fs from "fs";
-import path from "path";
 import { RouteDispatchTimeline } from "../shared/types";
+import { writeJsonAtomic } from "../storageJson";
 
 export type DispatchTelemetryEvent = {
   id: string;
@@ -159,22 +159,27 @@ export class TelemetryStore {
   }
 
   private saveNow(events: DispatchTelemetryEvent[]) {
-    this.dirty = false;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
     }
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(events, null, 2));
+    writeJsonAtomic(this.filePath, events);
+    this.dirty = false;
   }
 
   private scheduleSave(delayMs = 250) {
     this.dirty = true;
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined;
       if (!this.dirty) return;
-      this.saveNow(this.getEvents());
+      try {
+        this.saveNow(this.getEvents());
+      } catch {
+        console.warn("Nao foi possivel persistir a telemetria; os eventos continuam em memoria.");
+      }
     }, delayMs);
+    this.flushTimer.unref?.();
   }
 }
 

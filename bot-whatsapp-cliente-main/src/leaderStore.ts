@@ -1,13 +1,12 @@
 import fs from "fs";
-import path from "path";
+import { readJsonFile, writeJsonAtomic } from "./storageJson";
 import { LeaderContact } from "./shared/types";
 
 export class LeaderStore {
   constructor(private readonly filePath: string, private readonly defaults: LeaderContact[] = []) {}
 
   all() {
-    const stored = this.load();
-    if (stored.length) return stored;
+    if (fs.existsSync(this.filePath)) return this.load();
     this.save(this.normalizeMany(this.defaults));
     return this.load();
   }
@@ -30,18 +29,11 @@ export class LeaderStore {
   }
 
   private load() {
-    if (!fs.existsSync(this.filePath)) return [];
-    try {
-      const data = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
-      return Array.isArray(data) ? this.normalizeMany(data) : [];
-    } catch {
-      return [];
-    }
+    return this.normalizeMany(readJsonFile<unknown[]>(this.filePath, () => [], Array.isArray));
   }
 
   private save(leaders: LeaderContact[]) {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(leaders, null, 2));
+    writeJsonAtomic(this.filePath, leaders);
   }
 
   private normalizeMany(input: unknown[]) {

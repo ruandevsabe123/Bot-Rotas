@@ -1,5 +1,5 @@
-import fs from "fs";
-import path from "path";
+import { readJsonFile, writeJsonAtomic } from "./storageJson";
+import { HttpError, validateEmail } from "./httpSafety";
 import { SupportMessage } from "./shared/types";
 
 const MAX_MESSAGES = 300;
@@ -12,10 +12,11 @@ export class SupportMessageStore {
   }
 
   create(input: { email: string; message: string; userAgent?: string }) {
-    const email = input.email.trim().toLowerCase();
+    const email = validateEmail(input.email);
     const message = input.message.trim();
     if (!email) throw new Error("Informe seu email.");
     if (!message) throw new Error("Escreva uma mensagem para o suporte.");
+    if (message.length > 5000) throw new HttpError(400, "A mensagem deve ter até 5000 caracteres.");
 
     const supportMessage: SupportMessage = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -55,19 +56,12 @@ export class SupportMessageStore {
   }
 
   private load(): SupportMessage[] {
-    if (!fs.existsSync(this.filePath)) return [];
-
-    try {
-      const data = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
-      return Array.isArray(data) ? data.map((item) => this.normalize(item)).filter(Boolean) as SupportMessage[] : [];
-    } catch {
-      return [];
-    }
+    return readJsonFile<unknown[]>(this.filePath, () => [], Array.isArray)
+      .map((item) => this.normalize(item)).filter(Boolean) as SupportMessage[];
   }
 
   private save(messages: SupportMessage[]) {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(messages, null, 2));
+    writeJsonAtomic(this.filePath, messages);
   }
 
   private normalize(input: any): SupportMessage | undefined {

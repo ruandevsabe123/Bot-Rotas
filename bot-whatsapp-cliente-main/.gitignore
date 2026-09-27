@@ -17,3 +17,23 @@ whatsapp-qr.png
 
 *.log
 .DS_Store
+
+# Dados locais, sessões, credenciais e caches gerados em execução
+users/
+leaders.json
+panel_users.json
+push_notifications.json
+revoked_sessions.json
+support_messages.json
+image_usage.json*
+route_history.json*
+dispatch_queue.json*
+dispatch_telemetry.json*
+bot_logs.json*
+*.traineddata
+__pycache__/
+*.tmp
+.audit-artifacts/
+
+.env.*
+!.env.example

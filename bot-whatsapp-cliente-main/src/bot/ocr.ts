@@ -108,7 +108,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
     let readings = attempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
     let errors = attempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
 
-    if (options.fastFirst && fastReadingCount < selectedVariants.length && canUseFastOcrResult(readings)) {
+    if (options.fastFirst && options.preferCageCrop && fastReadingCount < selectedVariants.length && canUseFastOcrResult(readings)) {
       return combineOcrReadings(readings);
     }
 
@@ -119,7 +119,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
         const [attempt] = await runOcrVariants([variant]);
         if (attempt?.reading) readings = [...readings, attempt.reading];
         if (attempt?.error) errors = [...errors, attempt.error];
-        if (options.fastFirst && canUseFastOcrResult(readings)) break;
+        if (options.fastFirst && options.preferCageCrop && canUseFastOcrResult(readings)) break;
       }
     }
 
@@ -249,16 +249,32 @@ export function combineRouteImageBatch(readings: RouteOcrResult[]): RouteOcrResu
     const parts = readingVariants.flatMap((items) => items[variantIndex] ? [items[variantIndex]] : []);
     return {
       text: parts.map((part) => part.text).join("\n"),
-      lines: parts.flatMap((part) => part.lines),
+      lines: combineImageLines(parts),
       source: parts.map((part) => part.source).join(" + lote + ")
     };
   });
   return {
     text: readings.map((reading) => reading.text).join("\n"),
-    lines: readings.flatMap((reading) => reading.lines),
+    lines: combineImageLines(readings),
     source: readings.map((reading) => reading.source).join(" + lote + "),
     variants
   };
+}
+
+function combineImageLines(readings: RouteOcrResult[]) {
+  let nextTop = 0;
+  return readings.flatMap((reading) => {
+    if (!reading.lines.length) return [];
+    const firstTop = Math.min(...reading.lines.map((line) => line.top));
+    const offset = nextTop - firstTop;
+    const lines = reading.lines.map((line) => ({
+      ...line,
+      top: line.top + offset,
+      words: line.words.map((word) => ({ ...word, top: word.top + offset }))
+    }));
+    nextTop = Math.max(...lines.map((line) => line.top + line.height)) + 100;
+    return lines;
+  });
 }
 
 async function mapWithConcurrency<T, R>(items: T[], concurrency: number, mapper: (item: T) => Promise<R>) {
@@ -415,6 +431,27 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     const { default: sharp } = await import("sharp");
     const metadata = await sharp(imagePath).metadata();
     const width = metadata.width || 0;
+    if (!preferCageCrop) {
+      // Neighborhood selection needs the entire row: the previous "full"
+      // profile actually cropped ROTA + AT and discarded city/neighborhood.
+      const completeWidth = width > 0 ? Math.min(2800, Math.max(1800, width * 2)) : 2200;
+      const base = path.join(os.tmpdir(), `ocr-neighborhood-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const contrast = `${base}-contrast.png`;
+      const binary = `${base}-binary.png`;
+      generatedPaths.push(contrast, binary);
+      await Promise.all([
+        sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
+          .sharpen({ sigma: 0.7 }).png().toFile(contrast),
+        sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
+          .threshold(165).png().toFile(binary)
+      ]);
+      return [
+        { path: contrast, label: "bairros-tabela-completa-contraste", generated: true, psm: 6 },
+        { path: binary, label: "bairros-tabela-completa-binaria", generated: true, psm: 6 },
+        { path: contrast, label: "bairros-tabela-completa-esparsa", generated: false, psm: 11 },
+        { path: imagePath, label: "bairros-original", generated: false, psm: 11 }
+      ];
+    }
     const resizeWidth = width > 0 ? Math.min(3200, Math.max(1800, width * 2)) : 2200;
     const baseName = path.join(os.tmpdir(), `ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     const enhancedPath = `${baseName}-enhanced.png`;
@@ -987,7 +1024,7 @@ function parseTsvLines(tsv: string): OcrLine[] {
 
     const text = (columns[textIndex] || "").trim();
     const confidence = Number(columns[confidenceIndex] || -1);
-    if (!text || confidence < 30) continue;
+    if (!text || !Number.isFinite(confidence) || confidence < 0) continue;
 
     const word: OcrWord = {
       text,
@@ -1021,7 +1058,7 @@ function extractBlockLines(blocks: any[]): OcrLine[] {
             height: Number(word?.bbox?.y1 || 0) - Number(word?.bbox?.y0 || 0),
             confidence: Number(word?.confidence || 0)
           }))
-          .filter((word: OcrWord) => word.text && word.confidence >= 30);
+          .filter((word: OcrWord) => word.text && Number.isFinite(word.confidence) && word.confidence >= 0);
         if (!words.length) continue;
         lines.push(createOcrLineFromWords(words));
       }

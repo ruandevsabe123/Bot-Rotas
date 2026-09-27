@@ -9,6 +9,7 @@ type PendingRequest = {
   resolve: (result: RouteOcrResult) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
+  worker: ChildProcess;
 };
 
 const OCR_WORKER_TIMEOUT_MS = 120_000;
@@ -31,7 +32,6 @@ export async function readRouteImageOcrWithoutBlockingSocket(imagePath: string, 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (!RETRYABLE_WORKER_ERROR.test(message)) throw error;
-    recycleWorker();
     await new Promise((resolve) => setTimeout(resolve, 100));
     return requestIsolatedOcr(imagePath, options);
   }
@@ -42,12 +42,10 @@ function requestIsolatedOcr(imagePath: string, options: OcrOptions) {
   const id = `${process.pid}-${Date.now()}-${++requestSequence}`;
   return new Promise<RouteOcrResult>((resolve, reject) => {
     const timer = setTimeout(() => {
-      pendingRequests.delete(id);
-      reject(new Error(`Worker da IA excedeu ${Math.round(OCR_WORKER_TIMEOUT_MS / 1000)} segundos.`));
-      recycleWorker();
+      recycleWorker(activeWorker, `Worker da IA excedeu ${Math.round(OCR_WORKER_TIMEOUT_MS / 1000)} segundos.`);
     }, OCR_WORKER_TIMEOUT_MS);
     timer.unref?.();
-    pendingRequests.set(id, { resolve, reject, timer });
+    pendingRequests.set(id, { resolve, reject, timer, worker: activeWorker });
     activeWorker.send?.({ type: "analyze", id, imagePath, options }, (error) => {
       if (!error) return;
       settleRequest(id, undefined, error.message);
@@ -77,6 +75,7 @@ export function shutdownIsolatedOcrWorker() {
 function getWorker() {
   if (worker?.connected) return worker;
 
+  if (worker) recycleWorker(worker);
   const workerPath = path.join(__dirname, "ocrWorker.js");
   worker = fork(workerPath, [], {
     env: { ...process.env, OCR_ISOLATED_PROCESS: "false", OCR_WORKER_PROCESS: "true" },
@@ -91,12 +90,13 @@ function getWorker() {
       // Alguns ambientes nÃ£o permitem alterar nice; o isolamento ainda vale.
     }
   }
+  const activeWorker = worker;
   worker.on("message", (message: any) => {
     if (!message || message.type !== "result" || typeof message.id !== "string") return;
     settleRequest(message.id, message.result, message.error);
   });
   worker.on("error", (error) => {
-    rejectAllPending(`Worker da IA falhou: ${error.message}`);
+    recycleWorker(activeWorker, `Worker da IA falhou: ${error.message}`);
   });
   worker.on("exit", (code, signal) => {
     worker = undefined;
@@ -124,10 +124,19 @@ function rejectAllPending(message: string) {
   }
 }
 
-function recycleWorker() {
-  const current = worker;
-  worker = undefined;
-  warmupRequested = false;
-  current?.removeAllListeners();
-  current?.kill();
+function recycleWorker(current = worker, message = "Worker da IA falhou e será reiniciado.") {
+  if (!current) return;
+  if (worker === current) {
+    worker = undefined;
+    warmupRequested = false;
+  }
+  current.removeAllListeners();
+  current.on("error", () => undefined); // A dying child's late IPC error is already reported above.
+  current.kill();
+  for (const [id, pending] of pendingRequests) {
+    if (pending.worker !== current) continue;
+    pendingRequests.delete(id);
+    clearTimeout(pending.timer);
+    pending.reject(new Error(message));
+  }
 }

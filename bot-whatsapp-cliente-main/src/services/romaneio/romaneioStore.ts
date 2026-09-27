@@ -4,6 +4,7 @@ import { RomaneioDetectedInfo, RomaneioRouteSummary, RomaneioSettings, RomaneioS
 import { parseRomaneioXlsx } from "./parseRomaneio";
 import { DEFAULT_ROMANEIO_SETTINGS, rankRoutes } from "./rankRoutes";
 import { formatOutOfFilterMessage, formatRouteOptionsMessage } from "./formatRomaneioMessage";
+import { writeJsonAtomic } from "../../storageJson";
 
 type ProcessedRomaneio = RomaneioStatus & {
   routes: RomaneioRouteSummary[];
@@ -51,51 +52,33 @@ export class RomaneioStore {
   saveSettings(input: Partial<RomaneioSettings>) {
     const settings = sanitizeSettings({ ...this.getSettings(), ...input });
     fs.mkdirSync(this.dir, { recursive: true });
-    fs.writeFileSync(this.settingsPath, JSON.stringify(settings, null, 2));
+    writeJsonAtomic(this.settingsPath, settings);
     return settings;
   }
 
   saveUpload(fileName: string, buffer: Buffer) {
+    // Validate the whole upload before replacing either copy of the active data.
+    const parsed = parseRomaneioXlsx(buffer);
     fs.mkdirSync(this.dir, { recursive: true });
+    const processed: ProcessedRomaneio = {
+      loaded: true,
+      uploadedAt: new Date().toISOString(),
+      fileName,
+      sheetName: parsed.sheetName,
+      totalRows: parsed.rowCount,
+      totalRoutes: parsed.routes.length,
+      totalPackages: parsed.routes.reduce((total, route) => total + route.pacotes, 0),
+      columns: parsed.columns,
+      headerRow: parsed.headerRow,
+      columnMapping: parsed.columnMapping,
+      warnings: parsed.warnings,
+      routes: parsed.routes
+    };
     writeFileAtomic(this.latestPath, buffer);
-
-    try {
-      const parsed = parseRomaneioXlsx(this.latestPath);
-      const processed: ProcessedRomaneio = {
-        loaded: true,
-        uploadedAt: new Date().toISOString(),
-        fileName,
-        sheetName: parsed.sheetName,
-        totalRows: parsed.rowCount,
-        totalRoutes: parsed.routes.length,
-        totalPackages: parsed.routes.reduce((total, route) => total + route.pacotes, 0),
-        columns: parsed.columns,
-        headerRow: parsed.headerRow,
-        columnMapping: parsed.columnMapping,
-        warnings: parsed.warnings,
-        routes: parsed.routes
-      };
-      writeFileAtomic(this.processedPath, JSON.stringify(processed, null, 2));
-      this.cachedProcessed = processed;
-      this.cachedProcessedSignature = fileSignature(this.processedPath);
-      return this.all();
-    } catch (error) {
-      const failed: ProcessedRomaneio = {
-        loaded: false,
-        uploadedAt: new Date().toISOString(),
-        fileName,
-        totalRows: 0,
-        totalRoutes: 0,
-        totalPackages: 0,
-        columns: [],
-        error: error instanceof Error ? error.message : String(error),
-        routes: []
-      };
-      writeFileAtomic(this.processedPath, JSON.stringify(failed, null, 2));
-      this.cachedProcessed = failed;
-      this.cachedProcessedSignature = fileSignature(this.processedPath);
-      throw error;
-    }
+    writeFileAtomic(this.processedPath, JSON.stringify(processed, null, 2));
+    this.cachedProcessed = processed;
+    this.cachedProcessedSignature = fileSignature(this.processedPath);
+    return this.all();
   }
 
   clear() {
@@ -135,6 +118,11 @@ export class RomaneioStore {
 
   private loadProcessed(): ProcessedRomaneio | undefined {
     const signature = fileSignature(this.processedPath);
+    if (!signature && !fs.existsSync(this.processedPath)) {
+      this.cachedProcessed = undefined;
+      this.cachedProcessedSignature = "";
+      return this.recoverFromLatestUpload();
+    }
     if (this.cachedProcessed && signature && signature === this.cachedProcessedSignature) return this.cachedProcessed;
     try {
       const parsed = JSON.parse(fs.readFileSync(this.processedPath, "utf-8"));

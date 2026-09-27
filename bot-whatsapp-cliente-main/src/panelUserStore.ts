@@ -1,5 +1,6 @@
-import fs from "fs";
-import path from "path";
+import { readJsonFile, writeJsonAtomic } from "./storageJson";
+import { hashPassword } from "./passwords";
+import { validateEmail } from "./httpSafety";
 import { DispatchMatchupRule, LoginEvent, PanelUserRole } from "./shared/types";
 
 export type StoredPanelUser = {
@@ -20,6 +21,8 @@ export type StoredPanelUser = {
   lastSeenReleaseAt?: string;
   totalUsageMs: number;
   loginHistory: LoginEvent[];
+  source?: "environment" | "panel";
+  sessionVersion?: number;
 };
 
 const MAX_LOGIN_HISTORY = 100;
@@ -42,15 +45,22 @@ export class PanelUserStore {
     dispatchBeatsEmail?: string;
     dispatchAdvantageMs?: number;
     dispatchMatchups?: DispatchMatchupRule[];
+    source?: "environment" | "panel";
   }) {
-    const email = input.email.trim().toLowerCase();
-    if (!email) throw new Error("Email obrigatório.");
+    const email = validateEmail(input.email);
+    if (input.password && input.password.length > 1024) throw new Error("Senha muito longa.");
 
     const now = new Date().toISOString();
     const users = this.load();
     const existing = users.find((user) => user.email === email);
     if (existing) {
-      if (input.password !== undefined && input.password.trim()) existing.password = input.password;
+      if ((input.password !== undefined && input.password.trim() && input.password !== existing.password)
+        || (input.role !== undefined && input.role !== existing.role)
+        || (input.blocked !== undefined && input.blocked !== existing.blocked)) {
+        existing.sessionVersion = (existing.sessionVersion || 0) + 1;
+      }
+      if (input.password !== undefined && input.password.trim()) existing.password = hashPassword(input.password);
+      if (input.source) existing.source = input.source;
       if (input.role) existing.role = input.role;
       if (input.blocked !== undefined) existing.blocked = input.blocked;
       if (input.color !== undefined) existing.color = normalizeUserColor(input.color, existing.email);
@@ -67,7 +77,9 @@ export class PanelUserStore {
 
     const user: StoredPanelUser = {
       email,
-      password: input.password,
+      password: hashPassword(input.password),
+      source: input.source || "panel",
+      sessionVersion: 0,
       role: input.role || "client",
       blocked: Boolean(input.blocked),
       color: normalizeUserColor(input.color, email),
@@ -82,6 +94,17 @@ export class PanelUserStore {
     };
     this.save([...users, user]);
     return user;
+  }
+
+  rename(email: string, nextEmail: string) {
+    const normalized = validateEmail(nextEmail);
+    const users = this.load();
+    if (users.some((user) => user.email === normalized && user.email !== email)) throw new Error("Email já cadastrado.");
+    const user = users.find((item) => item.email === email);
+    if (!user) throw new Error("Usuário não encontrado.");
+    user.email = normalized;
+    user.source = "panel";
+    this.save(users);
   }
 
   remove(email: string) {
@@ -154,19 +177,12 @@ export class PanelUserStore {
   }
 
   private load(): StoredPanelUser[] {
-    if (!fs.existsSync(this.filePath)) return [];
-
-    try {
-      const data = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
-      return Array.isArray(data) ? data.map((item) => this.normalize(item)).filter(Boolean) as StoredPanelUser[] : [];
-    } catch {
-      return [];
-    }
+    const data = readJsonFile<unknown[]>(this.filePath, () => [], Array.isArray);
+    return data.map((item) => this.normalize(item)).filter(Boolean) as StoredPanelUser[];
   }
 
   private save(users: StoredPanelUser[]) {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(users, null, 2));
+    writeJsonAtomic(this.filePath, users.map((user) => ({ ...user, password: hashPassword(user.password) })));
   }
 
   private normalize(input: any): StoredPanelUser | undefined {
@@ -175,6 +191,8 @@ export class PanelUserStore {
     return {
       email: input.email.trim().toLowerCase(),
       password: input.password,
+      source: input.source === "panel" ? "panel" : "environment",
+      sessionVersion: Number.isSafeInteger(input.sessionVersion) && input.sessionVersion >= 0 ? input.sessionVersion : 0,
       role: input.role === "admin" ? "admin" : "client",
       blocked: Boolean(input.blocked),
       color: normalizeUserColor(input.color, input.email),
@@ -191,9 +209,9 @@ export class PanelUserStore {
       lastSeenAt: typeof input.lastSeenAt === "string" ? input.lastSeenAt : undefined,
       lastSeenReleaseId: typeof input.lastSeenReleaseId === "string" ? input.lastSeenReleaseId : undefined,
       lastSeenReleaseAt: typeof input.lastSeenReleaseAt === "string" ? input.lastSeenReleaseAt : undefined,
-      totalUsageMs: Number(input.totalUsageMs || 0),
+      totalUsageMs: Number.isFinite(Number(input.totalUsageMs)) ? Math.max(0, Number(input.totalUsageMs)) : 0,
       loginHistory: Array.isArray(input.loginHistory)
-        ? input.loginHistory.map((event: any) => ({
+        ? input.loginHistory.filter((event: unknown) => event && typeof event === "object").map((event: any) => ({
             id: typeof event.id === "string" ? event.id : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
             timestamp: typeof event.timestamp === "string" ? event.timestamp : now,
             ip: typeof event.ip === "string" ? event.ip : "",
@@ -244,5 +262,7 @@ export function normalizeDispatchMatchups(value: unknown, ownEmail = ""): Dispat
     const outcome = item?.outcome === "loses" ? "loses" : "wins";
     unique.set(opponentEmail, { opponentEmail, outcome, delayMs: normalizeDispatchAdvantageMs(item?.delayMs) });
   }
+
+
   return Array.from(unique.values());
 }

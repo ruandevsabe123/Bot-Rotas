@@ -21,6 +21,15 @@ import {
   SaveTargetMessageSettingsPayload,
   SaveWarmupMessageSettingsPayload
 } from "../../shared/types";
+import { subscribeSnapshots } from "./snapshotSubscription";
+
+export const PANEL_SESSION_CHANGED = "panel-session-changed";
+
+class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message);
+  }
+}
 
 const AUTH_ERROR_MESSAGES = [
   "Senha do painel obrigatória.",
@@ -48,11 +57,13 @@ export function getPanelToken() {
 }
 
 export function setPanelToken(token: string) {
+  const previous = getPanelToken();
   if (token) {
     window.localStorage.setItem("panelToken", token);
   } else {
     window.localStorage.removeItem("panelToken");
   }
+  if (token !== previous) window.dispatchEvent(new Event(PANEL_SESSION_CHANGED));
 }
 
 export function getPanelUserEmail() {
@@ -80,7 +91,7 @@ export function setPanelUserRole(role: PanelUserRole | "") {
 }
 
 export function isAuthError(error: unknown) {
-  return error instanceof Error && AUTH_ERROR_MESSAGES.includes(error.message);
+  return error instanceof ApiError && error.status === 401 || error instanceof Error && AUTH_ERROR_MESSAGES.includes(error.message);
 }
 
 export async function panelLogin(email: string, password: string) {
@@ -93,6 +104,13 @@ export async function panelLogin(email: string, password: string) {
   setPanelUserRole(response.user.role);
   setPanelPassword("");
   return response.user;
+}
+
+export async function revokePanelSession() {
+  const token = getPanelToken();
+  if (!token || window.botApi) return;
+  const response = await fetch("/api/logout", { method: "POST", headers: { "x-panel-token": token }, signal: AbortSignal.timeout(15_000) });
+  if (!response.ok && response.status !== 401) throw new Error("Não foi possível encerrar a sessão no servidor.");
 }
 
 export async function getPanelMe() {
@@ -182,23 +200,16 @@ export function saveImageMonthlyTotal(clientEmail: string, amountCents: number, 
   });
 }
 
-export function subscribeAdminMonitor(callback: (snapshot: AdminMonitorSnapshot) => void, onError?: () => void) {
+export function subscribeAdminMonitor(callback: (snapshot: AdminMonitorSnapshot) => void, onError?: (error?: unknown) => void) {
   const token = getPanelToken();
   if (!token) return () => undefined;
-
-  const source = new EventSource(`/api/admin/events?token=${encodeURIComponent(token)}`);
-  source.onmessage = (event) => {
-    try {
-      callback(JSON.parse(event.data) as AdminMonitorSnapshot);
-    } catch {
-      // Ignora pacote inválido e mantém a conexão viva.
-    }
-  };
-  source.onerror = () => {
-    onError?.();
-  };
-
-  return () => source.close();
+  return subscribeSnapshots({
+    load: (signal) => fetchJson<AdminMonitorSnapshot>("/api/admin/monitor", { signal }),
+    listen: createSnapshotListener<AdminMonitorSnapshot>(`/api/admin/events?token=${encodeURIComponent(token)}`),
+    receive: (snapshot) => { if (getPanelToken() === token) callback(snapshot); },
+    onError,
+    intervalMs: 15000
+  });
 }
 
 export function validateAdminRoute(routeId: string) {
@@ -298,12 +309,14 @@ export function clearAdminMaintenance(payload: { target: "logs" | "routes" | "su
 }
 
 export async function uploadRomaneio(file: File) {
+  if (window.botApi?.uploadRomaneio) return window.botApi.uploadRomaneio(file.name, await file.arrayBuffer());
   const formData = new FormData();
   formData.set("file", file);
   return fetchForm<RomaneioSnapshot>("/api/romaneio/upload", formData);
 }
 
 export function clearRomaneio() {
+  if (window.botApi?.clearRomaneio) return window.botApi.clearRomaneio();
   return fetchJson<RomaneioSnapshot>("/api/romaneio/clear", {
     method: "POST",
     body: JSON.stringify({})
@@ -311,10 +324,12 @@ export function clearRomaneio() {
 }
 
 export function getRomaneio() {
+  if (window.botApi?.getRomaneio) return window.botApi.getRomaneio();
   return fetchJson<RomaneioSnapshot>("/api/romaneio/routes");
 }
 
 export function saveRomaneioSettings(settings: RomaneioSettings) {
+  if (window.botApi?.saveRomaneioSettings) return window.botApi.saveRomaneioSettings(settings);
   return fetchJson<RomaneioSettings>("/api/romaneio/settings", {
     method: "POST",
     body: JSON.stringify(settings)
@@ -322,6 +337,7 @@ export function saveRomaneioSettings(settings: RomaneioSettings) {
 }
 
 export function locateRomaneio() {
+  if (window.botApi?.locateRomaneio) return window.botApi.locateRomaneio();
   return fetchJson<RomaneioLocateResult>("/api/romaneio/locate", {
     method: "POST",
     body: JSON.stringify({})
@@ -329,6 +345,7 @@ export function locateRomaneio() {
 }
 
 export function confirmRomaneio(candidateId: string) {
+  if (window.botApi?.confirmRomaneio) return window.botApi.confirmRomaneio(candidateId);
   return fetchJson<RomaneioSnapshot>("/api/romaneio/confirm", {
     method: "POST",
     body: JSON.stringify({ candidateId })
@@ -340,18 +357,18 @@ async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> 
   headers.set("Content-Type", "application/json");
 
   const token = getPanelToken();
-  const password = getPanelPassword();
   if (token) headers.set("x-panel-token", token);
-  if (password) headers.set("x-panel-password", password);
 
   const response = await fetch(url, {
     ...options,
+    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(60_000)]) : AbortSignal.timeout(60_000),
     headers
   });
 
   const data = await response.json().catch(() => ({}));
+  if (getPanelToken() !== token) throw new Error("A sess\u00e3o mudou durante a solicita\u00e7\u00e3o.");
   if (!response.ok) {
-    throw new Error(data.error || "Falha ao conversar com o servidor.");
+    throw new ApiError(data.error || "Falha ao conversar com o servidor.", response.status);
   }
 
   return data as T;
@@ -360,19 +377,19 @@ async function fetchJson<T>(url: string, options: RequestInit = {}): Promise<T> 
 async function fetchForm<T>(url: string, body: FormData): Promise<T> {
   const headers = new Headers();
   const token = getPanelToken();
-  const password = getPanelPassword();
   if (token) headers.set("x-panel-token", token);
-  if (password) headers.set("x-panel-password", password);
 
   const response = await fetch(url, {
     method: "POST",
     headers,
+    signal: AbortSignal.timeout(60_000),
     body
   });
 
   const data = await response.json().catch(() => ({}));
+  if (getPanelToken() !== token) throw new Error("A sess\u00e3o mudou durante a solicita\u00e7\u00e3o.");
   if (!response.ok) {
-    throw new Error(data.error || "Falha ao enviar arquivo.");
+    throw new ApiError(data.error || "Falha ao enviar arquivo.", response.status);
   }
 
   return data as T;
@@ -383,6 +400,24 @@ function action<TPayload = unknown>(name: string, payload?: TPayload) {
     method: "POST",
     body: JSON.stringify(payload || {})
   });
+}
+
+function createSnapshotListener<T>(url: string) {
+  if (!("EventSource" in window)) return undefined;
+  return (receive: (snapshot: T) => void, fail: () => void) => {
+    const source = new EventSource(url);
+    source.onmessage = (event) => {
+      let snapshot: T;
+      try {
+        snapshot = JSON.parse(event.data) as T;
+      } catch {
+        return;
+      }
+      receive(snapshot);
+    };
+    source.onerror = fail;
+    return () => source.close();
+  };
 }
 
 function createWebApi(): DesktopApi {
@@ -422,44 +457,16 @@ function createWebApi(): DesktopApi {
     submitRouteIncident: (payload: { routeId: string; valid: boolean; reason: string }) =>
       action("submit-route-incident", payload),
     snoozeRouteIncident: (payload: { routeId: string }) => action("snooze-route-incident", payload),
-    onSnapshot: (callback: (snapshot: BotSnapshot) => void) => {
+    onSnapshot: (callback: (snapshot: BotSnapshot) => void, onError?: (error: unknown) => void) => {
       const token = getPanelToken();
-      if (token && "EventSource" in window) {
-        const source = new EventSource(`/events?token=${encodeURIComponent(token)}`);
-        let interval = 0;
-        const startPolling = () => {
-          if (interval) return;
-          const refresh = () => fetchJson<BotSnapshot>("/api/snapshot").then(callback).catch(() => undefined);
-          void refresh();
-          interval = window.setInterval(refresh, 1000);
-        };
-        source.onmessage = (event) => {
-          try {
-            callback(JSON.parse(event.data) as BotSnapshot);
-          } catch {
-            // Mantém o canal aberto se vier algum pacote inválido.
-          }
-        };
-        source.onerror = () => {
-          source.close();
-          startPolling();
-        };
-        // Alguns proxies mantêm o SSE aberto, mas deixam de entregar eventos.
-        // A consulta leve garante que análises da IA prontas sempre cheguem ao painel.
-        startPolling();
-        return () => {
-          source.close();
-          if (interval) window.clearInterval(interval);
-        };
-      }
-
-      const interval = window.setInterval(() => {
-        fetchJson<BotSnapshot>("/api/snapshot")
-          .then(callback)
-          .catch(() => undefined);
-      }, 2000);
-
-      return () => window.clearInterval(interval);
+      return subscribeSnapshots({
+        load: (signal) => fetchJson<BotSnapshot>("/api/snapshot", { signal }),
+        listen: token ? createSnapshotListener<BotSnapshot>(`/events?token=${encodeURIComponent(token)}`) : undefined,
+        receive: (snapshot) => { if (getPanelToken() === token) callback(snapshot); },
+        onError,
+        intervalMs: 1000,
+        maxSilenceMs: 5000
+      });
     }
   };
 }

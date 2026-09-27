@@ -22,10 +22,13 @@ Pacotes instalados no container:
 
 ## Comandos locais
 
+Use Node.js 24.x, conforme `.node-version` e `package.json`. O Dockerfile usa a mesma versão principal.
+
 Build:
 
 ```bash
-npm install && npm run build
+npm ci
+npm run build
 ```
 
 Start:
@@ -35,6 +38,12 @@ node dist/server.js
 ```
 
 No Render, o build/start vem do `Dockerfile`, porque o `render.yaml` usa `env: docker`.
+
+## Atualização de autenticação
+
+Após a atualização da auditoria de setembro de 2026, faça login novamente: tokens do formato anterior deixam de ser aceitos. Mantenha `PANEL_SESSION_SECRET` estável para preservar as novas sessões entre reinícios. Logout, alteração de senha, mudança de permissão e bloqueio invalidam as sessões correspondentes.
+
+Novas gravações de usuários usam hash de senha com scrypt. Arquivos locais existentes não foram modificados pela auditoria; a migração ocorre quando o sistema salva os registros. Usuários criados ou editados no painel mantêm essas alterações após reiniciar. Para contas marcadas como originadas do ambiente, a configuração de `PANEL_USERS` continua sendo usada na inicialização.
 
 ## Persistência
 

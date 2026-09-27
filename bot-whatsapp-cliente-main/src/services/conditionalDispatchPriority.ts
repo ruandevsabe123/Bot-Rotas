@@ -10,6 +10,7 @@ export type ConditionalPriorityClient = {
   connected: boolean;
   monitoringEnabled: boolean;
   monitoringMode?: "target" | "test";
+  targetDispatchMode?: "manual" | "ocr";
   targetGroupKey: string;
 };
 
@@ -34,9 +35,13 @@ function computeConditionalDispatchPlan(clients: ConditionalPriorityClient[]) {
 
   for (const client of normalized) {
     if (!client.connected || !client.monitoringEnabled || client.monitoringMode !== "target" || !client.targetGroupKey) continue;
-    const competitors = competitorsByGroup.get(client.targetGroupKey) || [];
+    // Opening-triggered messages and image-triggered messages enter different
+    // race cycles. A configured matchup only applies to comparable sends.
+    const dispatchMode = client.targetDispatchMode === "ocr" ? "ocr" : "manual";
+    const competitionKey = `${client.targetGroupKey.trim().toLowerCase()}\0${dispatchMode}`;
+    const competitors = competitorsByGroup.get(competitionKey) || [];
     competitors.push(client);
-    competitorsByGroup.set(client.targetGroupKey, competitors);
+    competitorsByGroup.set(competitionKey, competitors);
   }
 
   for (const competitors of competitorsByGroup.values()) {

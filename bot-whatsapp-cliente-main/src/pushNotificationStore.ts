@@ -1,5 +1,4 @@
-import fs from "fs";
-import path from "path";
+import { readJsonFile, writeJsonAtomic } from "./storageJson";
 import webpush, { PushSubscription, WebPushError } from "web-push";
 import { PanelUserRole } from "./shared/types";
 
@@ -39,6 +38,13 @@ export class PushNotificationStore {
     if (!subscription?.endpoint || !subscription.keys?.p256dh || !subscription.keys?.auth) {
       throw new Error("Assinatura de notificação inválida.");
     }
+    let endpoint: URL;
+    try { endpoint = new URL(subscription.endpoint); } catch { throw new Error("Assinatura de notificação inválida."); }
+    const providers = ["fcm.googleapis.com", "updates.push.services.mozilla.com", "push.services.mozilla.com", "web.push.apple.com", "notify.windows.com"];
+    if (endpoint.protocol !== "https:" || endpoint.username || endpoint.password || (endpoint.port && endpoint.port !== "443") || !providers.some((host) => endpoint.hostname === host || endpoint.hostname.endsWith(`.${host}`))) {
+      throw new Error("Servidor de notificação não autorizado.");
+    }
+    if (subscription.endpoint.length > 4096 || typeof subscription.keys.p256dh !== "string" || subscription.keys.p256dh.length > 256 || typeof subscription.keys.auth !== "string" || subscription.keys.auth.length > 256) throw new Error("Assinatura de notificação inválida.");
     const normalizedEmail = email.trim().toLowerCase();
     const now = new Date().toISOString();
     const existing = this.data.subscriptions.find((item) => item.endpoint === subscription.endpoint);
@@ -51,7 +57,7 @@ export class PushNotificationStore {
       createdAt: existing?.createdAt || now,
       updatedAt: now
     };
-    this.data.subscriptions = [stored, ...this.data.subscriptions.filter((item) => item.endpoint !== stored.endpoint)];
+    this.data.subscriptions = [stored, ...this.data.subscriptions.filter((item) => item.endpoint !== stored.endpoint && item.email === normalizedEmail).slice(0, 9), ...this.data.subscriptions.filter((item) => item.endpoint !== stored.endpoint && item.email !== normalizedEmail)];
     this.save();
     return stored;
   }
@@ -83,9 +89,10 @@ export class PushNotificationStore {
       badge: "/bot-icon-maskable-512.png"
     });
 
-    await Promise.all(subscriptions.map(async (subscription) => {
+    for (let offset = 0; offset < subscriptions.length; offset += 8) {
+    await Promise.all(subscriptions.slice(offset, offset + 8).map(async (subscription) => {
       try {
-        await webpush.sendNotification(subscription, payload, { TTL: 60 * 60, urgency: "high" });
+        await webpush.sendNotification(subscription, payload, { TTL: 60 * 60, urgency: "high", timeout: 10_000 });
         sent += 1;
       } catch (error) {
         failed += 1;
@@ -93,6 +100,7 @@ export class PushNotificationStore {
         if (statusCode === 404 || statusCode === 410) expired.add(subscription.endpoint);
       }
     }));
+    }
 
     if (expired.size) {
       this.data.subscriptions = this.data.subscriptions.filter((item) => !expired.has(item.endpoint));
@@ -102,26 +110,19 @@ export class PushNotificationStore {
   }
 
   private load(configuredKeys?: { publicKey?: string; privateKey?: string }): StoredPushData {
-    try {
-      const parsed = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
-      if (parsed?.vapid?.publicKey && parsed?.vapid?.privateKey && Array.isArray(parsed.subscriptions)) return parsed;
-    } catch {
-      // Cria a configuração na primeira execução.
-    }
+    const stored = readJsonFile<StoredPushData | undefined>(this.filePath, () => undefined,
+      (value) => Boolean(value && typeof value === "object" && "vapid" in value && "subscriptions" in value && Array.isArray(value.subscriptions)));
+    if (stored) return stored;
     const hasConfiguredKeys = Boolean(configuredKeys?.publicKey && configuredKeys?.privateKey);
     const vapid = hasConfiguredKeys
       ? { publicKey: configuredKeys!.publicKey!, privateKey: configuredKeys!.privateKey! }
       : webpush.generateVAPIDKeys();
     const data = { vapid, subscriptions: [] };
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(data, null, 2));
+    writeJsonAtomic(this.filePath, data);
     return data;
   }
 
   private save() {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const tempPath = `${this.filePath}.${process.pid}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(this.data, null, 2));
-    fs.renameSync(tempPath, this.filePath);
+    writeJsonAtomic(this.filePath, this.data);
   }
 }

@@ -1,5 +1,5 @@
+import { writeJsonAtomic } from "./storageJson";
 import fs from "fs";
-import path from "path";
 import { AdminImageUsageSnapshot, ClientImageUsageSnapshot, ImageAnalysisResult, ImageUsageDecision, ImageUsageEntry } from "./shared/types";
 
 type StoredImageUsage = {
@@ -116,6 +116,20 @@ export class ImageUsageStore {
     return this.decideForRoute(entry.id, input.routeDispatchId, "billable", reviewedBy);
   }
 
+  renameClientEmail(previous: string, next: string) {
+    this.data.entries = this.data.entries.map((entry) => entry.clientEmail === previous ? { ...entry, clientEmail: next } : entry);
+    if (Object.prototype.hasOwnProperty.call(this.data.defaultAmounts, previous)) {
+      this.data.defaultAmounts[next] = this.data.defaultAmounts[previous];
+      delete this.data.defaultAmounts[previous];
+    }
+    for (const key of Object.keys(this.data.monthlyTotalOverrides)) {
+      if (!key.endsWith(`:${previous}`)) continue;
+      this.data.monthlyTotalOverrides[key.slice(0, -previous.length) + next] = this.data.monthlyTotalOverrides[key];
+      delete this.data.monthlyTotalOverrides[key];
+    }
+    this.save();
+  }
+
   setDefaultAmount(clientEmail: string, amountCents: number) {
     const email = clientEmail.trim().toLowerCase();
     this.data.defaultAmounts[email] = this.normalizeAmount(amountCents);
@@ -130,7 +144,8 @@ export class ImageUsageStore {
 
   snapshot(month = this.currentMonth()): AdminImageUsageSnapshot {
     const entries = this.data.entries.filter((entry) => entry.createdAt.slice(0, 7) === month);
-    const emails = new Set([...Object.keys(this.data.defaultAmounts), ...entries.map((entry) => entry.clientEmail)]);
+    const overrideEmails = Object.keys(this.data.monthlyTotalOverrides).filter((key) => key.startsWith(`${month}:`)).map((key) => key.slice(month.length + 1));
+    const emails = new Set([...Object.keys(this.data.defaultAmounts), ...overrideEmails, ...entries.map((entry) => entry.clientEmail)]);
     const clients = Array.from(emails).map((email) => this.summary(email, month, entries)).sort((a, b) => b.amountCents - a.amountCents || a.clientEmail.localeCompare(b.clientEmail));
     return {
       month,
@@ -224,15 +239,13 @@ export class ImageUsageStore {
         // Tenta o backup antes de iniciar um registro vazio.
       }
     }
+    if (fs.existsSync(this.filePath) || fs.existsSync(backupPath)) throw new Error("Registro de consumo inválido. Restaure um backup antes de gravar novos dados.");
     return { entries: [], defaultAmounts: {}, monthlyTotalOverrides: {} };
   }
 
   private save() {
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const tempPath = `${this.filePath}.${process.pid}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(this.data, null, 2));
-    if (this.hasValidData(this.filePath)) fs.copyFileSync(this.filePath, `${this.filePath}.bak`);
-    fs.renameSync(tempPath, this.filePath);
+    if (this.hasValidData(this.filePath)) writeJsonAtomic(`${this.filePath}.bak`, JSON.parse(fs.readFileSync(this.filePath, "utf8")));
+    writeJsonAtomic(this.filePath, this.data);
   }
 
   private hasValidData(filePath: string) {

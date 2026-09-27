@@ -1,5 +1,6 @@
 import path from "path";
 import { app, BrowserWindow, ipcMain } from "electron";
+import { RomaneioStore } from "../services/romaneio/romaneioStore";
 import { BotService } from "../bot/connection";
 import {
   BotSnapshot,
@@ -19,6 +20,7 @@ app.disableHardwareAcceleration();
 
 let mainWindow: BrowserWindow | undefined;
 let bot: BotService;
+let romaneio: RomaneioStore;
 let isQuitting = false;
 let lastRendererHeartbeat = 0;
 let rendererRecoveryTimer: NodeJS.Timeout | undefined;
@@ -33,7 +35,11 @@ if (!singleInstanceLock) {
 function createBot() {
   const dataDir = isDev ? process.cwd() : app.getPath("userData");
 
+  romaneio = new RomaneioStore(path.join(dataDir, "romaneio"));
   bot = new BotService({
+    romaneioDir: path.join(dataDir, "romaneio"),
+    routeStorePath: path.join(dataDir, "route_history.json"),
+    dispatchQueuePath: path.join(dataDir, "dispatch_queue.json"),
     authDir: path.join(dataDir, "auth_info"),
     configPath: path.join(dataDir, "config.json"),
     logStorePath: path.join(dataDir, "bot_logs.json"),
@@ -61,6 +67,9 @@ function createWindow() {
       backgroundThrottling: false
     }
   });
+
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
 
   if (isDev) {
     mainWindow.loadURL("http://127.0.0.1:5173");
@@ -103,6 +112,15 @@ function createWindow() {
 }
 
 function registerIpc() {
+  ipcMain.handle("romaneio:get", () => romaneio.all());
+  ipcMain.handle("romaneio:clear", () => romaneio.clear());
+  ipcMain.handle("romaneio:settings", (_event, settings) => romaneio.saveSettings(settings));
+  ipcMain.handle("romaneio:locate", () => bot.locateRomaneioInGroup());
+  ipcMain.handle("romaneio:confirm", (_event, candidateId: string) => bot.confirmRomaneioCandidate(candidateId));
+  ipcMain.handle("romaneio:upload", (_event, fileName: string, data: ArrayBuffer) => {
+    if (typeof fileName !== "string" || !/\.xlsx$/i.test(fileName) || !(data instanceof ArrayBuffer) || data.byteLength > 12 * 1024 * 1024) throw new Error("Arquivo de romaneio inválido.");
+    return romaneio.saveUpload(path.basename(fileName), Buffer.from(data));
+  });
   ipcMain.on("renderer:heartbeat", () => {
     lastRendererHeartbeat = Date.now();
   });
@@ -140,43 +158,23 @@ function registerIpc() {
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:enableMonitoring", async () => {
-    try {
-      await bot.enableMonitoring();
-    } catch (err) {
-      // ignore
-    }
+    await bot.enableMonitoring();
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:enableImageMonitoring", async () => {
-    try {
-      await bot.enableImageMonitoring();
-    } catch (err) {
-      // ignore
-    }
+    await bot.enableImageMonitoring();
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:enableNuclearMonitoring", async () => {
-    try {
-      await bot.enableNuclearMonitoring();
-    } catch (err) {
-      // ignore
-    }
+    await bot.enableNuclearMonitoring();
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:enableTestMonitoring", async () => {
-    try {
-      await bot.enableTestMonitoring();
-    } catch (err) {
-      // ignore
-    }
+    await bot.enableTestMonitoring();
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:disableMonitoring", async () => {
-    try {
-      bot.disableMonitoring();
-    } catch (err) {
-      // ignore
-    }
+    bot.disableMonitoring();
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:simulateOpening", async () => {
@@ -204,19 +202,11 @@ function registerIpc() {
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveWarmupMessageSettings", async (_event, payload: SaveWarmupMessageSettingsPayload) => {
-    try {
-      bot.setWarmupMessageSettings(payload.senderName, payload.codes, payload.messageCount, payload.intervalMs);
-    } catch (err) {
-      // ignore
-    }
+    bot.setWarmupMessageSettings(payload.senderName, payload.codes, payload.messageCount, payload.intervalMs);
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveTargetMessageSettings", async (_event, payload: SaveTargetMessageSettingsPayload) => {
-    try {
-      bot.setMessageSettings(payload.senderName, payload.codes, payload.routes, payload.monitoredRoutes, payload.targetDispatchMode);
-    } catch (err) {
-      // ignore
-    }
+    bot.setMessageSettings(payload.senderName, payload.codes, payload.routes, payload.monitoredRoutes, payload.targetDispatchMode);
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveRoutePreset", async (_event, payload: { name: string; routes: { cidade: string; bairro: string }[] }) => {

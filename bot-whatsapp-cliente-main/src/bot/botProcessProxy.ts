@@ -105,6 +105,7 @@ export class BotProcessProxy extends EventEmitter {
 
   async shutdown() {
     this.intentionalShutdown = true;
+    this.rejectReady?.(new Error("Worker do bot encerrado."));
     if (this.restartTimer) clearTimeout(this.restartTimer);
     const child = this.child;
     this.child = undefined;
@@ -125,8 +126,8 @@ export class BotProcessProxy extends EventEmitter {
     });
   }
 
-  start() { return this.call("start"); }
-  stop() { return this.call("stop"); }
+  start() { this.recoveryIntent = undefined; return this.call("start"); }
+  stop() { this.recoveryIntent = { running: false, monitoringEnabled: false }; return this.call("stop"); }
   restart() { return this.call("restart"); }
   clearSession() { return this.call("clearSession"); }
   refreshQrCode() { return this.call("refreshQrCode"); }
@@ -134,11 +135,11 @@ export class BotProcessProxy extends EventEmitter {
   clearLogs(silent = false) { return this.call("clearLogs", silent); }
   clearRouteHistory(silent = false) { return this.call("clearRouteHistory", silent); }
   refreshGroups() { return this.call("refreshGroups"); }
-  enableMonitoring() { return this.call("enableMonitoring"); }
-  enableImageMonitoring() { return this.call("enableImageMonitoring"); }
-  enableNuclearMonitoring() { return this.call("enableNuclearMonitoring"); }
-  enableTestMonitoring() { return this.call("enableTestMonitoring"); }
-  disableMonitoring() { return this.call("disableMonitoring"); }
+  enableMonitoring() { this.recoveryIntent = undefined; return this.call("enableMonitoring"); }
+  enableImageMonitoring() { this.recoveryIntent = undefined; return this.call("enableImageMonitoring"); }
+  enableNuclearMonitoring() { this.recoveryIntent = undefined; return this.call("enableNuclearMonitoring"); }
+  enableTestMonitoring() { this.recoveryIntent = undefined; return this.call("enableTestMonitoring"); }
+  disableMonitoring() { this.recoveryIntent = { running: this.snapshot.status !== "disconnected", monitoringEnabled: false }; return this.call("disableMonitoring"); }
   simulateOpening() { return this.call("simulateOpening"); }
   manualDispatch() { return this.call("manualDispatch"); }
   simulateTargetDispatchOnTestGroup() { return this.call("simulateTargetDispatchOnTestGroup"); }
@@ -190,10 +191,10 @@ export class BotProcessProxy extends EventEmitter {
     // o processo HTTP por unhandled rejection.
     void this.readyPromise.catch(() => undefined);
 
-    child.on("message", (message: BotWorkerOutgoingMessage) => this.handleMessage(message));
-    child.on("error", (error) => this.handleExit(error));
+    child.on("message", (message: BotWorkerOutgoingMessage) => { if (this.child === child) this.handleMessage(message); });
+    child.on("error", (error) => { if (this.child === child) this.handleExit(error); });
     child.on("exit", (code, signal) => {
-      if (this.child === child) this.child = undefined;
+      if (this.child !== child) return;
       this.handleExit(new Error(`Worker encerrou (${code ?? signal ?? "sem código"}).`));
     });
     child.send?.({ type: "init", options: this.options });
@@ -212,7 +213,7 @@ export class BotProcessProxy extends EventEmitter {
     if (message.type === "snapshot") {
       this.critical = false;
       this.updateSnapshot(message.snapshot);
-      void this.restoreMonitoringIfConnected();
+      void this.restoreMonitoringIfConnected().catch(() => console.error("Não foi possível restaurar o monitoramento do bot."));
       return;
     }
     if (message.type === "snapshot-dirty") {
@@ -295,7 +296,9 @@ export class BotProcessProxy extends EventEmitter {
   private handleExit(error: Error) {
     if (this.intentionalShutdown || this.restartTimer) return;
     this.emit("worker-exit", error);
-    this.recoveryIntent = {
+    this.child = undefined;
+    this.restoring = false;
+    this.recoveryIntent ??= {
       running: ["connected", "connecting", "waiting_qr", "reconnecting"].includes(this.snapshot.status),
       monitoringEnabled: Boolean(this.snapshot.monitoringEnabled),
       monitoringMode: this.snapshot.monitoringMode,
@@ -350,6 +353,9 @@ export class BotProcessProxy extends EventEmitter {
       else if (intent.targetDispatchMode === "ocr") await this.call("enableImageMonitoring");
       else if (intent.nuclearMode) await this.call("enableNuclearMonitoring");
       else await this.call("enableMonitoring");
+    } catch (error) {
+      this.recoveryIntent = intent;
+      throw error;
     } finally {
       this.restoring = false;
     }

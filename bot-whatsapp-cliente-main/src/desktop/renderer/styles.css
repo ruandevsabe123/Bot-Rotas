@@ -3593,6 +3593,12 @@ h2 {
   gap: 6px;
 }
 
+.ocr-neighborhood-inputs {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
 .ocr-route-index {
   color: #f4f7f8;
   font-size: 0.78rem;
@@ -3623,7 +3629,7 @@ h2 {
     grid-column: 1 / 2;
   }
 
-  .ocr-route-row input:nth-child(2) {
+  .ocr-route-row .ocr-neighborhood-inputs {
     grid-column: 1 / 2;
   }
 

@@ -4,6 +4,50 @@ const { DispatchRaceCoordinator } = require("../dist/services/dispatchRaceCoordi
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+test("pedido repetido no mesmo ciclo compartilha promessa e token", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 1_000, 10);
+  const request = {
+    clientEmail: "loser@teste.com", groupKey: "grupo@g.us", eventDetectedAt: Date.now(),
+    eventKey: "pedido-duplicado", blockers: [{ email: "winner@teste.com", delayMs: 0, strict: true }]
+  };
+  const first = coordinator.request(request);
+  const second = coordinator.request(request);
+  assert.equal(first, second);
+  const winner = await coordinator.request({ ...request, clientEmail: "winner@teste.com", blockers: [] });
+  coordinator.confirmRelay(winner.token, "winner@teste.com");
+  const [firstGrant, secondGrant] = await Promise.all([first, second]);
+  assert.equal(firstGrant.token, secondGrant.token);
+  assert.equal((await coordinator.request(request)).token, firstGrant.token);
+  assert.equal(coordinator.cycleByToken.size, 2);
+});
+
+test("timeout de pedido duplicado encerra todos os consumidores", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 20, 5);
+  const request = {
+    clientEmail: "loser@teste.com", groupKey: "grupo@g.us", eventDetectedAt: Date.now(),
+    eventKey: "duplicado-expirado", blockers: [{ email: "winner@teste.com", delayMs: 0, strict: true }]
+  };
+  const first = assert.rejects(coordinator.request(request), /expirou/);
+  const second = assert.rejects(coordinator.request(request), /expirou/);
+  // O coordenador usa timers unref; mantenha o processo vivo durante a espera.
+  await Promise.all([first, second, delay(35)]);
+  assert.equal(coordinator.cycleByToken.size, 1);
+});
+
+test("pedido repetido do vencedor preserva confirmação usada pelo perdedor", async () => {
+  const coordinator = new DispatchRaceCoordinator(2_000, 1_000, 10);
+  const request = {
+    clientEmail: "winner@teste.com", groupKey: "grupo@g.us", eventDetectedAt: Date.now(),
+    eventKey: "vencedor-repetido", blockers: []
+  };
+  const winner = await coordinator.request(request);
+  coordinator.confirmRelay(winner.token, request.clientEmail);
+  assert.equal((await coordinator.request(request)).token, winner.token);
+  const loser = coordinator.request({ ...request, clientEmail: "loser@teste.com", blockers: [{ email: request.clientEmail, delayMs: 0, strict: true }] });
+  const [grant] = await Promise.all([loser, delay(10)]);
+  assert.ok(grant.token);
+});
+
 test("perdedor só é liberado depois do relay do vencedor e da diferença configurada", async () => {
   const coordinator = new DispatchRaceCoordinator(2_000, 1_000);
   const eventDetectedAt = Date.now();

@@ -4,19 +4,21 @@
   "description": "Bot de WhatsApp com painel desktop",
   "main": "dist/desktop/main.js",
   "engines": {
-    "node": "20.x"
+    "node": "24.x"
   },
   "scripts": {
     "start": "node dist/server.js",
     "server:dev": "npm run build && node dist/server.js",
     "desktop:dev": "concurrently -k \"npm:renderer:dev\" \"npm:electron:dev\"",
     "renderer:dev": "vite --host 127.0.0.1",
-    "electron:dev": "npm run build:main && wait-on http://127.0.0.1:5173 && bash -lc 'unset ELECTRON_RUN_AS_NODE; ELECTRON_DISABLE_SECURITY_WARNINGS=true LIBGL_ALWAYS_SOFTWARE=1 ./node_modules/.bin/electron . --disable-gpu --disable-gpu-compositing --disable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan'",
+    "electron:dev": "npm run build:main && wait-on http://127.0.0.1:5173 && node scripts/start-electron.cjs",
     "build": "tsc && vite build",
     "build:main": "tsc",
+    "typecheck": "tsc --noEmit",
     "test": "npm run build:main && node --test tests/*.test.js",
     "desktop:build": "npm run build && electron-builder --win",
-    "desktop:pack": "npm run build && electron-builder --dir"
+    "desktop:pack": "npm run build && electron-builder --dir",
+    "test:desktop": "npm run build && node scripts/run-desktop-audit.cjs"
   },
   "build": {
     "appId": "com.botwhatsapp.desktop",
@@ -37,22 +39,23 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "npmRebuild": false
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",
     "@whiskeysockets/baileys": "7.0.0-rc13",
-    "better-sqlite3": "11.10.0",
+    "better-sqlite3": "^13.0.3",
     "lucide-react": "^0.468.0",
     "pino": "^9.0.0",
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "sharp": "^0.35.2",
+    "sharp": "^0.35.4",
     "tesseract.js": "^7.0.0",
     "web-push": "^3.6.7",
-    "xlsx": "^0.18.5"
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
@@ -61,14 +64,14 @@
     "@types/react": "^19.2.15",
     "@types/react-dom": "^19.2.3",
     "@types/web-push": "^3.6.4",
-    "@vitejs/plugin-react": "^4.3.4",
+    "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.1",
     "cross-env": "^7.0.3",
-    "electron": "^31.7.7",
+    "electron": "^41.10.3",
     "electron-builder": "^26.8.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.0.0",
-    "vite": "^5.4.21",
+    "vite": "^6.4.3",
     "wait-on": "^7.2.0"
   }
 }

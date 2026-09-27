@@ -10,7 +10,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith("bot-rotas-shell-") && key !== CACHE_NAME).map((key) => caches.delete(key))))
       .then(() => self.clients.claim())
   );
 });
@@ -60,7 +60,8 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const targetUrl = new URL(event.notification.data?.url || "/", self.location.origin).href;
+  const requestedUrl = new URL(event.notification.data?.url || "/", self.location.origin);
+  const targetUrl = requestedUrl.origin === self.location.origin ? requestedUrl.href : self.location.origin + "/";
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then(async (windows) => {
       const existing = windows.find((client) => new URL(client.url).origin === self.location.origin);

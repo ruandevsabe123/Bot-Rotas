@@ -1,5 +1,4 @@
-import fs from "fs";
-import path from "path";
+import { readJsonFile, writeJsonAtomic } from "../storageJson";
 import { RouteDispatch } from "../shared/types";
 
 export type DispatchQueueStatus = "queued" | "sending" | "sent" | "partial" | "failed" | "abandoned";
@@ -135,16 +134,8 @@ export class DispatchQueueStore {
   }
 
   private load(): DispatchQueueItem[] {
-    if (!fs.existsSync(this.filePath)) return [];
-
-    try {
-      const data = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
-      return Array.isArray(data)
-        ? data.map((item) => this.normalize(item)).filter(Boolean) as DispatchQueueItem[]
-        : [];
-    } catch {
-      return [];
-    }
+    return readJsonFile<unknown[]>(this.filePath, () => [], Array.isArray)
+      .map((item) => this.normalize(item)).filter(Boolean).slice(0, MAX_QUEUE_ITEMS) as DispatchQueueItem[];
   }
 
   private normalize(input: any): DispatchQueueItem | undefined {
@@ -172,21 +163,22 @@ export class DispatchQueueStore {
   }
 
   private saveNow(items: DispatchQueueItem[]) {
-    this.dirty = false;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
     }
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(items, null, 2));
+    writeJsonAtomic(this.filePath, items);
+    this.dirty = false;
   }
 
   private scheduleSave(delayMs = 250) {
     this.dirty = true;
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined;
       if (!this.dirty) return;
-      this.saveNow(this.getItems());
+      try { this.saveNow(this.getItems()); }
+      catch { console.error("Não foi possível persistir a fila de envios; os dados em memória foram preservados."); }
     }, delayMs);
   }
 }

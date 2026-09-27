@@ -1,3 +1,4 @@
+import { PANEL_SESSION_CHANGED, revokePanelSession } from "./api";
 import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
@@ -10,7 +11,6 @@ import {
   CheckCircle2,
   Clock3,
   Edit3,
-  FileUp,
   Gauge,
   Home,
   Info,
@@ -48,13 +48,8 @@ import {
   BotConfig,
   BotSnapshot,
   MonitoredRoute,
-  OcrRouteOption,
   OcrRouteSelectionState,
   PanelUserRole,
-  RomaneioCandidate,
-  RomaneioLocateResult,
-  RomaneioSettings,
-  RomaneioSnapshot,
   RouteDispatch,
   SupportMessage
 } from "../../shared/types";
@@ -65,16 +60,13 @@ import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminCommandCenter } from "./admin/AdminCommandCenter";
 import { enableWebPushNotifications } from "./pushNotifications";
-import { rankRoutes } from "../../services/romaneio/rankRoutes";
 import { uiText } from "./uiText";
+import { getNeighborhoodPreferences, neighborhoodPreferenceLabel, normalizeNeighborhoodPreferences } from "./neighborhoodPreferences";
 import {
   acknowledgeRelease,
   botApi,
   clearAdminMaintenance,
-  clearRomaneio,
-  confirmRomaneio,
   enterClientMode,
-  getRomaneio,
   getAdminMonitor,
   getAdminUserDetail,
   getPanelMe,
@@ -83,20 +75,17 @@ import {
   getPanelUserEmail,
   getPanelUserRole,
   isAuthError,
-  locateRomaneio,
   markSupportMessageRead,
   panelLogin,
   rejectAdminRoute,
   returnToAdminMode,
   saveAdminUser,
-  saveRomaneioSettings,
   sendSupportMessage,
   setPanelPassword,
   setPanelToken,
   setPanelUserEmail,
   setPanelUserRole,
   subscribeAdminMonitor,
-  uploadRomaneio,
   validateAdminRoute
 } from "./api";
 import "./styles.css";
@@ -122,7 +111,6 @@ type AdminMainTab = "dashboard" | "validations" | "history" | "logs" | "reports"
 type RouteStatusFilter = "all" | "pending" | "validated" | "rejected" | "leader";
 type RouteKindFilter = "all" | "automatic" | "manual" | "test";
 type RouteHistoryTab = "automatic" | "manual" | "test";
-type DesiredCageSort = "alphabetical" | "distance" | "packages" | "stops" | "ranking";
 type CleanupTarget = "logs" | "routes" | "support" | "all";
 type AdminLogLevelFilter = "all" | "info" | "success" | "warning" | "error";
 
@@ -149,8 +137,8 @@ const emptySnapshot: BotSnapshot = {
     minSendDelayMs: 0,
     alwaysWarmMode: true,
     keepAliveIntervalMs: 300000,
-    ocrManualRouteSelection: true,
-    ocrSelectionMode: "manual",
+    ocrManualRouteSelection: false,
+    ocrSelectionMode: "neighborhoods",
     ocrDesiredCages: [],
     ocrCageMessageLimit: 0
   },
@@ -181,34 +169,6 @@ const tabs: Array<{ id: AppTab; label: string; Icon: typeof Home }> = [
   { id: "image", label: "Imagem", Icon: Sparkles },
   { id: "test", label: "Teste", Icon: TestTube2 },
   { id: "settings", label: "Ajustes", Icon: Settings }
-];
-
-const emptyRomaneio: RomaneioSnapshot = {
-  status: {
-    loaded: false,
-    totalRows: 0,
-    totalRoutes: 0,
-    totalPackages: 0,
-    columns: []
-  },
-  settings: {
-    prioridade: "equilibrio_geral"
-  },
-  routes: []
-};
-
-const emptyRomaneioLocate: RomaneioLocateResult = {
-  found: false,
-  message: "",
-  candidates: []
-};
-
-const romaneioPriorities: Array<{ id: RomaneioSettings["prioridade"]; label: string }> = [
-  { id: "equilibrio_geral", label: "Equilíbrio geral" },
-  { id: "menor_distancia", label: "Menor distância" },
-  { id: "menos_paradas", label: "Menos paradas" },
-  { id: "menos_pacotes", label: "Menos pacotes" },
-  { id: "maior_concentracao_bairro", label: "Maior concentração" }
 ];
 
 function toDateInputValue(date: Date) {
@@ -781,7 +741,7 @@ function LaunchReviewPanel({
           <strong>{snapshot.config.nomeEnvio || "Não configurado"}</strong>
         </article>
         <article className={hasMessages ? "review-item ok" : "review-item pending"}>
-          <span>{ocrMode ? "Ranking inteligente" : "Mensagens"}</span>
+          <span>{ocrMode ? "Bairros preferidos" : "Mensagens"}</span>
           <strong>{messages.length ? `${messages.length} salvo(s)` : "Nenhuma"}</strong>
         </article>
       </div>
@@ -2579,315 +2539,13 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   );
 }
 
-function RomaneioPanel({
-  romaneio,
-  settingsDraft,
-  locateResult,
-  busy,
-  onSettingsChange,
-  onLocate,
-  onUpload,
-  onClear,
-  onConfirmCandidate,
-  onSaveSettings,
-  error
-}: {
-  romaneio: RomaneioSnapshot;
-  settingsDraft: RomaneioSettings;
-  locateResult: RomaneioLocateResult;
-  busy: boolean;
-  onSettingsChange: (settings: RomaneioSettings) => void;
-  onLocate: () => void;
-  onUpload: (file: File) => void;
-  onClear: () => void;
-  onConfirmCandidate: (candidate: RomaneioCandidate) => void;
-  onSaveSettings: () => void;
-  error: string;
-}) {
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const topRoutes = romaneio.routes.slice(0, 12);
-  const lastUpload = romaneio.status.uploadedAt ? new Date(romaneio.status.uploadedAt).toLocaleString("pt-BR") : "Nenhum";
-
-  function updateNumber(key: "distanciaMaxKm" | "paradasMax" | "pacotesMax", value: string) {
-    const parsed = Number(value);
-    onSettingsChange({
-      ...settingsDraft,
-      [key]: Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
-    });
-  }
-
-  return (
-    <section className="mobile-home">
-      <section className="quick-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="panel-label">Análise de Romaneio</p>
-            <h2>{romaneio.status.loaded ? `${romaneio.status.totalRoutes} rota(s)` : "Nenhum arquivo carregado"}</h2>
-          </div>
-          <div className="romaneio-source-actions">
-            <input
-              ref={fileInputRef}
-              className="visually-hidden-file"
-              type="file"
-              accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                if (file) onUpload(file);
-                event.target.value = "";
-              }}
-            />
-            <button className="button" disabled={busy} type="button" onClick={() => fileInputRef.current?.click()}>
-              <FileUp size={18} />
-              Enviar do aparelho
-            </button>
-            <button className="button primary" disabled={busy} type="button" onClick={onLocate}>
-              Localizar no grupo
-            </button>
-            <button className="button danger" disabled={busy || !romaneio.status.loaded} type="button" onClick={onClear}>
-              <Trash2 size={18} />
-              Limpar romaneio
-            </button>
-          </div>
-        </div>
-        <div className="review-grid">
-          <article className={romaneio.status.loaded ? "review-item ok" : "review-item"}>
-            <span>Último upload</span>
-            <strong>{lastUpload}</strong>
-          </article>
-          <article className="review-item ok">
-            <span>Pacotes</span>
-            <strong>{romaneio.status.totalPackages}</strong>
-          </article>
-          <article className="review-item ok">
-            <span>Linhas lidas</span>
-            <strong>{romaneio.status.totalRows}</strong>
-          </article>
-        </div>
-        {romaneio.status.warnings?.length ? (
-          <div className="romaneio-adaptation-box">
-            <Info size={18} />
-            <div>
-              <strong>Formato adaptado automaticamente</strong>
-              {romaneio.status.warnings.map((warning) => <span key={warning}>{warning}</span>)}
-            </div>
-          </div>
-        ) : null}
-        {romaneio.status.error || error ? <p className="inline-error">{romaneio.status.error || error}</p> : null}
-        {locateResult.message ? (
-          <div className={locateResult.found ? "romaneio-found-box" : "inline-error"}>
-            <strong>{locateResult.message}</strong>
-            {locateResult.candidates.length ? (
-              <div className="romaneio-candidate-list">
-                {locateResult.candidates.map((candidate) => (
-                  <button key={candidate.id} className="romaneio-candidate" disabled={busy} type="button" onClick={() => onConfirmCandidate(candidate)}>
-                    <span>{candidate.periodoLabel} · {candidate.fileName}</span>
-                    <small>{new Date(candidate.timestamp).toLocaleString("pt-BR")}</small>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-      </section>
-
-      <section className="quick-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="panel-label">Filtros</p>
-            <h2>Escolha de rotas</h2>
-          </div>
-          <button className="button primary" disabled={busy} type="button" onClick={onSaveSettings}>
-            Salvar filtros
-          </button>
-        </div>
-        <div className="settings-grid compact-settings">
-          <label>
-            Distância máxima km
-            <input value={settingsDraft.distanciaMaxKm || ""} type="number" min="0" step="0.1" onChange={(event) => updateNumber("distanciaMaxKm", event.target.value)} />
-          </label>
-          <label>
-            Máximo de paradas
-            <input value={settingsDraft.paradasMax || ""} type="number" min="0" step="1" onChange={(event) => updateNumber("paradasMax", event.target.value)} />
-          </label>
-          <label>
-            Máximo de pacotes
-            <input value={settingsDraft.pacotesMax || ""} type="number" min="0" step="1" onChange={(event) => updateNumber("pacotesMax", event.target.value)} />
-          </label>
-          <label>
-            Prioridade
-            <select value={settingsDraft.prioridade} onChange={(event) => onSettingsChange({ ...settingsDraft, prioridade: event.target.value as RomaneioSettings["prioridade"] })}>
-              {romaneioPriorities.map((priority) => (
-                <option key={priority.id} value={priority.id}>{priority.label}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </section>
-
-      <section className="quick-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="panel-label">Prévia</p>
-            <h2>Rotas processadas</h2>
-          </div>
-          <span className="mini-badge">{topRoutes.length}/{romaneio.routes.length}</span>
-        </div>
-        <div className="admin-route-scroll compact">
-          {topRoutes.length ? topRoutes.map((route) => (
-            <article key={`${route.rota}-${route.gaiola}-${route.plannedAt || ""}`} className="admin-route-row">
-              <div>
-                <strong>{route.rota} / {route.gaiola}</strong>
-                <span>{route.cidade || "Cidade não informada"} · {route.bairros.slice(0, 3).map((bairro) => bairro.nome).join(", ")}</span>
-              </div>
-              <div className="route-row-metrics">
-                <span>{route.distanciaKm > 0 ? `${route.distanciaKm.toFixed(3)} km` : "km não informado"}</span>
-                <span>{route.pacotes} pct</span>
-                <span>{route.paradas} paradas</span>
-              </div>
-            </article>
-          )) : <p className="qr-empty">Envie um arquivo .xlsx para ver a prévia.</p>}
-        </div>
-      </section>
-    </section>
-  );
-}
-
-function OcrRouteApprovalPanel({
-  selection,
-  selectedIds,
-  busy,
-  onToggle,
-  onConfirm,
-  onClose
-}: {
-  selection?: OcrRouteSelectionState;
-  selectedIds: string[];
-  busy: boolean;
-  onToggle: (option: OcrRouteOption) => void;
-  onConfirm: () => void;
-  onClose: () => void;
-}) {
-  const [analysisClock, setAnalysisClock] = useState(Date.now());
-
-  useEffect(() => {
-    if (selection?.status !== "analyzing") return;
-    setAnalysisClock(Date.now());
-    const interval = window.setInterval(() => setAnalysisClock(Date.now()), 250);
-    return () => window.clearInterval(interval);
-  }, [selection?.status, selection?.processedAt]);
-
-  if (!selection || selection.status === "idle") return null;
-
-  if (selection.status === "analyzing") {
-    const startedAt = Date.parse(selection.processedAt || "") || analysisClock;
-    const elapsedSeconds = Math.max(0, Math.floor((analysisClock - startedAt) / 1000));
-    const remainingSeconds = Math.max(0, (selection.estimatedDurationSeconds || 30) - elapsedSeconds);
-    const timer = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
-    return (
-      <section className="quick-panel ocr-approval-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="panel-label">Bot imagem</p>
-            <h2>Analisando imagem...</h2>
-            <strong className="ocr-analysis-timer" aria-live="polite">{timer}</strong>
-            <p className="approval-message">Tempo estimado restante. As rotas aparecerão automaticamente ao terminar.</p>
-          </div>
-          <span className="mini-badge">VISÃO</span>
-        </div>
-      </section>
-    );
-  }
-
-  if (selection.status === "error") {
-    return (
-      <section className="quick-panel ocr-approval-panel">
-        <p className="panel-label">Bot imagem</p>
-        <h2>Imagem analisada</h2>
-        <p className="inline-error">{selection.message || "Não foi possível encontrar rotas para essa imagem."}</p>
-      </section>
-    );
-  }
-
-  return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="sheet-dialog ocr-route-dialog" role="dialog" aria-modal="true" aria-labelledby="ocr-routes-title">
-        <div className="sheet-heading">
-          <div>
-            <p className="panel-label">Ranking de rotas</p>
-            <h2 id="ocr-routes-title">{selection.status === "confirmed" ? "Rotas confirmadas" : "Escolha as rotas"}</h2>
-          </div>
-          <button className="icon-button" title="Fechar" type="button" onClick={onClose}>
-            <X size={20} />
-          </button>
-        </div>
-        {selection.message ? <p className="approval-message">{uiText(selection.message)}</p> : null}
-        {selection.preferredCity && selection.preferredCityFound === false ? (
-          <div className="ocr-city-alert" role="status">
-            <strong>Nenhuma rota de {selection.preferredCity} foi encontrada</strong>
-            <span>As demais rotas identificadas na imagem estão listadas abaixo.</span>
-          </div>
-        ) : null}
-        {selection.preferredCity && selection.preferredCityFound ? (
-          <div className="ocr-city-priority" role="status">
-            <strong>{selection.preferredCity} priorizada</strong>
-            <span>As rotas da cidade aparecem primeiro no ranking.</span>
-          </div>
-        ) : null}
-        <div className="ocr-option-grid">
-          {selection.options.map((option) => {
-            const selectedOrder = selectedIds.indexOf(option.id);
-            const confirmedOrder = selection.selectedOptionIds?.indexOf(option.id) ?? -1;
-            const selected = selectedOrder >= 0 || confirmedOrder >= 0;
-            const sendOrder = selectedOrder >= 0 ? selectedOrder + 1 : confirmedOrder >= 0 ? confirmedOrder + 1 : 0;
-            return (
-              <button
-                key={option.id}
-                className={selected ? "ocr-option selected" : "ocr-option"}
-                disabled={busy || selection.status === "confirmed" || !option.passedFilters || option.romaneioMatch === false}
-                type="button"
-                onClick={() => onToggle(option)}
-              >
-                <strong>#{option.rank} {option.rota} / {option.gaiola}</strong>
-                <span>{option.cidade || "Cidade não identificada"} · {option.bairro}{option.bairroPercentual !== undefined ? ` · ${option.bairroPercentual.toFixed(1)}%` : ""}</span>
-                {option.observation ? <small>{option.observation}</small> : null}
-                {sendOrder ? <b className="send-order-badge">{sendOrder}ª mensagem</b> : null}
-                {option.romaneioMatch !== false ? (
-                  <div className="route-row-metrics">
-                    <span>{option.distanciaKm.toFixed(3)} km</span>
-                    <span>{option.pacotes} pct</span>
-                    <span>{option.paradas} paradas</span>
-                  </div>
-                ) : null}
-                {!option.passedFilters && option.reasons.length ? <small>{option.reasons.join(" ")}</small> : null}
-              </button>
-            );
-          })}
-        </div>
-        {selection.status !== "confirmed" ? (
-          <div className="review-actions">
-            <button className="button primary" disabled={busy || !selectedIds.length} type="button" onClick={onConfirm}>
-              Confirmar rota(s)
-            </button>
-          </div>
-        ) : (
-          <div className="review-actions">
-            <button className="button primary" type="button" onClick={onClose}>
-              Fechar
-            </button>
-          </div>
-        )}
-      </section>
-    </div>
-  );
-}
-
 function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRouteSelectionState; onClose: () => void }) {
   if (!selection || selection.status === "idle") return null;
   const analyzing = selection.status === "analyzing";
   const finished = !analyzing;
   const selectedOptions = selection.selectedOptionIds?.length
     ? selection.options.filter((option) => selection.selectedOptionIds?.includes(option.id))
-    : selection.options;
+    : [];
   const formatAnalysisTime = (milliseconds?: number) => {
     if (milliseconds === undefined) return "--";
     if (milliseconds < 1000) return `${milliseconds} ms`;
@@ -2906,20 +2564,20 @@ function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRou
         </div>
         <div className="automatic-analysis-steps">
           <article className="analysis-step done"><CheckCircle2 size={19} /><span><strong>Imagem recebida</strong><small>O servidor recebeu a foto do grupo.</small></span></article>
-          <article className={analyzing ? "analysis-step active" : "analysis-step done"}>{analyzing ? <RefreshCw className="spin" size={19} /> : <CheckCircle2 size={19} />}<span><strong>Lendo gaiolas</strong><small>{analyzing ? "Três tratamentos conferindo os códigos..." : `${selection.detectedRouteCount || selection.options.length} rota(s) segura(s) encontrada(s).`}</small></span></article>
-          <article className={analyzing ? "analysis-step" : "analysis-step done"}><Route size={19} /><span><strong>Comparando com o romaneio</strong><small>{analyzing ? "Aguardando a leitura terminar." : "Códigos cruzados com o arquivo carregado."}</small></span></article>
-          <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>Disparo automático</strong><small>{selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} mensagem(ns) preparada(s) ou enviada(s).` : analyzing ? "Aguardando gaiolas válidas." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
+          <article className={analyzing ? "analysis-step active" : "analysis-step done"}>{analyzing ? <RefreshCw className="spin" size={19} /> : <CheckCircle2 size={19} />}<span><strong>Lendo bairros e gaiolas</strong><small>{analyzing ? "Conferindo a associação de cada bairro com sua gaiola na imagem." : `${selection.detectedRouteCount || selection.options.length} linha(s) identificada(s).`}</small></span></article>
+          <article className={analyzing ? "analysis-step" : "analysis-step done"}><Route size={19} /><span><strong>Conferindo as preferências</strong><small>{analyzing ? "Aguardando a leitura terminar." : selectedOptions.length ? "Preferência identificada e associação com a gaiola validada." : "Nenhuma escolha liberada para envio."}</small></span></article>
+          <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>Disparo automático</strong><small>{selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} mensagem(ns) preparada(s) ou enviada(s).` : analyzing ? "Aguardando uma preferência com leitura segura." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
         </div>
         {!analyzing && selection.timing ? (
           <div className="automatic-analysis-timing" aria-label="Tempos da análise e do envio">
             <span><small>Baixar imagem</small><strong>{formatAnalysisTime(selection.timing.downloadMs)}</strong></span>
-            <span><small>Analisar gaiolas</small><strong>{formatAnalysisTime(selection.timing.ocrMs)}</strong></span>
-            <span><small>Cruzar romaneio</small><strong>{formatAnalysisTime(selection.timing.comparisonMs)}</strong></span>
-            <span><small>Enviar mensagens</small><strong>{formatAnalysisTime(selection.timing.dispatchMs)}</strong></span>
-            <span className="total"><small>Tempo total até o envio</small><strong>{formatAnalysisTime(selection.timing.totalMs)}</strong></span>
+            <span><small>Ler bairros e gaiolas</small><strong>{formatAnalysisTime(selection.timing.ocrMs)}</strong></span>
+            <span><small>Conferir preferências</small><strong>{formatAnalysisTime(selection.timing.comparisonMs)}</strong></span>
+            <span><small>Disparo</small><strong>{formatAnalysisTime(selection.timing.dispatchMs)}</strong></span>
+            <span className="total"><small>Tempo total registrado</small><strong>{formatAnalysisTime(selection.timing.totalMs)}</strong></span>
           </div>
         ) : null}
-        {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.rota} ·</span><small>{option.pacotes} pct · {option.paradas} paradas · {option.distanciaKm.toFixed(3)} km</small></article>)}</div> : null}
+        {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span>{option.cidade ? <small>{option.cidade}</small> : null}{option.observation ? <small>{option.observation}</small> : null}{option.romaneioMatch === true ? <small>{option.pacotes} pct · {option.paradas} paradas · {option.distanciaKm.toFixed(3)} km</small> : null}</article>)}</div> : null}
         {!analyzing && selection.message ? <p className={selection.status === "error" ? "inline-error" : "approval-message"}>{uiText(selection.message)}</p> : null}
         {finished ? <div className="review-actions"><button className="button primary" type="button" onClick={onClose}>Fechar análise</button></div> : null}
       </section>
@@ -2981,6 +2639,22 @@ function ReleaseDialog({
 }
 
 export default function App() {
+  const [session, setSession] = useState(getPanelToken());
+  useEffect(() => {
+    const updateSession = () => setSession(getPanelToken());
+    window.addEventListener(PANEL_SESSION_CHANGED, updateSession);
+    window.addEventListener("storage", updateSession);
+    return () => {
+      window.removeEventListener(PANEL_SESSION_CHANGED, updateSession);
+      window.removeEventListener("storage", updateSession);
+    };
+  }, []);
+  return <PanelApp key={session || "signed-out"} />;
+}
+
+function PanelApp() {
+  const sessionTokenRef = useRef(getPanelToken());
+  const actionInFlightRef = useRef(false);
   const [snapshot, setSnapshot] = useState<BotSnapshot>(emptySnapshot);
   const [busy, setBusy] = useState(false);
   const [confirmation, setConfirmation] = useState<PendingConfirmation>();
@@ -2998,17 +2672,6 @@ export default function App() {
   const [alertFlash, setAlertFlash] = useState(false);
   const [lastAlertLogId, setLastAlertLogId] = useState("");
   const [actionToast, setActionToast] = useState<ActionToast | undefined>();
-  const [romaneio, setRomaneio] = useState<RomaneioSnapshot>(emptyRomaneio);
-  const [romaneioSettingsDraft, setRomaneioSettingsDraft] = useState<RomaneioSettings>(emptyRomaneio.settings);
-  const [romaneioLocateResult, setRomaneioLocateResult] = useState<RomaneioLocateResult>(emptyRomaneioLocate);
-  const [romaneioError, setRomaneioError] = useState("");
-  const [selectedOcrOptionIds, setSelectedOcrOptionIds] = useState<string[]>([]);
-  const [desiredCageSearch, setDesiredCageSearch] = useState("");
-  const [desiredCageSort, setDesiredCageSort] = useState<DesiredCageSort>("alphabetical");
-  const [desiredCagesDraft, setDesiredCagesDraft] = useState<string[]>([]);
-  const desiredCagesTouchedRef = useRef(false);
-  const desiredCageSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const [ocrRouteDialogOpen, setOcrRouteDialogOpen] = useState(false);
   const [automaticOcrAnalysisOpen, setAutomaticOcrAnalysisOpen] = useState(false);
   const [ocrAnalysisHistoryOpen, setOcrAnalysisHistoryOpen] = useState(false);
   const [historyOcrSelection, setHistoryOcrSelection] = useState<OcrRouteSelectionState>();
@@ -3020,7 +2683,6 @@ export default function App() {
   const [releaseAcknowledgeBusy, setReleaseAcknowledgeBusy] = useState(false);
   const [releaseError, setReleaseError] = useState("");
   const connectionSectionRef = useRef<HTMLElement | null>(null);
-  const homeLogsAutoClearArmedRef = useRef(true);
 
   function showActionToast(message: string, tone?: ActionToast["tone"]) {
     setActionToast({ message, tone });
@@ -3035,6 +2697,7 @@ export default function App() {
 
 
   function logout(message = "") {
+    void revokePanelSession().catch(() => console.warn("Sessão local encerrada; revogação remota indisponível."));
     setPanelToken("");
     setPanelUserEmail("");
     setPanelUserRole("");
@@ -3080,7 +2743,7 @@ export default function App() {
     if (userRole === "admin") return;
 
     let mounted = true;
-    botApi
+    if (window.botApi) botApi
       .getSnapshot()
       .then((nextSnapshot) => {
         if (mounted) {
@@ -3099,6 +2762,8 @@ export default function App() {
 
     const unsubscribe = botApi.onSnapshot((nextSnapshot) => {
       if (mounted) setSnapshot(nextSnapshot);
+    }, (error) => {
+      if (mounted && isAuthError(error)) logout("Faça login para continuar.");
     });
 
     return () => {
@@ -3154,125 +2819,29 @@ export default function App() {
   }, [authenticated, userRole]);
 
   useEffect(() => {
-    if (!authenticated || userRole === "admin") return;
-    let mounted = true;
-    getRomaneio()
-      .then((nextRomaneio) => {
-        if (!mounted) return;
-        setRomaneio(nextRomaneio);
-        setRomaneioSettingsDraft(nextRomaneio.settings);
-      })
-      .catch((error) => {
-        if (!mounted) return;
-        setRomaneioError(error instanceof Error ? error.message : "Falha ao carregar romaneio.");
-      });
-    return () => {
-      mounted = false;
-    };
-  }, [authenticated, userRole]);
-
-  useEffect(() => {
-    if (snapshot.status !== "connected") return;
-  }, [snapshot.status]);
-
-  useEffect(() => {
     const selection = snapshot.ocrRouteSelection;
-    const imageBotActive = snapshot.config.targetDispatchMode === "ocr";
-    if (!imageBotActive) {
-      setSelectedOcrOptionIds([]);
-      setOcrRouteDialogOpen(false);
+    if (snapshot.config.targetDispatchMode !== "ocr") {
       setAutomaticOcrAnalysisOpen(false);
       return;
     }
-    if (snapshot.config.ocrSelectionMode !== "manual") {
-      setSelectedOcrOptionIds([]);
-      setOcrRouteDialogOpen(false);
-      if (selection && selection.status !== "idle") {
-        if (selection.status === "analyzing") setActiveTab("image");
-        setAutomaticOcrAnalysisOpen(true);
-      }
-      return;
+    if (selection && selection.status !== "idle") {
+      if (selection.status === "analyzing") setActiveTab("image");
+      setAutomaticOcrAnalysisOpen(true);
     }
-    setAutomaticOcrAnalysisOpen(false);
-    if (selection?.status === "analyzing") {
-      setActiveTab("image");
-      setSelectedOcrOptionIds([]);
-      setOcrRouteDialogOpen(true);
-      return;
-    }
-    if (selection?.status === "ready") {
-      setActiveTab("image");
-      setSelectedOcrOptionIds(selection.options[0]?.id ? [selection.options[0].id] : []);
-      setOcrRouteDialogOpen(true);
-      return;
-    }
-    if (selection?.status === "confirmed") {
-      setActiveTab("image");
-      setSelectedOcrOptionIds(selection.selectedOptionIds || []);
-      setOcrRouteDialogOpen(true);
-      return;
-    }
-    if (selection?.status === "idle" || selection?.status === "error") {
-      setSelectedOcrOptionIds([]);
-      if (selection.status === "error") {
-        setActiveTab("image");
-        setOcrRouteDialogOpen(true);
-      }
-    }
-  }, [snapshot.config.ocrSelectionMode, snapshot.config.targetDispatchMode, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
+  }, [snapshot.config.targetDispatchMode, snapshot.ocrRouteSelection?.analysisId, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
 
   useEffect(() => {
     const selection = snapshot.ocrRouteSelection;
-    if (!automaticOcrAnalysisOpen || snapshot.config.ocrSelectionMode === "manual") return;
-    if (!selection || !["ready", "error"].includes(selection.status) || selection.preparedMessages?.length) return;
+    if (!automaticOcrAnalysisOpen || !selection || !["ready", "error"].includes(selection.status) || selection.preparedMessages?.length) return;
     const timer = window.setTimeout(() => setAutomaticOcrAnalysisOpen(false), 45_000);
     return () => window.clearTimeout(timer);
-  }, [automaticOcrAnalysisOpen, snapshot.config.ocrSelectionMode, snapshot.ocrRouteSelection?.analysisId, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
+  }, [automaticOcrAnalysisOpen, snapshot.ocrRouteSelection?.analysisId, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
 
-  useEffect(() => {
-    if (!desiredCagesTouchedRef.current) {
-      setDesiredCagesDraft(snapshot.config.ocrDesiredCages || []);
-    }
-  }, [snapshot.config.ocrDesiredCages]);
+  const neighborhoodPreferences = getNeighborhoodPreferences(snapshot.config);
 
   const groupLabel = useMemo(() => {
     return snapshot.config.grupoAlvoNome || "Nenhum grupo alvo";
   }, [snapshot.config]);
-
-  const visibleDesiredCageRoutes = useMemo(() => {
-    const ranked = Array.from(new Map(
-      rankRoutes(romaneio.routes, {}, romaneioSettingsDraft)
-        .map((route) => [route.gaiola.toUpperCase(), route])
-    ).values());
-    const query = desiredCageSearch.trim().toLocaleLowerCase("pt-BR");
-    const filtered = query
-      ? ranked.filter((route) => [route.gaiola, route.rota, route.cidade, ...route.bairros.map((bairro) => bairro.nome)]
-          .some((value) => String(value || "").toLocaleLowerCase("pt-BR").includes(query)))
-      : ranked;
-    if (desiredCageSort === "ranking") return filtered;
-    return [...filtered].sort((left, right) => {
-      if (desiredCageSort === "alphabetical") return left.gaiola.localeCompare(right.gaiola, "pt-BR", { numeric: true });
-      const key = desiredCageSort === "distance" ? "distanciaKm" : desiredCageSort === "packages" ? "pacotes" : "paradas";
-      const leftValue = Number(left[key] || 0);
-      const rightValue = Number(right[key] || 0);
-      if (leftValue > 0 && rightValue <= 0) return -1;
-      if (rightValue > 0 && leftValue <= 0) return 1;
-      return leftValue - rightValue || left.gaiola.localeCompare(right.gaiola, "pt-BR", { numeric: true });
-    });
-  }, [desiredCageSearch, desiredCageSort, romaneio.routes, romaneioSettingsDraft]);
-
-  const desiredCageDispatchOrder = useMemo(() => {
-    const selected = new Set(desiredCagesDraft.map((gaiola) => gaiola.toUpperCase()));
-    const ranked = Array.from(new Map(
-      rankRoutes(romaneio.routes, {}, romaneioSettingsDraft)
-        .map((route) => [route.gaiola.toUpperCase(), route])
-    ).values());
-    return new Map(
-      ranked
-        .filter((route) => selected.has(route.gaiola.toUpperCase()))
-        .map((route, index) => [route.gaiola.toUpperCase(), index + 1])
-    );
-  }, [desiredCagesDraft, romaneio.routes, romaneioSettingsDraft]);
 
   const testGroupLabel = useMemo(() => {
     return snapshot.config.grupoTesteNome || "Nenhum teste salvo";
@@ -3297,16 +2866,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (homeTimelineLogs.length < 80) {
-      homeLogsAutoClearArmedRef.current = true;
-      return;
-    }
-    if (!homeLogsAutoClearArmedRef.current || busy) return;
-    homeLogsAutoClearArmedRef.current = false;
-    void clearHomeLogsAutomatically();
-  }, [busy, homeTimelineLogs.length]);
-
-  useEffect(() => {
     if (!pendingClientIncident) {
       setIncidentReason("");
       setIncidentValid(true);
@@ -3314,7 +2873,7 @@ export default function App() {
   }, [pendingClientIncident?.id]);
 
   useEffect(() => {
-    const lastLog = snapshot.logs[snapshot.logs.length - 1];
+    const lastLog = snapshot.logs[0];
     if (!lastLog || lastLog.id === lastAlertLogId) return;
 
     const shouldAlert = /ABRIU|Abertura simulada|Disparo acionado|Disparo .*conclu|Mensagem alvo \d+ enviada/i.test(lastLog.message);
@@ -3346,6 +2905,8 @@ export default function App() {
   }, [lastAlertLogId, snapshot.logs]);
 
   async function runAction(action: () => Promise<BotSnapshot>) {
+    if (actionInFlightRef.current || getPanelToken() !== sessionTokenRef.current) return snapshot;
+    actionInFlightRef.current = true;
     setBusy(true);
     try {
       const nextSnapshot = await action();
@@ -3366,17 +2927,8 @@ export default function App() {
       }
       return snapshot;
     } finally {
+      actionInFlightRef.current = false;
       setBusy(false);
-    }
-  }
-
-  async function clearHomeLogsAutomatically() {
-    try {
-      const nextSnapshot = await botApi.clearLogs();
-      setSnapshot(nextSnapshot);
-    } catch (error) {
-      homeLogsAutoClearArmedRef.current = true;
-      if (isAuthError(error)) logout(error instanceof Error ? error.message : "Entre novamente para continuar.");
     }
   }
 
@@ -3404,13 +2956,18 @@ export default function App() {
   function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual") {
     const selectedGroupName = groupName || group;
     const isImageMode = targetDispatchMode === "ocr";
-    const routes = isImageMode ? codes : [];
-    const messages = isImageMode ? buildRoutePreview(routes, monitoredRoutes) : buildMessagePreview(senderName, codes);
+    const preferences = isImageMode ? normalizeNeighborhoodPreferences(monitoredRoutes || codes.map((bairro) => ({ cidade: "", bairro }))) : [];
+    if (isImageMode && !preferences.length) {
+      showActionToast("Adicione pelo menos um bairro preferido.", "manual");
+      return;
+    }
+    const routes = preferences.map((route) => route.bairro);
+    const messages = isImageMode ? buildRoutePreview(routes, preferences) : buildMessagePreview(senderName, codes);
 
     setConfirmation({
       title: startAfterSave ? (isImageMode ? "Salvar e iniciar imagem" : "Salvar e iniciar manual") : isImageMode ? "Salvar bot imagem" : "Salvar mensagens",
       message: `Grupo alvo: ${selectedGroupName}`,
-      details: messages.length ? messages : [isImageMode ? "Nenhuma rota monitorada." : "Nenhuma mensagem manual."],
+      details: isImageMode ? [...messages, "Será escolhida somente a primeira preferência disponível com leitura segura."] : messages,
       confirmLabel: startAfterSave ? "Salvar e iniciar" : "Salvar",
       onConfirm: async () => {
         await runAction(async () => {
@@ -3419,7 +2976,7 @@ export default function App() {
             senderName,
             codes: isImageMode ? snapshot.config.codigosMensagensAlvo || [] : codes,
             routes: isImageMode ? routes : snapshot.config.rotasMonitoradas || [],
-            monitoredRoutes: isImageMode ? monitoredRoutes : snapshot.config.rotasMonitoradasDetalhadas || [],
+            monitoredRoutes: isImageMode ? preferences : snapshot.config.rotasMonitoradasDetalhadas || [],
             targetDispatchMode
           });
           setGroupEditor(undefined);
@@ -3506,19 +3063,18 @@ export default function App() {
 
   function confirmStartImageMonitoring() {
     const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
-    const hasName = Boolean(snapshot.config.nomeEnvio);
-    const needsDesiredCages = snapshot.config.ocrSelectionMode === "cages" && !desiredCagesDraft.length;
+    const hasName = Boolean(snapshot.config.nomeEnvio.trim());
+    const hasNeighborhoods = neighborhoodPreferences.length > 0;
 
-    if (!hasGroup || !hasName || needsDesiredCages) {
+    if (!hasGroup || !hasName || !hasNeighborhoods) {
       setGroupEditor("image");
       setConfirmation({
         title: "Revise o bot imagem",
-        message: "Falta concluir a configuração do bot imagem.",
+        message: "Configure o grupo, o nome e seus bairros por ordem de preferência.",
         details: [
           hasGroup ? `Grupo: ${groupLabel}` : "Grupo alvo ainda não configurado.",
           hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",
-          needsDesiredCages ? "Selecione pelo menos uma gaiola desejada." : "Estratégia de escolha configurada.",
-          "Todas as rotas encontradas na imagem serão analisadas."
+          hasNeighborhoods ? `${neighborhoodPreferences.length} preferência(s) salva(s).` : "Adicione pelo menos um bairro preferido."
         ],
         confirmLabel: "Entendi",
         onConfirm: () => undefined
@@ -3528,17 +3084,15 @@ export default function App() {
 
     setConfirmation({
       title: "Iniciar bot imagem",
-      message: "O bot vai aguardar foto da tabela e só enviar se achar uma rota segura.",
+      message: "O bot vai procurar os bairros na ordem salva e preparar somente a gaiola da primeira preferência disponível com leitura segura.",
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Nome: ${snapshot.config.nomeEnvio}`,
-        snapshot.config.ocrSelectionMode === "cages"
-          ? `${desiredCagesDraft.length} gaiola(s) desejada(s): ${desiredCagesDraft.join(", ")}`
-          : "Ranking definido pelo romaneio e pelos filtros."
+        ...neighborhoodPreferences.map((route, index) => `${index + 1}ª preferência: ${neighborhoodPreferenceLabel(route)}`),
+        "Bairro e gaiola precisam estar associados na mesma linha da imagem. Se houver dúvida nessa associação, o envio fica bloqueado."
       ],
       confirmLabel: "Iniciar imagem",
       onConfirm: async () => {
-        await desiredCageSaveQueueRef.current;
         await runAction(botApi.startImageMonitoring);
       }
     });
@@ -3636,184 +3190,6 @@ export default function App() {
         await runAction(botApi.factoryReset);
       }
     });
-  }
-
-  function saveGeneralSettings(settings: { nuclearMode?: boolean; alwaysWarmMode?: boolean; keepAliveIntervalMs?: number; ocrManualRouteSelection?: boolean; ocrSelectionMode?: BotConfig["ocrSelectionMode"]; ocrDesiredCages?: string[]; ocrCageMessageLimit?: number }) {
-    return runAction(() => botApi.saveGeneralSettings({
-      nuclearMode: settings.nuclearMode ?? snapshot.config.nuclearMode,
-      alwaysWarmMode: settings.alwaysWarmMode ?? snapshot.config.alwaysWarmMode,
-      keepAliveIntervalMs: settings.keepAliveIntervalMs ?? snapshot.config.keepAliveIntervalMs,
-      ocrManualRouteSelection: settings.ocrManualRouteSelection ?? snapshot.config.ocrManualRouteSelection,
-      ocrSelectionMode: settings.ocrSelectionMode ?? snapshot.config.ocrSelectionMode,
-      ocrDesiredCages: settings.ocrDesiredCages ?? snapshot.config.ocrDesiredCages,
-      ocrCageMessageLimit: settings.ocrCageMessageLimit ?? snapshot.config.ocrCageMessageLimit
-    }));
-  }
-
-  function confirmOcrSelectionMode(mode: BotConfig["ocrSelectionMode"]) {
-    const manual = mode === "manual";
-    const cages = mode === "cages";
-    setConfirmation({
-      title: manual ? "Ligar escolha manual" : cages ? "Ligar automático por gaiolas" : "Ligar melhor rota automática",
-      message: manual
-        ? "Com essa opção ligada, você terá que escolher a rota que vai pegar antes do bot preparar o envio."
-        : cages
-        ? "O bot enviará sozinho uma mensagem para cada gaiola desejada que aparecer na imagem."
-        : "O bot vai analisar a imagem e enviar por conta própria a melhor rota do ranking.",
-      details: manual
-        ? ["O painel abrirá a tela de ranking para seleção manual.", "Nada será enviado até confirmar uma ou mais rotas."]
-        : cages
-        ? ["Você poderá selecionar qualquer quantidade de gaiolas do romaneio.", "Cada coincidência gera uma mensagem separada com o nome já configurado."]
-        : ["O bot escolherá somente a primeira rota elegível.", "Se o grupo já estiver aberto, tentará enviar imediatamente."],
-      confirmLabel: "Ativar modo",
-      tone: manual ? "manual" : "auto",
-      onConfirm: async () => {
-        await saveGeneralSettings({ ocrSelectionMode: mode, ocrManualRouteSelection: manual });
-        showActionToast(manual ? "Modo seleção manual ligado." : cages ? "Automático por gaiolas ligado." : "Melhor rota automática ligada.", manual ? "manual" : "auto");
-      }
-    });
-  }
-
-  function saveDesiredCagesWithoutBlocking(next: string[]) {
-    desiredCagesTouchedRef.current = true;
-    setDesiredCagesDraft(next);
-    const currentLimit = snapshot.config.ocrCageMessageLimit;
-    const nextLimit = currentLimit > 0 ? Math.min(currentLimit, next.length) : 0;
-    desiredCageSaveQueueRef.current = desiredCageSaveQueueRef.current
-      .then(async () => {
-        const nextSnapshot = await botApi.saveGeneralSettings({
-          nuclearMode: snapshot.config.nuclearMode,
-          alwaysWarmMode: snapshot.config.alwaysWarmMode,
-          keepAliveIntervalMs: snapshot.config.keepAliveIntervalMs,
-          ocrManualRouteSelection: snapshot.config.ocrManualRouteSelection,
-          ocrSelectionMode: snapshot.config.ocrSelectionMode,
-          ocrDesiredCages: next,
-          ocrCageMessageLimit: nextLimit
-        });
-        setSnapshot(nextSnapshot);
-      })
-      .catch((error) => {
-        showActionToast(error instanceof Error ? error.message : "Não consegui salvar as gaiolas.", "manual");
-      });
-  }
-
-  function toggleDesiredCage(gaiola: string) {
-    const selected = desiredCagesDraft.some((item) => item.toUpperCase() === gaiola.toUpperCase());
-    const next = selected
-      ? desiredCagesDraft.filter((item) => item.toUpperCase() !== gaiola.toUpperCase())
-      : [...desiredCagesDraft, gaiola];
-    saveDesiredCagesWithoutBlocking(next);
-  }
-
-  async function handleLocateRomaneio() {
-    setBusy(true);
-    setRomaneioError("");
-    try {
-      const result = await locateRomaneio();
-      setRomaneioLocateResult(result);
-      showActionToast(result.found ? "Romaneio encontrado." : "Busca concluída.");
-    } catch (error) {
-      setRomaneioError(error instanceof Error ? error.message : "Não consegui localizar o romaneio.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleUploadRomaneio(file: File) {
-    if (!/\.xlsx$/i.test(file.name)) {
-      setRomaneioError("Selecione um arquivo de romaneio no formato .xlsx.");
-      return;
-    }
-    setBusy(true);
-    setRomaneioError("");
-    setRomaneioLocateResult({ found: false, message: "", candidates: [] });
-    try {
-      const nextRomaneio = await uploadRomaneio(file);
-      setRomaneio(nextRomaneio);
-      setRomaneioSettingsDraft(nextRomaneio.settings);
-      setRomaneioLocateResult({
-        found: true,
-        message: `Romaneio enviado do aparelho: ${file.name}`,
-        candidates: []
-      });
-      showActionToast(`${nextRomaneio.status.totalRoutes} rota(s) carregada(s).`);
-    } catch (error) {
-      setRomaneioError(error instanceof Error ? error.message : "Não consegui enviar o romaneio.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function confirmClearRomaneio() {
-    if (!romaneio.status.loaded) return;
-    setConfirmation({
-      title: "Limpar romaneio carregado",
-      message: `Remover ${romaneio.status.fileName || "o arquivo atual"} e liberar o carregamento de um novo romaneio?`,
-      details: ["Os filtros configurados serão preservados.", "Depois, use Localizar no grupo ou Enviar do aparelho para carregar o novo arquivo."],
-      confirmLabel: "Limpar romaneio",
-      tone: "manual",
-      onConfirm: async () => {
-        setBusy(true);
-        setRomaneioError("");
-        try {
-          const nextRomaneio = await clearRomaneio();
-          setRomaneio(nextRomaneio);
-          setRomaneioSettingsDraft(nextRomaneio.settings);
-          setRomaneioLocateResult({ found: false, message: "Romaneio anterior removido. Pronto para carregar o novo arquivo.", candidates: [] });
-          showActionToast("Romaneio limpo. Pode carregar o novo arquivo.");
-        } catch (error) {
-          setRomaneioError(error instanceof Error ? error.message : "Não consegui limpar o romaneio.");
-        } finally {
-          setBusy(false);
-        }
-      }
-    });
-  }
-
-  async function handleConfirmRomaneio(candidate: RomaneioCandidate) {
-    setBusy(true);
-    setRomaneioError("");
-    try {
-      const nextRomaneio = await confirmRomaneio(candidate.id);
-      setRomaneio(nextRomaneio);
-      setRomaneioSettingsDraft(nextRomaneio.settings);
-      setRomaneioLocateResult({
-        found: true,
-        message: `Romaneio confirmado (${candidate.periodoLabel}): ${candidate.fileName}`,
-        candidates: []
-      });
-      showActionToast("Romaneio processado.");
-    } catch (error) {
-      setRomaneioError(error instanceof Error ? error.message : "Não consegui confirmar o romaneio.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleSaveRomaneioSettings() {
-    setBusy(true);
-    setRomaneioError("");
-    try {
-      const settings = await saveRomaneioSettings(romaneioSettingsDraft);
-      setRomaneio((current) => ({ ...current, settings }));
-      setRomaneioSettingsDraft(settings);
-      showActionToast("Filtros salvos.");
-    } catch (error) {
-      setRomaneioError(error instanceof Error ? error.message : "Não consegui salvar os filtros.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  function toggleOcrRouteOption(option: OcrRouteOption) {
-    setSelectedOcrOptionIds((current) => {
-      if (current.includes(option.id)) return current.filter((id) => id !== option.id);
-      return [...current, option.id].slice(0, 2);
-    });
-  }
-
-  async function confirmOcrRoutes() {
-    await runAction(() => botApi.confirmOcrRoutes({ optionIds: selectedOcrOptionIds }));
   }
 
   async function submitIncidentAnswer() {
@@ -4047,10 +3423,10 @@ export default function App() {
           <section className="quick-panel identity-panel">
             <div>
               <p className="panel-label">Bot imagem</p>
-              <h2>Todas as rotas da imagem</h2>
+              <h2>Seus bairros preferidos</h2>
             </div>
             <button className="button" type="button" onClick={() => setGroupEditor("image")}>
-              Configurar grupo
+              Configurar bairros
             </button>
           </section>
           <section className="quick-panel client-usage-panel">
@@ -4078,10 +3454,10 @@ export default function App() {
                 {(snapshot.ocrAnalysisHistory || []).map((analysis) => {
                   const chosen = analysis.selectedOptionIds?.length
                     ? analysis.options.filter((option) => analysis.selectedOptionIds?.includes(option.id))
-                    : analysis.options;
+                    : [];
                   return (
                     <button className="ocr-analysis-history-item" key={analysis.analysisId || analysis.processedAt} type="button" onClick={() => setHistoryOcrSelection(analysis)}>
-                      <span><strong>{chosen.map((option) => option.gaiola).filter(Boolean).join(", ") || "Nenhuma rota encontrada"}</strong><small>{formatDate(analysis.processedAt)}</small></span>
+                      <span><strong>{chosen.map((option) => `${option.gaiola} · ${option.bairro}`).filter(Boolean).join(", ") || "Nenhuma preferência selecionada"}</strong><small>{formatDate(analysis.processedAt)}</small></span>
                       <small>{analysis.status === "confirmed" ? `${analysis.preparedMessages?.length || 0} mensagem(ns) preparada(s)` : uiText(analysis.message || "Análise concluída")}</small>
                     </button>
                   );
@@ -4090,148 +3466,21 @@ export default function App() {
               </div>
             ) : null}
           </section>
-          {false ? <MessagePreviewStrip
-            title="Ranking de rotas"
-            group={groupLabel}
-            messages={["Ranking automático pelo romaneio", "Sem filtro de bairros preferidos"]}
-            onOpen={() => setGroupEditor("image")}
-          /> : null}
-          <section className={snapshot.config.ocrSelectionMode === "manual" ? "quick-panel ocr-mode-panel tone-manual" : "quick-panel ocr-mode-panel tone-auto"}>
+          <section className="quick-panel ocr-mode-panel tone-auto">
             <div className="panel-heading">
               <div>
-                <p className="panel-label">Escolha da rota</p>
-                <h2>{snapshot.config.ocrSelectionMode === "manual" ? "Manual" : snapshot.config.ocrSelectionMode === "cages" ? "Automática por gaiolas" : "Melhor rota automática"}</h2>
+                <p className="panel-label">Escolha automática</p>
+                <h2>Ordem de preferência dos bairros</h2>
               </div>
-              <div className="ocr-mode-actions" role="group" aria-label="Modo de escolha da rota">
-                <button
-                  className={snapshot.config.ocrSelectionMode === "best" ? "button primary" : "button"}
-                  disabled={busy || snapshot.config.ocrSelectionMode === "best"}
-                  type="button"
-                  onClick={() => confirmOcrSelectionMode("best")}
-                >
-                  Melhor rota
-                </button>
-                <button
-                  className={snapshot.config.ocrSelectionMode === "cages" ? "button primary" : "button"}
-                  disabled={busy || snapshot.config.ocrSelectionMode === "cages"}
-                  type="button"
-                  onClick={() => confirmOcrSelectionMode("cages")}
-                >
-                  Por gaiolas
-                </button>
-                <button
-                  className={snapshot.config.ocrSelectionMode === "manual" ? "button primary" : "button"}
-                  disabled={busy || snapshot.config.ocrSelectionMode === "manual"}
-                  type="button"
-                  onClick={() => confirmOcrSelectionMode("manual")}
-                >
-                  Manual
-                </button>
-              </div>
+              <button className="button" disabled={busy} type="button" onClick={() => setGroupEditor("image")}>Editar preferências</button>
             </div>
-            <p className="approval-message">
-              {snapshot.config.ocrSelectionMode === "manual"
-                ? "O painel mostra o ranking e aguarda sua confirmação."
-                : snapshot.config.ocrSelectionMode === "cages"
-                ? "O bot envia sozinho todas as gaiolas desejadas encontradas na imagem."
-                : "O bot usa a melhor rota do ranking e envia sozinho quando possível."}
-            </p>
+            <p className="approval-message">O bot escolhe uma única gaiola: a do primeiro bairro da sua lista que aparecer com leitura segura na imagem. Bairros parecidos ou associações duvidosas não liberam o envio.</p>
+            <div className="confirmation-details">
+              {neighborhoodPreferences.length ? neighborhoodPreferences.map((route, index) => (
+                <span key={`${route.cidade}-${route.bairro}`}>{index + 1}ª preferência: {neighborhoodPreferenceLabel(route)}</span>
+              )) : <span>Adicione seus bairros preferidos antes de iniciar o bot imagem.</span>}
+            </div>
           </section>
-          {snapshot.config.ocrSelectionMode === "cages" ? (
-            <section className="quick-panel ocr-desired-cages-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="panel-label">Rotas para pegar dormindo</p>
-                  <h2>Gaiolas desejadas</h2>
-                  <p className="approval-message">Selecione quantas quiser. As melhores aparecem primeiro conforme os filtros e a prioridade do romaneio.</p>
-                </div>
-                <span className="mini-badge ok">{desiredCagesDraft.length} selecionada(s)</span>
-              </div>
-              <div className="ocr-mode-actions">
-                <button
-                  className="button"
-                  disabled={busy || !romaneio.routes.length}
-                  type="button"
-                  onClick={() => saveDesiredCagesWithoutBlocking(Array.from(new Set(romaneio.routes.map((route) => route.gaiola.toUpperCase()))))}
-                >
-                  Selecionar todas
-                </button>
-                <button
-                  className="button"
-                  disabled={!desiredCagesDraft.length}
-                  type="button"
-                  onClick={() => saveDesiredCagesWithoutBlocking([])}
-                >
-                  Limpar seleção anterior
-                </button>
-              </div>
-              <div className="settings-grid compact-settings desired-cages-tools">
-                <label>
-                  Quantas mensagens enviar
-                  <select
-                    value={snapshot.config.ocrCageMessageLimit}
-                    disabled={busy || !desiredCagesDraft.length}
-                    onChange={(event) => saveGeneralSettings({ ocrCageMessageLimit: Number(event.target.value) })}
-                  >
-                    <option value={0}>Todas que aparecerem</option>
-                    {Array.from({ length: desiredCagesDraft.length }, (_, index) => index + 1).map((amount) => (
-                      <option key={amount} value={amount}>
-                        {amount === 1 ? "Somente a melhor" : amount === 2 ? "As 2 melhores" : `As ${amount} melhores`}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Pesquisar rota
-                  <span className="search-input-wrap">
-                    <Search size={18} aria-hidden="true" />
-                    <input
-                      value={desiredCageSearch}
-                      type="search"
-                      placeholder="Gaiola, rota, bairro ou cidade"
-                      onChange={(event) => setDesiredCageSearch(event.target.value)}
-                    />
-                  </span>
-                </label>
-                <label>
-                  Ordenar por
-                  <select value={desiredCageSort} onChange={(event) => setDesiredCageSort(event.target.value as DesiredCageSort)}>
-                    <option value="alphabetical">Ordem alfabética</option>
-                    <option value="distance">Menor distância</option>
-                    <option value="packages">Menos pacotes</option>
-                    <option value="stops">Menos paradas</option>
-                    <option value="ranking">Ranking dos filtros</option>
-                  </select>
-                </label>
-              </div>
-              <div className="ocr-option-grid desired-cages-grid">
-                {visibleDesiredCageRoutes.map((route, index) => {
-                  const selected = desiredCagesDraft.some((gaiola) => gaiola.toUpperCase() === route.gaiola.toUpperCase());
-                  const dispatchOrder = desiredCageDispatchOrder.get(route.gaiola.toUpperCase());
-                  return (
-                    <button
-                      key={route.gaiola}
-                      className={selected ? "ocr-option selected" : "ocr-option"}
-                      type="button"
-                      onClick={() => toggleDesiredCage(route.gaiola)}
-                    >
-                      <strong>#{index + 1} · {route.gaiola}</strong>
-                      <span>{route.cidade || "Cidade não identificada"} · {route.bairros.slice(0, 3).map((bairro) => bairro.nome).join(", ")}</span>
-                      {selected && dispatchOrder ? <b className="send-order-badge">Vai enviar {dispatchOrder}º</b> : null}
-                      <div className="route-row-metrics">
-                        <span>{route.distanciaKm > 0 ? `${route.distanciaKm.toFixed(3)} km` : "km não informado"}</span>
-                        <span>{route.pacotes} pacotes</span>
-                        <span>{route.paradas} paradas</span>
-                      </div>
-                      {!route.passedFilters && route.reasons.length ? <small>{route.reasons.join(" ")}</small> : null}
-                    </button>
-                  );
-                })}
-                {romaneio.routes.length && !visibleDesiredCageRoutes.length ? <p className="qr-empty">Nenhuma gaiola encontrada nessa pesquisa.</p> : null}
-                {!romaneio.routes.length ? <p className="qr-empty">Carregue o romaneio do dia para selecionar as gaiolas.</p> : null}
-              </div>
-            </section>
-          ) : null}
           <ControlButtons
             busy={busy}
             status={snapshot.status}
@@ -4246,30 +3495,7 @@ export default function App() {
             monitoringMode={snapshot.monitoringMode}
             groupState={snapshot.groupState}
           />
-          {snapshot.config.targetDispatchMode === "ocr" && snapshot.config.ocrSelectionMode === "manual" && (ocrRouteDialogOpen || snapshot.ocrRouteSelection?.status === "analyzing") ? (
-            <OcrRouteApprovalPanel
-              selection={snapshot.ocrRouteSelection}
-              selectedIds={selectedOcrOptionIds}
-              busy={busy}
-              onToggle={toggleOcrRouteOption}
-              onConfirm={confirmOcrRoutes}
-              onClose={() => setOcrRouteDialogOpen(false)}
-            />
-          ) : null}
-          <RomaneioPanel
-            romaneio={romaneio}
-            settingsDraft={romaneioSettingsDraft}
-            locateResult={romaneioLocateResult}
-            busy={busy}
-            onSettingsChange={setRomaneioSettingsDraft}
-            onLocate={handleLocateRomaneio}
-            onUpload={handleUploadRomaneio}
-            onClear={confirmClearRomaneio}
-            onConfirmCandidate={handleConfirmRomaneio}
-            onSaveSettings={handleSaveRomaneioSettings}
-            error={romaneioError}
-          />
-          <LogsPanel logs={snapshot.logs.filter((log) => isImageOperationLog(log.message)).slice(-60)} />
+          <LogsPanel logs={snapshot.logs.filter((log) => isImageOperationLog(log.message)).slice(0, 60)} />
         </section>
       ) : null}
 
@@ -4442,7 +3668,7 @@ export default function App() {
           </section>
         </div>
       ) : null}
-      {automaticOcrAnalysisOpen && snapshot.config.targetDispatchMode === "ocr" && snapshot.config.ocrSelectionMode !== "manual" ? (
+      {automaticOcrAnalysisOpen && snapshot.config.targetDispatchMode === "ocr" ? (
         <AutomaticOcrAnalysisDialog
           selection={snapshot.ocrRouteSelection}
           onClose={() => setAutomaticOcrAnalysisOpen(false)}

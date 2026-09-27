@@ -1,12 +1,13 @@
 import fs from "fs";
-import path from "path";
 import { BotLog, LogLevel } from "../shared/types";
+import { writeJsonAtomic, writeJsonAtomicAsync } from "../storageJson";
 
 export class BotLogger {
   private logs: BotLog[] = [];
   private flushTimer?: NodeJS.Timeout;
   private saveInFlight?: Promise<void>;
   private dirty = false;
+  private saveErrorReported = false;
 
   constructor(private readonly onChange?: () => void, private readonly filePath?: string) {
     this.logs = this.load();
@@ -60,6 +61,7 @@ export class BotLogger {
       const data = JSON.parse(fs.readFileSync(this.filePath, "utf-8"));
       return Array.isArray(data)
         ? data
+            .filter((item: unknown) => item && typeof item === "object")
             .map((item: any) => ({
               id: typeof item.id === "string" ? item.id : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
               timestamp: typeof item.timestamp === "string" ? item.timestamp : new Date().toISOString(),
@@ -78,15 +80,15 @@ export class BotLogger {
     if (!this.filePath) return;
     if (this.saveInFlight) {
       this.dirty = true;
-      return;
+      return this.saveInFlight.then(() => this.flush());
     }
-    this.dirty = false;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
     }
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    fs.writeFileSync(this.filePath, JSON.stringify(this.logs, null, 2));
+    writeJsonAtomic(this.filePath, this.logs);
+    this.dirty = false;
+    this.saveErrorReported = false;
   }
 
   private scheduleSave(delayMs = 250) {
@@ -98,18 +100,18 @@ export class BotLogger {
       if (!this.dirty) return;
       this.saveInBackground();
     }, delayMs);
+    this.flushTimer.unref?.();
   }
 
   private saveInBackground() {
     if (!this.filePath || this.saveInFlight) return;
     this.dirty = false;
-    const payload = JSON.stringify(this.logs, null, 2);
-    const directory = path.dirname(this.filePath);
-
-    this.saveInFlight = fs.promises.mkdir(directory, { recursive: true })
-      .then(() => fs.promises.writeFile(this.filePath!, payload))
+    this.saveInFlight = writeJsonAtomicAsync(this.filePath, this.logs)
+      .then(() => { this.saveErrorReported = false; })
       .catch(() => {
         this.dirty = true;
+        if (!this.saveErrorReported) console.warn("Nao foi possivel persistir os logs; uma nova tentativa sera agendada.");
+        this.saveErrorReported = true;
       })
       .finally(() => {
         this.saveInFlight = undefined;

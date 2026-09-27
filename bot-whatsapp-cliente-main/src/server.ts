@@ -3,6 +3,9 @@ import http from "http";
 import os from "os";
 import path from "path";
 import crypto from "crypto";
+import { verifyPassword, verifyPasswordSync } from "./passwords";
+import { HttpError, readJsonBody, readRawBody, RequestRateLimiter, validateAmount, validateEmail } from "./httpSafety";
+import { readJsonFile, writeJsonAtomic } from "./storageJson";
 import QRCode from "qrcode";
 import qrcodeTerminal from "qrcode-terminal";
 import { BotProcessProxy } from "./bot/botProcessProxy";
@@ -73,6 +76,8 @@ type PanelUserRecord = {
   lastSeenReleaseAt?: string;
   totalUsageMs: number;
   loginHistory: StoredPanelUser["loginHistory"];
+  source?: "environment" | "panel";
+  sessionVersion?: number;
 };
 
 function parseList(value: string | undefined) {
@@ -123,11 +128,13 @@ function parsePanelUsers(envUsers: string | undefined, adminEmails: Set<string>)
 function mergeStoredUsers(users: Map<string, PanelUserRecord>, storedUsers: StoredPanelUser[], adminEmails: Set<string>) {
   for (const storedUser of storedUsers) {
     const configuredUser = users.get(storedUser.email);
-    if (!configuredUser) continue;
-    const userRole: PanelUserRole = configuredUser.role === "admin" || adminEmails.has(storedUser.email) ? "admin" : "client";
-    users.set(storedUser.email, createUserRecord(storedUser.email, configuredUser.password, userRole, {
+    if (!configuredUser && storedUser.source !== "panel") continue;
+    const managedInPanel = storedUser.source === "panel";
+    const userRole: PanelUserRole = managedInPanel ? storedUser.role : configuredUser!.role === "admin" || adminEmails.has(storedUser.email) ? "admin" : "client";
+    const password = managedInPanel || verifyPasswordSync(configuredUser!.password, storedUser.password) ? storedUser.password : configuredUser!.password;
+    users.set(storedUser.email, createUserRecord(storedUser.email, password, userRole, {
       ...storedUser,
-      password: configuredUser.password,
+      password,
       role: userRole
     }));
   }
@@ -159,6 +166,13 @@ const pushNotificationStore = new PushNotificationStore(
   process.env.WEB_PUSH_SUBJECT || "mailto:admin@botrotas.local"
 );
 const panelSessionSecret = process.env.PANEL_SESSION_SECRET || crypto.randomBytes(32).toString("base64url");
+const revokedSessionsPath = path.join(dataDir, "revoked_sessions.json");
+const revokedSessions = new Map<string, number>(readJsonFile<[string, number][]>(revokedSessionsPath, () => [],
+  (value) => Array.isArray(value) && value.every((entry) => Array.isArray(entry) && typeof entry[0] === "string" && Number.isFinite(entry[1]))));
+const loginLimiter = new RequestRateLimiter(200, 5 * 60_000);
+const accountLoginLimiter = new RequestRateLimiter(20, 5 * 60_000);
+const supportLimiter = new RequestRateLimiter(5, 60_000);
+const lastPresenceWrite = new Map<string, number>();
 const keepAliveUrl =
   process.env.KEEP_ALIVE_URL ||
   process.env.RENDER_EXTERNAL_URL ||
@@ -193,6 +207,25 @@ type Client = {
 const bots = new Map<string, BotProcessProxy>();
 const clients = new Set<Client>();
 const adminClients = new Set<http.ServerResponse>();
+const streamAuth = new Map<http.ServerResponse, { token: string; email: string }>();
+function registerStream(response: http.ServerResponse, url: URL, email: string) {
+  if (Array.from(streamAuth.values()).filter((stream) => stream.email === email).length >= 10) throw new HttpError(429, "Limite de conexões simultâneas atingido.");
+  streamAuth.set(response, { token: url.searchParams.get("token") || "", email });
+  response.once("close", () => streamAuth.delete(response));
+}
+function writeStream(response: http.ServerResponse, payload: string) {
+  const stream = streamAuth.get(response);
+  if (!stream || !verifySessionClaims(stream.token) || panelUsers.get(stream.email)?.blocked || response.destroyed || response.writableEnded) {
+    response.end();
+    return;
+  }
+  // A slow/disconnected browser must not accumulate unlimited snapshots in RAM.
+  if (!response.write(payload)) response.destroy();
+}
+const streamHeartbeat = setInterval(() => {
+  for (const response of streamAuth.keys()) writeStream(response, ": heartbeat\n\n");
+}, 15_000);
+streamHeartbeat.unref();
 const lastSnapshotState = new Map<string, { qrCode: string; logId: string }>();
 const lastCriticalBotState = new Map<string, { status: string; monitoringEnabled: boolean; analysisKey: string; incidentId: string }>();
 let lastAdminPendingRouteIds: Set<string> | undefined;
@@ -244,6 +277,7 @@ function getConditionalPriorityClients(): ConditionalPriorityClient[] {
       connected: snapshot.status === "connected",
       monitoringEnabled: snapshot.monitoringEnabled,
       monitoringMode: snapshot.monitoringMode,
+      targetDispatchMode: snapshot.config.targetDispatchMode,
       targetGroupKey
     };
   });
@@ -291,6 +325,15 @@ function getUserDir(email: string) {
   return path.join(dataDir, "users", getUserStorageKey(email));
 }
 
+function assertUniqueStorageKey(email: string, previousEmail?: string) {
+  const key = getUserStorageKey(email);
+  for (const existing of panelUsers.keys()) {
+    if (existing !== email && existing !== previousEmail && getUserStorageKey(existing) === key) {
+      throw new HttpError(409, "Este email conflita com o diretório de outro usuário.");
+    }
+  }
+}
+
 function getRomaneioStoreForEmail(email: string) {
   return new RomaneioStore(path.join(getUserDir(email), "romaneio"));
 }
@@ -298,16 +341,18 @@ function getRomaneioStoreForEmail(email: string) {
 async function renameUserStorage(oldEmail: string, nextEmail: string) {
   if (oldEmail === nextEmail) return;
 
+  const oldDir = getUserDir(oldEmail);
+  const nextDir = getUserDir(nextEmail);
+  if (oldDir !== nextDir && fs.existsSync(nextDir)) throw new HttpError(409, "O diretório de destino já contém dados. Renomeação cancelada.");
+
   const existingBot = bots.get(oldEmail);
   if (existingBot) {
-    await existingBot.shutdown().catch(() => undefined);
+    await existingBot.shutdown();
     bots.delete(oldEmail);
     appliedConditionalPriority.delete(oldEmail);
     scheduleConditionalPrioritySync();
   }
 
-  const oldDir = path.join(dataDir, "users", getUserStorageKey(oldEmail));
-  const nextDir = path.join(dataDir, "users", getUserStorageKey(nextEmail));
   if (fs.existsSync(oldDir) && !fs.existsSync(nextDir)) {
     fs.mkdirSync(path.dirname(nextDir), { recursive: true });
     fs.renameSync(oldDir, nextDir);
@@ -317,9 +362,9 @@ async function renameUserStorage(oldEmail: string, nextEmail: string) {
     try {
       const routes = JSON.parse(fs.readFileSync(routeHistoryPath, "utf-8"));
       if (Array.isArray(routes)) {
-        fs.writeFileSync(
+        writeJsonAtomic(
           routeHistoryPath,
-          JSON.stringify(routes.map((route) => ({ ...route, clientEmail: nextEmail })), null, 2)
+          routes.map((route) => ({ ...route, clientEmail: nextEmail }))
         );
       }
     } catch {
@@ -404,8 +449,13 @@ function getBotForEmail(email: string) {
       scheduleSnapshotFanout(normalizedEmail, nextBot);
     });
   });
-  nextBot.on("dispatch-gate-request", (request: { id: string; clientEmail: string; groupKey: string; eventDetectedAt: number; eventKey?: string }) => {
-    const blockers = computeConditionalDispatchBlockers(getConditionalPriorityClients()).get(normalizedEmail) || [];
+  nextBot.on("dispatch-gate-request", (request: { id: string; clientEmail: string; groupKey: string; eventDetectedAt: number; eventKey?: string; targetDispatchMode?: "manual" | "ocr" }) => {
+    // Critical sends defer the large snapshot. Use the mode of this actual
+    // request so a recent mode change cannot attach it to the wrong race.
+    const clients = getConditionalPriorityClients().map((client) => client.email === normalizedEmail
+      ? { ...client, targetDispatchMode: request.targetDispatchMode || client.targetDispatchMode, targetGroupKey: request.groupKey }
+      : client);
+    const blockers = computeConditionalDispatchBlockers(clients).get(normalizedEmail) || [];
     void dispatchRaceCoordinator.request({
       clientEmail: normalizedEmail,
       groupKey: request.groupKey,
@@ -437,51 +487,12 @@ function getBotForEmail(email: string) {
 }
 
 function sendJson(response: http.ServerResponse, statusCode: number, data: unknown) {
+  if (response.destroyed || response.writableEnded) return;
   response.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store"
   });
   response.end(JSON.stringify(data));
-}
-
-function readJsonBody<T = any>(request: http.IncomingMessage): Promise<T> {
-  return new Promise((resolve, reject) => {
-    let body = "";
-    request.on("data", (chunk) => {
-      body += chunk;
-      if (body.length > 1024 * 1024) {
-        reject(new Error("Payload muito grande."));
-        request.destroy();
-      }
-    });
-    request.on("end", () => {
-      if (!body.trim()) return resolve({} as T);
-      try {
-        resolve(JSON.parse(body));
-      } catch (error) {
-        reject(error);
-      }
-    });
-    request.on("error", reject);
-  });
-}
-
-function readRawBody(request: http.IncomingMessage, maxBytes = 1024 * 1024 * 12): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    request.on("data", (chunk: Buffer) => {
-      total += chunk.length;
-      if (total > maxBytes) {
-        reject(new Error("Arquivo muito grande."));
-        request.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on("end", () => resolve(Buffer.concat(chunks)));
-    request.on("error", reject);
-  });
 }
 
 async function readMultipartFile(request: http.IncomingMessage) {
@@ -518,21 +529,31 @@ function signPayload(payload: string) {
 type PanelSessionClaims = {
   email: string;
   exp: number;
+  id: string;
+  authTag: string;
   impersonatedBy?: string;
 };
 
 function createSessionToken(email: string, impersonatedBy?: string) {
   const payload = base64Url(JSON.stringify({
     email,
+    id: crypto.randomUUID(),
+    authTag: sessionAuthTag(email),
+    impersonatorAuthTag: impersonatedBy ? sessionAuthTag(impersonatedBy) : undefined,
     exp: Date.now() + (impersonatedBy ? IMPERSONATION_SESSION_TTL_MS : SESSION_TTL_MS),
     impersonatedBy: impersonatedBy || undefined
   }));
   return `${payload}.${signPayload(payload)}`;
 }
 
+function sessionAuthTag(email: string) {
+  const user = panelUsers.get(email);
+  return crypto.createHmac("sha256", panelSessionSecret).update(`${user?.password}:${user?.role}:${user?.blocked}:${user?.sessionVersion || 0}`).digest("base64url");
+}
+
 function verifySessionClaims(token: string): PanelSessionClaims | undefined {
   const [payload, signature] = token.split(".");
-  if (!payload || !signature) return undefined;
+  if (!payload || !signature || token.split(".").length !== 2) return undefined;
   const expected = signPayload(payload);
   if (signature.length !== expected.length) return undefined;
 
@@ -541,8 +562,10 @@ function verifySessionClaims(token: string): PanelSessionClaims | undefined {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf-8"));
     const email = String(parsed.email || "").toLowerCase();
     const impersonatedBy = String(parsed.impersonatedBy || "").trim().toLowerCase() || undefined;
-    if (!email || !panelUsers.has(email) || Number(parsed.exp) <= Date.now()) return undefined;
-    return { email, exp: Number(parsed.exp), impersonatedBy };
+    if (!email || !panelUsers.has(email) || !Number.isFinite(parsed.exp) || parsed.exp <= Date.now()) return undefined;
+    if (typeof parsed.id !== "string" || revokedSessions.has(parsed.id) || parsed.authTag !== sessionAuthTag(email)) return undefined;
+    if (impersonatedBy && (panelUsers.get(impersonatedBy)?.role !== "admin" || panelUsers.get(impersonatedBy)?.blocked || parsed.impersonatorAuthTag !== sessionAuthTag(impersonatedBy))) return undefined;
+    return { email, exp: parsed.exp, id: parsed.id, authTag: parsed.authTag, impersonatedBy };
   } catch {
     return undefined;
   }
@@ -559,15 +582,8 @@ function getSessionClaims(request: http.IncomingMessage) {
 function getAuthorizedEmail(request: http.IncomingMessage) {
   if (!panelUsers.size) return undefined;
   const token = String(request.headers["x-panel-token"] || "").trim();
-  const password = String(request.headers["x-panel-password"] || "").trim();
   const tokenEmail = verifySessionToken(token);
   if (tokenEmail && isEmailAllowedOnThisService(tokenEmail)) return tokenEmail;
-
-  if (password) {
-    for (const [email, expected] of panelUsers.entries()) {
-      if (!expected.blocked && expected.password === password && isEmailAllowedOnThisService(email)) return email;
-    }
-  }
 
   return undefined;
 }
@@ -606,7 +622,10 @@ function touchPanelUser(email: string) {
   const delta = lastSeenMs && nowMs - lastSeenMs <= 1000 * 60 * 5 ? nowMs - lastSeenMs : 0;
   user.lastSeenAt = now;
   user.totalUsageMs += delta;
-  panelUserStore.touch(email);
+  if (nowMs - (lastPresenceWrite.get(email) || 0) >= 15_000) {
+    panelUserStore.touch(email);
+    lastPresenceWrite.set(email, nowMs);
+  }
 }
 
 function getUserRole(email: string): PanelUserRole {
@@ -923,16 +942,17 @@ function broadcastAdminSnapshot() {
   if (!adminClients.size) return;
   const payload = `data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`;
   for (const client of adminClients) {
-    client.write(payload);
+    writeStream(client, payload);
   }
 }
 
 function sendClientPush(email: string, notification: Parameters<PushNotificationStore["sendToEmails"]>[1]) {
+  if (panelUsers.get(email)?.blocked) return;
   void pushNotificationStore.sendToEmails([email], notification).catch((error) => console.error("Falha ao enviar notificação ao cliente:", error));
 }
 
 function sendAdminPush(notification: Parameters<PushNotificationStore["sendToRole"]>[1]) {
-  void pushNotificationStore.sendToRole("admin", notification).catch((error) => console.error("Falha ao enviar notificação ao admin:", error));
+  void pushNotificationStore.sendToEmails(Array.from(panelUsers.entries()).filter(([, user]) => user.role === "admin" && !user.blocked).map(([email]) => email), notification).catch((error) => console.error("Falha ao enviar notificação ao admin:", error));
 }
 
 function handleCriticalBotNotifications(email: string, snapshot: BotSnapshot) {
@@ -988,13 +1008,13 @@ function broadcastSnapshot(email: string) {
   const snapshot = getClientSnapshot(email);
   const payload = `data: ${JSON.stringify(snapshot)}\n\n`;
   for (const client of clients) {
-    if (client.email === email) client.response.write(payload);
+    if (client.email === email) writeStream(client.response, payload);
   }
 }
 
 function logSnapshot(email: string) {
   const snapshot = getBotForEmail(email).getSnapshot();
-  const lastLog = snapshot.logs[snapshot.logs.length - 1];
+  const lastLog = snapshot.logs[0];
   const logId = lastLog?.id || "";
   const lastState = lastSnapshotState.get(email) || { qrCode: "", logId: "" };
   const shouldPrint = snapshot.qrCode !== lastState.qrCode || logId !== lastState.logId;
@@ -1020,6 +1040,12 @@ function logSnapshot(email: string) {
 }
 
 async function handleAction(bot: BotProcessProxy, action: string, body: any) {
+  for (const field of ["codes", "routes", "optionIds", "ocrDesiredCages"]) {
+    if (field === "routes" && action === "save-route-preset") continue;
+    const values = body[field];
+    if (values !== undefined && (!Array.isArray(values) || values.length > 1000 || values.some((value) => typeof value !== "string" || value.length > 1000))) throw new HttpError(400, `Lista inválida: ${field}.`);
+  }
+  if (body.senderName !== undefined && (typeof body.senderName !== "string" || body.senderName.length > 200)) throw new HttpError(400, "Nome de envio inválido.");
   switch (action) {
     case "start":
       await bot.start();
@@ -1150,9 +1176,9 @@ function getContentType(filePath: string) {
 }
 
 function serveStatic(urlPath: string, response: http.ServerResponse) {
-  const safePath = path.normalize(urlPath).replace(/^(\.\.[/\\])+/, "");
+  const safePath = path.normalize(decodeURIComponent(urlPath)).replace(/^(\.\.[/\\])+/, "");
   const requested = path.join(staticDir, safePath === "/" ? "index.html" : safePath);
-  const filePath = requested.startsWith(staticDir) && fs.existsSync(requested) && fs.statSync(requested).isFile()
+  const filePath = requested.startsWith(staticDir + path.sep) && fs.existsSync(requested) && fs.statSync(requested).isFile()
     ? requested
     : path.join(staticDir, "index.html");
 
@@ -1168,7 +1194,7 @@ function serveStatic(urlPath: string, response: http.ServerResponse) {
     "Content-Type": getContentType(filePath),
     "Cache-Control": shouldRevalidate ? "no-store, no-cache, must-revalidate" : "public, max-age=31536000, immutable"
   });
-  fs.createReadStream(filePath).pipe(response);
+  fs.createReadStream(filePath).on("error", () => response.destroy()).pipe(response);
 }
 
 function getLocalAddresses() {
@@ -1196,7 +1222,7 @@ function startKeepAlive() {
     });
     if (!hasActiveMonitoring) return;
 
-    fetch(pingUrl)
+    fetch(pingUrl, { signal: AbortSignal.timeout(15_000) })
       .then((response) => {
         if (!response.ok) {
           console.log(`Keep-alive respondeu ${response.status}.`);
@@ -1243,15 +1269,18 @@ function startDailySessionReset() {
 }
 
 const server = http.createServer(async (request, response) => {
-  const url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
-
   try {
+    const url = new URL(request.url || "/", "http://localhost");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Referrer-Policy", "no-referrer");
+    response.setHeader("X-Frame-Options", "DENY");
     if (request.method === "GET" && url.pathname === "/api/ping") {
       sendJson(response, 200, { ok: true, protected: Boolean(panelUsers.size), login: "email" });
       return;
     }
 
     if (request.method === "POST" && url.pathname === "/api/support/messages") {
+      if (!supportLimiter.allow(request.socket.remoteAddress || "unknown")) throw new HttpError(429, "Aguarde um minuto antes de enviar outra mensagem.");
       const body = await readJsonBody(request);
       const message = supportMessageStore.create({
         email: String(body.email || ""),
@@ -1271,18 +1300,22 @@ const server = http.createServer(async (request, response) => {
     }
 
     if (request.method === "POST" && url.pathname === "/api/login") {
+      if (!loginLimiter.allow(request.socket.remoteAddress || "unknown")) throw new HttpError(429, "Muitas tentativas. Aguarde cinco minutos.");
       const body = await readJsonBody(request);
       const email = String(body.email || "").trim().toLowerCase();
       const password = String(body.password || "");
+      if (email.length > 254 || password.length > 1024) throw new HttpError(400, "Email ou senha inválidos.");
+      if (!accountLoginLimiter.allow(email)) throw new HttpError(429, "Muitas tentativas. Aguarde cinco minutos.");
       if (!panelUsers.size) {
         sendJson(response, 503, { error: "Configure PANEL_USERS no Render para liberar o login." });
         return;
       }
       const expectedPassword = panelUsers.get(email);
-      if (!email || !expectedPassword || password !== expectedPassword.password || !isEmailAllowedOnThisService(email)) {
+      if (!email || !expectedPassword || !isEmailAllowedOnThisService(email) || !await verifyPassword(password, expectedPassword.password)) {
         sendJson(response, 401, { error: "Email ou senha invalidos." });
         return;
       }
+      if (panelUsers.get(email) !== expectedPassword) throw new HttpError(401, "Login obrigatório.");
       if (expectedPassword.blocked) {
         sendJson(response, 403, { error: "Usuário bloqueado pelo administrador." });
         return;
@@ -1290,25 +1323,16 @@ const server = http.createServer(async (request, response) => {
 
       const ip = String(request.headers["x-forwarded-for"] || request.socket.remoteAddress || "").split(",")[0].trim();
       const userAgent = String(request.headers["user-agent"] || "");
-      syncPanelUser(panelUserStore.upsert({
+      panelUserStore.upsert({
         email,
         password: expectedPassword.password,
         role: expectedPassword.role,
         blocked: expectedPassword.blocked,
-        color: expectedPassword.color
-      }));
-      expectedPassword.lastLoginAt = new Date().toISOString();
-      expectedPassword.lastSeenAt = expectedPassword.lastLoginAt;
-      expectedPassword.loginHistory = [
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          timestamp: expectedPassword.lastLoginAt,
-          ip,
-          userAgent
-        },
-        ...expectedPassword.loginHistory
-      ].slice(0, 100);
+        color: expectedPassword.color,
+        source: expectedPassword.source || "environment"
+      });
       panelUserStore.recordLogin(email, ip, userAgent);
+      syncPanelUser(panelUserStore.all().find((user) => user.email === email)!);
 
       sendJson(response, 200, {
         ok: true,
@@ -1320,8 +1344,10 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === "GET" && url.pathname === "/api/admin/events") {
       const email = getAuthorizedEmailFromUrl(url);
-      if (!email || !requireAdmin(email, response)) return;
+      if (!email) { sendJson(response, 401, { error: "Login obrigatório." }); return; }
+      if (!requireAdmin(email, response)) return;
 
+      registerStream(response, url, email);
       response.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-store",
@@ -1330,7 +1356,7 @@ const server = http.createServer(async (request, response) => {
       });
       response.flushHeaders?.();
       adminClients.add(response);
-      response.write(`data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`);
+      writeStream(response, `data: ${JSON.stringify(getAdminMonitorSnapshot())}\n\n`);
       request.on("close", () => adminClients.delete(response));
       return;
     }
@@ -1344,6 +1370,7 @@ const server = http.createServer(async (request, response) => {
       }
       touchPanelUser(email);
       const activeBot = getBotForEmail(email);
+      registerStream(response, url, email);
       response.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-store",
@@ -1353,7 +1380,7 @@ const server = http.createServer(async (request, response) => {
       response.flushHeaders?.();
       const client = { email, response };
       clients.add(client);
-      response.write(`data: ${JSON.stringify(getClientSnapshot(email))}\n\n`);
+      writeStream(response, `data: ${JSON.stringify(getClientSnapshot(email))}\n\n`);
       request.on("close", () => clients.delete(client));
       return;
     }
@@ -1374,6 +1401,15 @@ const server = http.createServer(async (request, response) => {
         color: panelUsers.get(authorizedEmail)?.color,
         impersonatedBy: session?.email === authorizedEmail ? session.impersonatedBy : undefined
       });
+      return;
+    }
+
+    if (request.method === "POST" && url.pathname === "/api/logout") {
+      const session = getSessionClaims(request)!;
+      for (const [id, expires] of revokedSessions) if (expires <= Date.now()) revokedSessions.delete(id);
+      revokedSessions.set(session.id, session.exp);
+      writeJsonAtomic(revokedSessionsPath, Array.from(revokedSessions));
+      sendJson(response, 200, { ok: true });
       return;
     }
 
@@ -1465,6 +1501,8 @@ const server = http.createServer(async (request, response) => {
       if (!requireAdmin(authorizedEmail, response)) return;
       const body = await readJsonBody<{ decision?: string; amountCents?: number; note?: string }>(request);
       const id = decodeURIComponent(url.pathname.replace("/api/admin/image-usage/", ""));
+      if (body.amountCents !== undefined) validateAmount(body.amountCents);
+      if (body.note !== undefined && (typeof body.note !== "string" || body.note.length > 5000)) throw new HttpError(400, "Observação inválida.");
       const decision = body.decision === "billable" || body.decision === "excluded" || body.decision === "pending" ? body.decision : undefined;
       if (!decision || !imageUsageStore.decide(id, decision, authorizedEmail, body.amountCents, body.note)) {
         sendJson(response, 404, { error: "Análise não encontrada ou decisão inválida." });
@@ -1485,7 +1523,7 @@ const server = http.createServer(async (request, response) => {
       if (!requireAdmin(authorizedEmail, response)) return;
       const clientEmail = decodeURIComponent(url.pathname.replace("/api/admin/image-pricing/", "")).trim().toLowerCase();
       const body = await readJsonBody<{ amountCents?: number }>(request);
-      if (!panelUsers.has(clientEmail) || !Number.isFinite(Number(body.amountCents))) {
+      if (!panelUsers.has(clientEmail) || !Number.isSafeInteger(body.amountCents) || Number(body.amountCents) < 0 || Number(body.amountCents) > 10_000_000) {
         sendJson(response, 400, { error: "Cliente ou valor inválido." });
         return;
       }
@@ -1500,10 +1538,11 @@ const server = http.createServer(async (request, response) => {
       if (!requireAdmin(authorizedEmail, response)) return;
       const clientEmail = decodeURIComponent(url.pathname.replace("/api/admin/image-total/", "")).trim().toLowerCase();
       const body = await readJsonBody<{ amountCents?: number; month?: string }>(request);
-      if (!panelUsers.has(clientEmail) || !Number.isFinite(Number(body.amountCents))) {
+      if (!panelUsers.has(clientEmail) || !Number.isSafeInteger(body.amountCents) || Number(body.amountCents) < 0 || Number(body.amountCents) > 10_000_000) {
         sendJson(response, 400, { error: "Cliente ou valor total inválido." });
         return;
       }
+      if (body.month !== undefined && (typeof body.month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(body.month))) throw new HttpError(400, "Mês inválido.");
       imageUsageStore.setMonthlyTotal(clientEmail, Number(body.amountCents), typeof body.month === "string" ? body.month : undefined);
       broadcastAdminSnapshot();
       broadcastSnapshot(clientEmail);
@@ -1657,8 +1696,12 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && url.pathname === "/api/admin/users") {
       if (!requireAdmin(authorizedEmail, response)) return;
       const body = await readJsonBody(request);
+      const newEmail = validateEmail(body.email);
+      if (panelUsers.has(newEmail)) throw new HttpError(409, "Email já cadastrado. Use a edição do usuário.");
+      assertUniqueStorageKey(newEmail);
+      if (typeof body.password !== "string" || !body.password.trim() || body.password.length > 1024) throw new HttpError(400, "Informe uma senha válida com até 1024 caracteres.");
       const user = panelUserStore.upsert({
-        email: String(body.email || ""),
+        email: newEmail,
         password: String(body.password || ""),
         role: body.role === "admin" ? "admin" : "client",
         blocked: Boolean(body.blocked),
@@ -1683,22 +1726,33 @@ const server = http.createServer(async (request, response) => {
         return;
       }
       const body = await readJsonBody(request);
-      const nextEmail = String(body.email || targetEmail).trim().toLowerCase();
+      const nextEmail = validateEmail(body.email ?? targetEmail);
       const currentUser = panelUsers.get(targetEmail)!;
+      if (nextEmail !== targetEmail && panelUsers.has(nextEmail)) throw new HttpError(409, "Email já cadastrado.");
+      assertUniqueStorageKey(nextEmail, targetEmail);
+      if (body.password !== undefined && (typeof body.password !== "string" || body.password.length > 1024)) throw new HttpError(400, "Senha inválida.");
+      const nextRole = body.role === undefined ? currentUser.role : body.role === "admin" ? "admin" : "client";
+      const nextBlocked = body.blocked === undefined ? currentUser.blocked : Boolean(body.blocked);
+      if (currentUser.role === "admin" && (nextRole !== "admin" || nextBlocked) && !Array.from(panelUsers.entries()).some(([email, user]) => email !== targetEmail && user.role === "admin" && !user.blocked)) {
+        throw new HttpError(400, "Mantenha ao menos um administrador ativo.");
+      }
 
       if (nextEmail !== targetEmail) {
+        if (!panelUserStore.all().some((user) => user.email === targetEmail)) panelUserStore.upsert({ email: targetEmail, password: currentUser.password, role: currentUser.role, blocked: currentUser.blocked, color: currentUser.color, source: currentUser.source || "environment" });
         await renameUserStorage(targetEmail, nextEmail);
-        panelUserStore.remove(targetEmail);
+        panelUserStore.rename(targetEmail, nextEmail);
+        imageUsageStore.renameClientEmail(targetEmail, nextEmail);
         panelUsers.delete(targetEmail);
       }
 
       const user = panelUserStore.upsert({
         email: nextEmail,
         password: typeof body.password === "string" && body.password.trim() ? body.password : currentUser.password,
-        role: body.role === "admin" ? "admin" : "client",
-        blocked: Boolean(body.blocked),
+        role: nextRole,
+        blocked: nextBlocked,
+        source: "panel",
         color: normalizeUserColor(String(body.color || currentUser.color || ""), nextEmail),
-        dispatchPriorityLevel: 0,
+        dispatchPriorityLevel: currentUser.dispatchPriorityLevel,
         dispatchBeatsEmail: normalizeDispatchBeatsEmail(body.dispatchBeatsEmail ?? currentUser.dispatchBeatsEmail, nextEmail),
         dispatchAdvantageMs: normalizeDispatchAdvantageMs(body.dispatchAdvantageMs ?? currentUser.dispatchAdvantageMs),
         dispatchMatchups: normalizeDispatchMatchups(body.dispatchMatchups ?? currentUser.dispatchMatchups, nextEmail)
@@ -1824,12 +1878,16 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(405);
     response.end("Method not allowed");
   } catch (error) {
-    sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) });
+    if (response.headersSent) { response.destroy(); return; }
+    const status = error instanceof HttpError ? error.status : error instanceof URIError ? 400 : 500;
+    if (status === 413 || status === 408) response.setHeader("Connection", "close");
+    sendJson(response, status, { error: error instanceof Error ? error.message : "Não foi possível concluir a operação." });
   }
 });
 
 server.listen(port, "0.0.0.0", () => {
-  console.log(`Painel web: http://localhost:${port}`);
+  const address = server.address();
+  console.log(`Painel web: http://localhost:${typeof address === "object" && address ? address.port : port}`);
   for (const address of getLocalAddresses()) {
     console.log(`Na rede local: ${address}`);
   }
@@ -1841,10 +1899,18 @@ server.listen(port, "0.0.0.0", () => {
   startDailySessionReset();
 });
 
+let shuttingDown = false;
 async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  clearInterval(streamHeartbeat);
+  for (const response of streamAuth.keys()) response.end();
+  const deadline = setTimeout(() => process.exit(1), 10_000);
+  deadline.unref();
   console.log("Encerrando bots...");
   await Promise.all(Array.from(bots.values()).map((item) => item.shutdown().catch(() => undefined)));
   server.close(() => process.exit(0));
+  server.closeIdleConnections();
 }
 
 process.on("SIGINT", shutdown);

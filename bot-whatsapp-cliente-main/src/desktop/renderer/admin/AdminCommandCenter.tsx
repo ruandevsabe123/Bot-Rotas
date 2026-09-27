@@ -1,4 +1,5 @@
-import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { mergeUsageAmounts, parseMoneyInput } from "./usageDrafts";
+import { CSSProperties, FormEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -647,6 +648,11 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   const [support, setSupport] = useState<AdminSupportMessagesSnapshot>(emptySupport);
   const [imageUsage, setImageUsage] = useState<AdminImageUsageSnapshot>(emptyImageUsage);
   const [usageAmounts, setUsageAmounts] = useState<Record<string, string>>({});
+  const dirtyUsageAmounts = useRef(new Set<string>());
+  function editUsageAmount(key: string, value: string) {
+    dirtyUsageAmounts.current.add(key);
+    setUsageAmounts((current) => ({ ...current, [key]: value }));
+  }
   const [logs, setLogs] = useState<AdminLogEntry[]>([]);
   const [page, setPage] = useState<AdminPage>(() => {
     const requested = new URLSearchParams(window.location.search).get("admin");
@@ -686,19 +692,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     setUsers(snapshot.users);
     setSupport(snapshot.support);
     setImageUsage(snapshot.imageUsage || emptyImageUsage);
-    setUsageAmounts((current) => {
-      const next = { ...current };
-      (snapshot.imageUsage?.entries || []).forEach((entry) => {
-        if (next[entry.id] === undefined) next[entry.id] = (entry.amountCents / 100).toFixed(2).replace(".", ",");
-      });
-      (snapshot.imageUsage?.clients || []).forEach((client) => {
-        const key = `client:${client.clientEmail}`;
-        if (next[key] === undefined) next[key] = (client.defaultAmountCents / 100).toFixed(2).replace(".", ",");
-        const totalKey = `total:${client.clientEmail}`;
-        next[totalKey] = (client.amountCents / 100).toFixed(2).replace(".", ",");
-      });
-      return next;
-    });
+    setUsageAmounts((current) => mergeUsageAmounts(current, snapshot.imageUsage || emptyImageUsage, dirtyUsageAmounts.current));
     setLogs(snapshot.logs);
     setSelectedRoutes((current) => current.filter((id) => snapshot.routes.routes.some((route) => route.id === id && routeDecision(route) === "pending")));
     setLeaders(snapshot.leaders || []);
@@ -720,19 +714,11 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   }
 
   useEffect(() => {
-    refresh();
-    const unsubscribe = subscribeAdminMonitor(applySnapshot, () => {
+    return subscribeAdminMonitor(applySnapshot, (nextError) => {
       setStreamState("fallback");
-      refresh();
+      if (isAuthError(nextError)) onLogout();
     });
-    const polling = window.setInterval(() => {
-      if (streamState === "fallback") refresh();
-    }, 15000);
-    return () => {
-      unsubscribe();
-      window.clearInterval(polling);
-    };
-  }, [streamState]);
+  }, []);
 
   const clients = useMemo(() => users.users.filter((user) => user.role === "client"), [users.users]);
   const clientModeTarget = useMemo(() => {
@@ -742,7 +728,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     if (selectedClient) return selectedClient;
     return clients.find((client) => /(^|[._+@-])(test|teste)([._+@-]|$)/i.test(client.email));
   }, [clientFilter, clients]);
-  const period = useMemo(() => dateRangeMs(datePreset), [datePreset]);
+  const period = dateRangeMs(datePreset);
 
   async function enterClientMode() {
     if (!clientModeTarget) return;
@@ -1045,15 +1031,11 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     }
   }
 
-  function parseMoney(value: string) {
-    const normalized = value.includes(",") ? value.replace(/\./g, "").replace(",", ".") : value;
-    return Math.max(0, Math.round(Number(normalized) * 100) || 0);
-  }
-
   async function updateImageUsage(id: string, decision: "pending" | "billable" | "excluded") {
     setBusy(true);
     try {
-      const next = await decideImageUsage(id, { decision, amountCents: parseMoney(usageAmounts[id] || "0") });
+      const next = await decideImageUsage(id, { decision, amountCents: parseMoneyInput(usageAmounts[id] || "0") });
+      dirtyUsageAmounts.current.delete(id);
       setImageUsage(next);
       showToast(decision === "billable" ? "Imagem e rota validadas para cobrança." : decision === "excluded" ? "Imagem e rota excluídas da pendência." : "Análise devolvida para revisão.");
       refresh();
@@ -1067,7 +1049,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   async function updateImagePricing(clientEmail: string) {
     setBusy(true);
     try {
-      const next = await saveImagePricing(clientEmail, parseMoney(usageAmounts[`client:${clientEmail}`] || "0"));
+      const next = await saveImagePricing(clientEmail, parseMoneyInput(usageAmounts[`client:${clientEmail}`] || "0"));
+      dirtyUsageAmounts.current.delete(`client:${clientEmail}`);
       setImageUsage(next);
       showToast("Valor padrão atualizado.");
       refresh();
@@ -1081,7 +1064,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   async function updateImageMonthlyTotal(clientEmail: string) {
     setBusy(true);
     try {
-      const next = await saveImageMonthlyTotal(clientEmail, parseMoney(usageAmounts[`total:${clientEmail}`] || "0"), imageUsage.month);
+      const next = await saveImageMonthlyTotal(clientEmail, parseMoneyInput(usageAmounts[`total:${clientEmail}`] || "0"), imageUsage.month);
+      dirtyUsageAmounts.current.delete(`total:${clientEmail}`);
       setImageUsage(next);
       showToast("Total mensal do cliente atualizado.");
       refresh();
@@ -1660,7 +1644,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                             disabled={!usageEntry || busy}
                             inputMode="decimal"
                             value={usageEntry ? usageAmounts[usageEntry.id] || "0,00" : "0,00"}
-                            onChange={(event) => usageEntry && setUsageAmounts((current) => ({ ...current, [usageEntry.id]: event.target.value }))}
+                            onChange={(event) => usageEntry && editUsageAmount(usageEntry.id, event.target.value)}
                           />
                         </label>
                         <div className="adminx-analysis-actions">
@@ -1714,9 +1698,9 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                   {pricingClients.map((client) => (
                     <div className="adminx-pricing-row" key={client.clientEmail}>
                       <div><strong>{client.clientEmail}</strong><small>{client.billable} aprovada(s) · total atual {formatMoney(client.amountCents)}</small></div>
-                      <label><span>Preço R$</span><input inputMode="decimal" value={usageAmounts[`client:${client.clientEmail}`] || "0,00"} onChange={(event) => setUsageAmounts((current) => ({ ...current, [`client:${client.clientEmail}`]: event.target.value }))} /></label>
+                      <label><span>Preço R$</span><input inputMode="decimal" value={usageAmounts[`client:${client.clientEmail}`] || "0,00"} onChange={(event) => editUsageAmount(`client:${client.clientEmail}`, event.target.value)} /></label>
                       <button className="button" disabled={busy} type="button" onClick={() => updateImagePricing(client.clientEmail)}>Preço padrão</button>
-                      <label><span>Total R$</span><input inputMode="decimal" value={usageAmounts[`total:${client.clientEmail}`] || "0,00"} onChange={(event) => setUsageAmounts((current) => ({ ...current, [`total:${client.clientEmail}`]: event.target.value }))} /></label>
+                      <label><span>Total R$</span><input inputMode="decimal" value={usageAmounts[`total:${client.clientEmail}`] || "0,00"} onChange={(event) => editUsageAmount(`total:${client.clientEmail}`, event.target.value)} /></label>
                       <button className="button primary" disabled={busy} type="button" onClick={() => updateImageMonthlyTotal(client.clientEmail)}>Salvar total</button>
                     </div>
                   ))}
@@ -1755,7 +1739,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
                       <StatusPill tone={entry.decision === "billable" ? "green" : entry.decision === "excluded" ? "muted" : "yellow"}>
                         {entry.decision === "billable" ? "Aprovada" : entry.decision === "excluded" ? "Excluída" : "Pendente"}
                       </StatusPill>
-                      <label className="adminx-analysis-value"><span>R$</span><input inputMode="decimal" value={usageAmounts[entry.id] || "0,00"} onChange={(event) => setUsageAmounts((current) => ({ ...current, [entry.id]: event.target.value }))} /></label>
+                      <label className="adminx-analysis-value"><span>R$</span><input inputMode="decimal" value={usageAmounts[entry.id] || "0,00"} onChange={(event) => editUsageAmount(entry.id, event.target.value)} /></label>
                       <div className="adminx-analysis-actions">
                         <button className="icon-button success" disabled={busy} type="button" title="Validar imagem, rota e cobrança" onClick={() => updateImageUsage(entry.id, "billable")}><CheckCircle2 size={18} /></button>
                         <button className="icon-button danger" disabled={busy} type="button" title="Excluir imagem e rota da pendência" onClick={() => updateImageUsage(entry.id, "excluded")}><Ban size={18} /></button>

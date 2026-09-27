@@ -16,8 +16,10 @@ type SheetCandidate = {
   usableRows: number;
 };
 
-export function parseRomaneioXlsx(filePath: string) {
-  const workbook = xlsx.readFile(filePath, { cellDates: false });
+export function parseRomaneioXlsx(input: string | Buffer) {
+  const workbook = Buffer.isBuffer(input)
+    ? xlsx.read(input, { type: "buffer", cellDates: false })
+    : xlsx.readFile(input, { cellDates: false });
   if (!workbook.SheetNames.length) throw new Error("O arquivo Excel não possui abas.");
 
   const candidates = workbook.SheetNames.flatMap((sheetName) => findSheetCandidates(workbook.Sheets[sheetName], sheetName));
@@ -62,15 +64,19 @@ export function parseRomaneioXlsx(filePath: string) {
 }
 
 function findSheetCandidates(worksheet: xlsx.WorkSheet, sheetName: string): SheetCandidate[] {
-  const matrix = xlsx.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, defval: "", raw: false, blankrows: true });
-  const rowCount = matrix.length;
-  return matrix.slice(0, MAX_HEADER_SCAN_ROWS).map((row, headerRowIndex) => {
+  if (!worksheet["!ref"]) return [];
+  const range = xlsx.utils.decode_range(worksheet["!ref"]);
+  const rowCount = range.e.r - range.s.r + 1;
+  const scanRange = { s: range.s, e: { r: Math.min(range.e.r, range.s.r + MAX_HEADER_SCAN_ROWS + 199), c: range.e.c } };
+  const matrix = xlsx.utils.sheet_to_json<unknown[]>(worksheet, { header: 1, defval: "", raw: false, blankrows: true, range: scanRange });
+  return matrix.slice(0, MAX_HEADER_SCAN_ROWS).map((row, relativeHeaderIndex) => {
+    const headerRowIndex = range.s.r + relativeHeaderIndex;
     const columns = row.map((cell) => String(cell || "").trim()).filter(Boolean);
     const report = getRomaneioColumnReport(columns);
     const cageIndex = row.findIndex((cell) => String(cell || "").trim() === report.mapping.gaiola);
     const neighborhoodIndex = row.findIndex((cell) => String(cell || "").trim() === report.mapping.bairro);
     const usableRows = cageIndex >= 0 && neighborhoodIndex >= 0
-      ? matrix.slice(headerRowIndex + 1, headerRowIndex + 201).filter((dataRow) => String(dataRow[cageIndex] || "").trim() && String(dataRow[neighborhoodIndex] || "").trim()).length
+      ? matrix.slice(relativeHeaderIndex + 1, relativeHeaderIndex + 201).filter((dataRow) => String(dataRow[cageIndex] || "").trim() && String(dataRow[neighborhoodIndex] || "").trim()).length
       : 0;
     const hasRouteIdentity = Boolean(report.mapping.rota || report.mapping.plannedAt);
     const optionalMetrics = [report.mapping.distancia, report.mapping.pacotes, report.mapping.stop].filter(Boolean).length;

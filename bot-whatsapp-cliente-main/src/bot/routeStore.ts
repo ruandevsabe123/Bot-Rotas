@@ -1,6 +1,6 @@
 import fs from "fs";
-import path from "path";
 import { RouteClientIncident, RouteDispatch, RouteDispatchTimeline, RouteReaction, RouteReactionFinalState, RouteReactionHistoryEvent } from "../shared/types";
+import { writeJsonAtomic } from "../storageJson";
 
 const MAX_ROUTES = 50_000;
 const INCIDENT_SNOOZE_DELAYS_MINUTES = [10, 5, 2];
@@ -292,7 +292,7 @@ export class RouteStore {
       if (!fs.existsSync(candidate)) continue;
       try {
         const data = JSON.parse(fs.readFileSync(candidate, "utf-8"));
-        if (Array.isArray(data)) return data.map((item) => this.normalize(item)).filter(Boolean) as RouteDispatch[];
+        if (Array.isArray(data)) return data.map((item) => this.normalize(item)).filter(Boolean).slice(0, MAX_ROUTES) as RouteDispatch[];
       } catch {
         // Um arquivo interrompido não pode apagar o histórico válido do backup.
       }
@@ -301,16 +301,15 @@ export class RouteStore {
   }
 
   private saveNow(routes: RouteDispatch[]) {
-    this.dirty = false;
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
     }
-    fs.mkdirSync(path.dirname(this.filePath), { recursive: true });
-    const tempPath = `${this.filePath}.${process.pid}.tmp`;
-    fs.writeFileSync(tempPath, JSON.stringify(routes, null, 2));
-    if (this.hasValidRouteFile(this.filePath)) fs.copyFileSync(this.filePath, `${this.filePath}.bak`);
-    fs.renameSync(tempPath, this.filePath);
+    if (this.hasValidRouteFile(this.filePath)) {
+      writeJsonAtomic(`${this.filePath}.bak`, JSON.parse(fs.readFileSync(this.filePath, "utf8")));
+    }
+    writeJsonAtomic(this.filePath, routes);
+    this.dirty = false;
   }
 
   private hasValidRouteFile(filePath: string) {
@@ -326,9 +325,15 @@ export class RouteStore {
     this.dirty = true;
     if (this.flushTimer) return;
     this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined;
       if (!this.dirty) return;
-      this.saveNow(this.getRoutes());
+      try {
+        this.saveNow(this.getRoutes());
+      } catch {
+        console.warn("Nao foi possivel persistir o historico de rotas; os registros continuam em memoria.");
+      }
     }, delayMs);
+    this.flushTimer.unref?.();
   }
 
   private normalize(input: any): RouteDispatch | undefined {
@@ -365,7 +370,7 @@ export class RouteStore {
       validationReactionAt: typeof input.validationReactionAt === "string" ? input.validationReactionAt : undefined,
       validationLeaderName: typeof input.validationLeaderName === "string" ? input.validationLeaderName : undefined,
       reactions: Array.isArray(input.reactions)
-        ? input.reactions.map((item: any) => ({
+        ? input.reactions.filter((item: unknown) => item && typeof item === "object").map((item: any) => ({
             id: typeof item.id === "string" ? item.id : "",
             timestamp: typeof item.timestamp === "string" ? item.timestamp : new Date().toISOString(),
             emoji: typeof item.emoji === "string" ? item.emoji : "",
@@ -379,7 +384,7 @@ export class RouteStore {
           })).filter((item: RouteReaction) => item.id)
         : [],
       reactionsHistory: Array.isArray(input.reactionsHistory)
-        ? input.reactionsHistory.map((item: any) => ({
+        ? input.reactionsHistory.filter((item: unknown) => item && typeof item === "object").map((item: any) => ({
             id: typeof item.id === "string" ? item.id : "",
             timestamp: typeof item.timestamp === "string" ? item.timestamp : new Date().toISOString(),
             action: item.action === "remove" ? "remove" as const : "add" as const,
@@ -445,7 +450,7 @@ export class RouteStore {
   private normalizeTimeline(input: any): RouteDispatchTimeline | undefined {
     if (!input || typeof input !== "object") return undefined;
     const events = Array.isArray(input.events)
-      ? input.events.map((event: any) => ({
+      ? input.events.filter((event: unknown) => event && typeof event === "object").map((event: any) => ({
           id: typeof event.id === "string" ? event.id : `${Date.now()}-${Math.random()}`,
           label: typeof event.label === "string" ? event.label : "",
           at: typeof event.at === "string" ? event.at : new Date().toISOString(),

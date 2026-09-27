@@ -74,6 +74,7 @@ export type BotWorkerDispatchGateRequestMessage = {
   groupKey: string;
   eventDetectedAt: number;
   eventKey?: string;
+  targetDispatchMode?: "manual" | "ocr";
 };
 
 export type BotWorkerDispatchGateRelayMessage = {

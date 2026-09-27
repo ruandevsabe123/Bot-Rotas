@@ -9,7 +9,7 @@ export type SharedOcrOptions = {
   preferCageCrop?: boolean;
 };
 
-const CACHE_VERSION = "route-ocr-2026-08-31-v1";
+const CACHE_VERSION = "route-ocr-neighborhood-2026-09-26-v2";
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000;
 const DEFAULT_MAX_ENTRIES = 250;
 const LOCK_TIMEOUT_MS = 120_000;
@@ -197,16 +197,22 @@ async function isAbandonedLock(lockPath: string) {
       fs.promises.stat(lockPath)
     ]);
     if (Date.now() - stat.mtimeMs > LOCK_STALE_AFTER_MS) return true;
-    const record = JSON.parse(contents) as CacheLockRecord;
-    if (!Number.isInteger(record.pid) || !record.token) return true;
+    // A fresh empty file can still be an owner initializing its lock.
+    let record: CacheLockRecord;
+    try {
+      record = JSON.parse(contents) as CacheLockRecord;
+    } catch {
+      return false;
+    }
+    if (!record || !Number.isInteger(record.pid) || record.pid <= 0 || !record.token) return false;
     try {
       process.kill(record.pid, 0);
       return false;
     } catch (error: any) {
       return error?.code === "ESRCH";
     }
-  } catch (error: any) {
-    return error?.code !== "ENOENT";
+  } catch {
+    return false;
   }
 }
 

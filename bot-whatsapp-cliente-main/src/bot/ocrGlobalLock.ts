@@ -92,16 +92,23 @@ async function isAbandonedLock(lockPath: string) {
       fs.promises.stat(lockPath)
     ]);
     if (Date.now() - stat.mtimeMs > STALE_AFTER_MS) return true;
-    const record = JSON.parse(contents) as LockRecord;
-    if (!Number.isInteger(record.pid) || !record.token) return true;
+    // Another process may have opened the file but not written its record yet.
+    // Only reclaim incomplete records after the stale interval has elapsed.
+    let record: LockRecord;
+    try {
+      record = JSON.parse(contents) as LockRecord;
+    } catch {
+      return false;
+    }
+    if (!record || !Number.isInteger(record.pid) || record.pid <= 0 || !record.token) return false;
     try {
       process.kill(record.pid, 0);
       return false;
     } catch (error: any) {
       return error?.code === "ESRCH";
     }
-  } catch (error: any) {
-    return error?.code !== "ENOENT";
+  } catch {
+    return false;
   }
 }
 

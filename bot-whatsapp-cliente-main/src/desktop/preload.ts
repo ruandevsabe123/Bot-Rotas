@@ -11,6 +11,12 @@ import {
 } from "../shared/types";
 
 const api: DesktopApi = {
+  getRomaneio: () => ipcRenderer.invoke("romaneio:get"),
+  uploadRomaneio: (fileName, data) => ipcRenderer.invoke("romaneio:upload", fileName, data),
+  clearRomaneio: () => ipcRenderer.invoke("romaneio:clear"),
+  saveRomaneioSettings: (settings) => ipcRenderer.invoke("romaneio:settings", settings),
+  locateRomaneio: () => ipcRenderer.invoke("romaneio:locate"),
+  confirmRomaneio: (candidateId) => ipcRenderer.invoke("romaneio:confirm", candidateId),
   reportRendererHeartbeat: () => ipcRenderer.send("renderer:heartbeat"),
   getSnapshot: () => ipcRenderer.invoke("bot:getSnapshot"),
   startBot: () => ipcRenderer.invoke("bot:start"),

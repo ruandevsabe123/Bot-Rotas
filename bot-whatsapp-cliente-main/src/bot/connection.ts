@@ -10,7 +10,7 @@ import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { combineRouteImageBatch, DetectedRouteCode, extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findAllPlannedAtCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection, reconcileGaiolaDetectionsWithRomaneio } from "./ocr";
 import { readRouteImageOcrWithoutBlockingSocket, warmupIsolatedOcrWorker } from "./ocrIsolated";
-import { selectRankedDesiredCages } from "./ocrCageSelection";
+import { selectPreferredNeighborhoodFromOcr } from "./ocrNeighborhoodSelection";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { OcrAnalysisHistoryStore } from "./ocrAnalysisHistoryStore";
 import { RouteStore } from "./routeStore";
@@ -89,7 +89,7 @@ export type BotServiceOptions = {
 };
 
 export type DispatchGateGrant = { token: string; waitedMs: number };
-export type DispatchGateRequest = { clientEmail: string; groupKey: string; eventDetectedAt: number; eventKey?: string };
+export type DispatchGateRequest = { clientEmail: string; groupKey: string; eventDetectedAt: number; eventKey?: string; targetDispatchMode?: "manual" | "ocr" };
 export type DispatchRaceEventState = "processing" | "ready" | "unavailable";
 export type DispatchRaceEvent = { clientEmail: string; groupKey: string; eventDetectedAt: number; eventKey: string; state: DispatchRaceEventState };
 
@@ -312,7 +312,7 @@ export class BotService extends EventEmitter {
     this.routeStore = new RouteStore(options.routeStorePath || path.resolve(process.cwd(), "route_history.json"));
     this.dispatchQueueStore = new DispatchQueueStore(options.dispatchQueuePath || path.resolve(process.cwd(), "dispatch_queue.json"));
     this.telemetryStore = new TelemetryStore(options.telemetryPath || path.resolve(process.cwd(), "dispatch_telemetry.json"));
-    this.ocrAnalysisHistoryStore = new OcrAnalysisHistoryStore(options.ocrAnalysisHistoryPath || path.resolve(process.cwd(), "ocr_analysis_history.json"));
+    this.ocrAnalysisHistoryStore = new OcrAnalysisHistoryStore(options.ocrAnalysisHistoryPath || path.join(path.dirname(this.configStore.path), "ocr_analysis_history.json"));
     this.romaneioStore = options.romaneioDir ? new RomaneioStore(options.romaneioDir) : undefined;
     this.logger = new BotLogger(() => this.emitSnapshot(), options.logStorePath || path.resolve(process.cwd(), "bot_logs.json"));
     this.statusEventsPath = path.join(path.dirname(options.routeStorePath || path.resolve(process.cwd(), "route_history.json")), "status_events.json");
@@ -783,8 +783,8 @@ export class BotService extends EventEmitter {
 
   async enableImageMonitoring(): Promise<boolean> {
     const config = this.configStore.load();
-    if (config.ocrSelectionMode === "cages" && !config.ocrDesiredCages.length) {
-      this.logger.warning("Selecione pelo menos uma gaiola desejada antes de iniciar o automático por gaiolas.");
+    if (!this.getConfiguredOcrPreferences(config).length || !config.nomeEnvio.trim()) {
+      this.logger.warning("Configure o nome de envio e pelo menos um bairro preferido antes de iniciar a IA.");
       this.emitSnapshot();
       return false;
     }
@@ -896,6 +896,7 @@ export class BotService extends EventEmitter {
   disableMonitoring(): void {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
+    this.cancelPendingRouteImageBatch();
     this.invalidateInternalWarmState();
     this.refreshSocketJidFilterCache();
     this.armedAt = undefined;
@@ -1148,12 +1149,9 @@ export class BotService extends EventEmitter {
   async stop() {
     this.monitoringEnabled = false;
     this.monitoringMode = "target";
-    if (!this.isRunning()) {
-      this.logger.warning("Não é possível parar: o bot ainda não foi iniciado.");
-      return;
-    }
-
     this.stopping = true;
+    this.sendCycleId += 1;
+    this.activeTestRunId += 1;
     this.activeConnectionId += 1;
     this.clearReconnectTimer();
     this.clearHealthCheckTimer();
@@ -1167,9 +1165,10 @@ export class BotService extends EventEmitter {
     await this.flushAuthState?.().catch((error) => {
       this.logger.warning(`Não consegui concluir o espelho da sessão: ${this.getErrorMessage(error)}`);
     });
-    this.routeStore.flush();
-    this.dispatchQueueStore.flush();
-    this.telemetryStore.flush();
+    const persistenceErrors: unknown[] = [];
+    for (const persist of [() => this.routeStore.flush(), () => this.dispatchQueueStore.flush(), () => this.telemetryStore.flush(), () => this.ocrAnalysisHistoryStore.flush()]) {
+      try { await persist(); } catch (error) { persistenceErrors.push(error); }
+    }
 
     if (this.sock) {
       try {
@@ -1214,22 +1213,18 @@ export class BotService extends EventEmitter {
     this.preparedRelayBuiltAt = 0;
     this.setStatus("disconnected");
     this.logger.info("Bot parado.");
+    try { await this.logger.flush(); } catch (error) { persistenceErrors.push(error); }
+    if (persistenceErrors.length) throw new Error("Bot parado, mas houve falha ao persistir os dados. Verifique o armazenamento.");
   }
 
   async shutdownAndClearSession() {
-    if (this.isRunning()) {
-      await this.stop();
-    } else {
-      this.monitoringEnabled = false;
-      this.clearReconnectTimer();
-      this.clearHealthCheckTimer();
-      this.clearWarmKeepAliveTimer();
-    }
+    await this.stop();
 
     this.clearQrCode();
     this.error = "";
     this.logger.info("Bot encerrado. Sessão/auth preservada para a próxima abertura.");
     this.emitSnapshot();
+    await this.logger.flush();
   }
 
   async restart() {
@@ -1656,7 +1651,7 @@ export class BotService extends EventEmitter {
     if (settings.ocrManualRouteSelection !== undefined) {
       this.logger.info(config.ocrManualRouteSelection
         ? "Bot imagem configurado para aprovação manual de rotas."
-        : "Bot imagem configurado para escolher e enviar a melhor rota automaticamente.");
+        : "Bot imagem configurado para enviar o primeiro bairro seguro na ordem de preferência.");
     }
     this.emitSnapshot();
   }
@@ -1687,6 +1682,7 @@ export class BotService extends EventEmitter {
   }
 
   setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: { cidade: string; bairro: string }[], targetDispatchMode?: BotConfig["targetDispatchMode"]) {
+    if (typeof senderName !== "string" || !Array.isArray(codes) || codes.some((item) => typeof item !== "string")) throw new Error("Nome e códigos de mensagem inválidos.");
     // Update target (alvo) message settings. Do NOT reset warmup completion.
     this.codigosEscolhidos = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
     const monitoredRoutes = (routes || codes).map((item) => item.trim()).filter(Boolean);
@@ -1751,6 +1747,7 @@ export class BotService extends EventEmitter {
 
   // Save warmup (teste) message settings. This resets the warmup state.
   setWarmupMessageSettings(senderName: string, codes: string[], messageCount?: number, intervalMs?: number) {
+    if (typeof senderName !== "string" || !Array.isArray(codes) || codes.some((item) => typeof item !== "string")) throw new Error("Nome e códigos de mensagem inválidos.");
     this.resetWarmupState();
     const nextCodes = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
     const nextSettings: Partial<BotConfig> = {
@@ -1853,7 +1850,9 @@ export class BotService extends EventEmitter {
     this.logger.info(this.reconnectAttempts > 0 ? "Tentando reconectar..." : "Bot iniciado.");
 
     await loadBaileys();
+    if (this.stopping || connectionId !== this.activeConnectionId) return;
     await this.closeAuthState?.().catch(() => undefined);
+    if (this.stopping || connectionId !== this.activeConnectionId) return;
     this.closeAuthState = undefined;
     this.flushAuthState = undefined;
     this.destroyAuthState = undefined;
@@ -1865,6 +1864,10 @@ export class BotService extends EventEmitter {
         proto,
         useMultiFileAuthState
       });
+      if (this.stopping || connectionId !== this.activeConnectionId) {
+        await authSession.close();
+        return;
+      }
       this.authBackend = "sqlite";
       this.flushAuthState = authSession.flush;
       this.closeAuthState = authSession.close;
@@ -1877,9 +1880,11 @@ export class BotService extends EventEmitter {
       this.logger.warning(`SQLite auth indisponível; usando sessão compatível em arquivos: ${this.getErrorMessage(error)}.`);
       authSession = await useMultiFileAuthState(this.authDir);
     }
+    if (this.stopping || connectionId !== this.activeConnectionId) return;
     const { state, saveCreds } = authSession;
     this.saveCredsNow = saveCreds;
     const version = await this.getWhatsAppVersion();
+    if (this.stopping || connectionId !== this.activeConnectionId) return;
     const socketLogger = P({ level: "silent" });
     const cachedKeys = makeCacheableSignalKeyStore
       ? makeCacheableSignalKeyStore(state.keys, socketLogger)
@@ -1909,9 +1914,12 @@ export class BotService extends EventEmitter {
     });
 
     this.sock.ev.on("creds.update", () => this.scheduleCredsSave());
-    this.sock.ev.on("connection.update", (update: any) =>
-      this.handleConnectionUpdate(update, connectionId)
-    );
+    this.sock.ev.on("connection.update", (update: any) => {
+      void this.handleConnectionUpdate(update, connectionId).catch((error) => {
+        if (connectionId !== this.activeConnectionId || this.stopping) return;
+        this.logger.error(`Falha ao processar estado da conexão: ${this.getErrorMessage(error)}`);
+      });
+    });
     this.sock.ev.on("groups.update", (updates: any[]) =>
       this.handleGroupsUpdate(updates, connectionId, Date.now())
     );
@@ -2025,11 +2033,6 @@ export class BotService extends EventEmitter {
       const disconnectDescription = this.getDisconnectDescription(statusCode, errorMessage);
       this.logger.warning(`Conexão fechada. Código: ${statusCode || "sem código"} | Erro: ${errorMessage}`);
       this.addStatusEvent("disconnected", `Conexão fechada: ${statusCode || "sem código"} ${errorMessage}`);
-      console.log("WA CLOSE DEBUG:", {
-        statusCode,
-        errorMessage,
-        lastDisconnect
-      });
 
       if (this.isFatalRuntimeError(errorMessage)) {
         this.error = `Erro interno ao iniciar WhatsApp: ${errorMessage}`;
@@ -2241,6 +2244,7 @@ export class BotService extends EventEmitter {
       return false;
     }
 
+    if (this.activeSendCycle) return false;
     const cycleId = ++this.sendCycleId;
     const dispatched = this.enviarMensagensRapidas(cycleId, "automatic", Date.now(), "already_open");
     if (dispatched) {
@@ -2252,6 +2256,7 @@ export class BotService extends EventEmitter {
 
   private scheduleReconnect(forceNewQr: boolean) {
     this.clearReconnectTimer();
+    if (this.stopping) return;
 
     if (MAX_RECONNECT_ATTEMPTS > 0 && this.reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       this.clearReconnectTimer();
@@ -2276,7 +2281,9 @@ export class BotService extends EventEmitter {
       ? 500
       : Math.min(MAX_RECONNECT_DELAY_MS, RECONNECT_DELAY_MS + Math.max(0, this.reconnectAttempts - 1) * 2500);
     this.reconnectTimer = setTimeout(() => {
+      if (this.stopping) return;
       this.connect().catch((error) => {
+        if (this.stopping) return;
         this.error = this.getErrorMessage(error);
         this.logger.warning(`Reconexão falhou: ${this.error}`);
         this.scheduleReconnect(false);
@@ -2372,7 +2379,7 @@ export class BotService extends EventEmitter {
       if (msg.key.remoteJid !== activeGroup.jid) continue;
 
       if (this.monitoringMode === "target" && this.preparedTargetDispatchMode === "ocr" && msg.message.imageMessage) {
-        this.logger.info("Imagem recebida no grupo alvo. Iniciando análise da IA e cruzamento com o romaneio.");
+        this.logger.info("Imagem recebida no grupo alvo. Conferindo bairros preferidos e gaiolas na mesma linha.");
         this.scheduleRouteImageProcessing(msg, activeGroup.jid);
       }
 
@@ -2459,7 +2466,7 @@ export class BotService extends EventEmitter {
     if (this.routeImageBatchTimer) clearTimeout(this.routeImageBatchTimer);
     const flush = () => {
       this.routeImageBatchTimer = undefined;
-      if (this.routeImageBatchProcessing) {
+      if (this.routeImageBatchProcessing || this.activeSendCycle) {
         this.routeImageBatchTimer = setTimeout(flush, ROUTE_IMAGE_BATCH_QUIET_MS);
         return;
       }
@@ -2474,7 +2481,7 @@ export class BotService extends EventEmitter {
         this.routeImageBatchProcessing = false;
         for (const item of batch) this.processingImageIds.delete(item.messageId);
         if (this.pendingRouteImageBatch.length) this.schedulePendingRouteImageBatch();
-      });
+      }).catch((error) => this.logger.warning(`Falha ao concluir análise da imagem: ${this.getErrorMessage(error)}`));
     };
     if (this.pendingRouteImageBatch.length >= ROUTE_IMAGE_BATCH_MAX) flush();
     else this.routeImageBatchTimer = setTimeout(flush, this.criticalDispatchInProgress ? 3000 : ROUTE_IMAGE_BATCH_QUIET_MS);
@@ -2492,6 +2499,7 @@ export class BotService extends EventEmitter {
     if (this.routeImageBatchTimer || this.routeImageBatchProcessing || !this.pendingRouteImageBatch.length) return;
     this.routeImageBatchTimer = setTimeout(() => {
       this.routeImageBatchTimer = undefined;
+      if (this.activeSendCycle) { this.schedulePendingRouteImageBatch(); return; }
       const batch = this.pendingRouteImageBatch.splice(0, ROUTE_IMAGE_BATCH_MAX);
       const sequence = ++this.latestRouteImageSequence;
       this.routeImageBatchProcessing = true;
@@ -2499,288 +2507,164 @@ export class BotService extends EventEmitter {
         this.routeImageBatchProcessing = false;
         for (const item of batch) this.processingImageIds.delete(item.messageId);
         this.schedulePendingRouteImageBatch();
-      });
+      }).catch((error) => this.logger.warning(`Falha ao concluir análise da imagem: ${this.getErrorMessage(error)}`));
     }, this.criticalDispatchInProgress ? 3000 : ROUTE_IMAGE_BATCH_QUIET_MS);
   }
 
+  private async downloadRouteImage(message: unknown, socket: any): Promise<Buffer> {
+    return downloadMediaMessage(message, "buffer", { options: { signal: AbortSignal.timeout(30_000) } }, {
+      logger: P({ level: "silent" }),
+      reuploadRequest: socket.updateMediaMessage
+    });
+  }
+
   private async processRouteImageBatch(batch: Array<{ msg: any; groupJid: string; messageId: string }>, sequence: number) {
-    if (!batch.length) return;
-    if (sequence !== this.latestRouteImageSequence) return;
+    if (!batch.length || sequence !== this.latestRouteImageSequence) return;
     const groupJid = batch[0].groupJid;
     const config = this.configStore.load();
     const analysisSocket = this.sock;
-    if (config.targetDispatchMode !== "ocr" || !analysisSocket) return;
+    if (config.targetDispatchMode !== "ocr" || !analysisSocket || !this.monitoringEnabled) return;
 
-    const messageId = batch.map((item) => item.messageId).join("+");
+    // All clients receiving the same set of images coordinate the same event,
+    // even when WhatsApp delivered that set in a different order.
+    const messageId = [...new Set(batch.map((item) => item.messageId))].sort().join("+");
     const analysisId = `${this.clientEmail}:${messageId}`;
-    const imagePaths = batch.map((item, index) => path.join(os.tmpdir(), `bot-rota-${item.messageId.replace(/[^a-z0-9_-]/gi, "") || Date.now()}-${index}.jpg`));
     const analysisStartedAtMs = Date.now();
     const analysisStartedAt = new Date(analysisStartedAtMs).toISOString();
+    let imageDirectory: string | undefined;
     let dispatchRaceReady = false;
-    this.dispatchRaceEventReporter?.({
-      clientEmail: this.clientEmail,
-      groupKey: groupJid,
-      eventDetectedAt: analysisStartedAtMs,
-      eventKey: messageId,
-      state: "processing"
+    const isCurrent = () => sequence === this.latestRouteImageSequence && this.monitoringEnabled && this.configStore.load().targetDispatchMode === "ocr";
+    const reportState = (state: DispatchRaceEventState) => this.dispatchRaceEventReporter?.({
+      clientEmail: this.clientEmail, groupKey: groupJid, eventDetectedAt: analysisStartedAtMs, eventKey: messageId, state
     });
     const groupName = this.groups.find((group) => group.id === groupJid)?.name || config.grupoAlvoNome || groupJid;
     const analysisContext = () => {
-      const analysisFinishedAtMs = Date.now();
+      const finishedAt = Date.now();
       return {
-        groupJid,
-        groupName,
-        analysisStartedAt,
-        analysisFinishedAt: new Date(analysisFinishedAtMs).toISOString(),
-        analysisDurationMs: Math.max(0, analysisFinishedAtMs - analysisStartedAtMs)
+        groupJid, groupName, analysisStartedAt,
+        analysisFinishedAt: new Date(finishedAt).toISOString(),
+        analysisDurationMs: Math.max(0, finishedAt - analysisStartedAtMs)
       };
     };
 
     try {
+      reportState("processing");
       this.ocrRouteSelection = {
-        status: "analyzing",
-        options: [],
-        analysisId,
-        processedAt: new Date().toISOString(),
+        status: "analyzing", options: [], analysisId, processedAt: new Date().toISOString(),
         estimatedDurationSeconds: this.estimateOcrAnalysisSeconds(),
-        message: "Analisando imagem..."
+        message: "Conferindo bairros e gaiolas da imagem..."
       };
       this.pendingOcrMessages = [];
+      this.preparedMessages = [];
+      this.preparedRelayMessages = [];
+      this.pendingOcrReconnectDispatch = undefined;
       this.emitSnapshot();
+      const preferences = this.getConfiguredOcrPreferences(config);
+      if (!preferences.length || !config.nomeEnvio.trim()) throw new Error("Configure o nome de envio e os bairros preferidos antes de analisar.");
 
+      // IDs of WhatsApp images are shared across clients. Never use those IDs
+      // as a globally shared temp path: one client could delete another's input.
+      imageDirectory = await fs.promises.mkdtemp(path.join(os.tmpdir(), "bot-route-analysis-"));
+      const imagePaths = batch.map((_item, index) => path.join(imageDirectory!, `${index}.jpg`));
       for (let index = 0; index < batch.length; index += 1) {
-        const buffer = await downloadMediaMessage(batch[index].msg, "buffer", {}, {
-          logger: P({ level: "silent" }),
-          reuploadRequest: analysisSocket.updateMediaMessage
-        });
+        const buffer = await this.downloadRouteImage(batch[index].msg, analysisSocket);
+        if (!isCurrent()) return;
         await fs.promises.writeFile(imagePaths[index], buffer);
       }
       const downloadFinishedAtMs = Date.now();
-      const fastFirst = this.groupState === "open";
-      // Por escolha e por gaiolas compartilham exatamente a mesma leitura.
-      // Somente a decisão posterior (manual ou automática) é diferente.
-      const preferCageCrop = false;
-      this.logger.info(fastFirst
-        ? "[ROMANEIO] Grupo aberto: usando a mesma análise completa dos modos por escolha e por gaiolas."
-        : "[ROMANEIO] Grupo fechado: usando análise completa da imagem.");
       const readings = [];
       for (const imagePath of imagePaths) {
+        if (!isCurrent()) return;
+        // Same complete-image profile for all clients; preferences are applied
+        // afterwards so the expensive reading can be shared by the OCR cache.
         readings.push(await readRouteImageOcrWithoutBlockingSocket(imagePath, {
-          maxReadings: 6,
-          fastFirst,
-          preferCageCrop
+          maxReadings: 4, fastFirst: false, preferCageCrop: false
         }));
       }
-      // Consenso é calculado por tratamento visual, não pela quantidade de fotos.
+      if (!isCurrent()) return;
       const ocr = combineRouteImageBatch(readings);
       const ocrFinishedAtMs = Date.now();
-      this.logger.info(`[ROMANEIO] Motor da leitura: ${ocr.source}.`);
-      if (sequence !== this.latestRouteImageSequence) {
-        this.logger.info("A IA descartou uma imagem antiga porque uma foto mais recente já entrou na fila.");
-        return;
-      }
-      const readingDiagnostics = (ocr.variants || [ocr]).map((variant, index) => {
-        const codes = findAllGaiolaCodesFromOcr(variant).map((item) => item.code);
-        return `L${index + 1}=${codes.length}[${codes.join(",")}]`;
-      });
-      this.logger.info(`[ROMANEIO] Conferência das leituras: ${readingDiagnostics.join(" | ")}.`);
-      let detectedRoutes: DetectedRouteCode[] = findAllGaiolaCodesFromOcr(ocr);
-      const plannedAtCodes = findAllPlannedAtCodesFromOcr(ocr);
-      if (this.romaneioStore) {
-        detectedRoutes = reconcileGaiolaDetectionsWithRomaneio(
-          detectedRoutes,
-          plannedAtCodes,
-          this.romaneioStore.routes()
-        );
-      }
-      const detected = detectedRoutes[0];
-      if (!detected) {
-        this.emit("image-analysis", {
-          id: `${this.clientEmail}:${messageId}`,
-          messageId,
-          result: "unreadable",
-          ...analysisContext()
-        });
-        const wanted = this.describeConfiguredOcrRoutes(config);
-        this.logger.info(`IA visual (${ocr.source}) leu ${ocr.lines.length} linha(s), mas não achou bairro na coluna correta com gaiola segura na mesma linha. Procurando: ${wanted}.`);
-        const recognizedLines = ocr.variants
-          ?.flatMap((variant) => variant.lines.map((line) => line.text.trim()).filter(Boolean))
-          .filter((line, index, all) => all.indexOf(line) === index)
-          .slice(0, 60)
-          .join(" | ") || ocr.text.replace(/\s*\r?\n\s*/g, " | ").trim();
-        this.logger.info(`IA - texto reconhecido: ${recognizedLines.slice(0, 3000) || "(vazio)"}`);
-        this.ocrRouteSelection = {
-          status: "error",
-          analysisId,
-          options: [],
-          source: ocr.source,
-          processedAt: new Date().toISOString(),
-          message: "Imagem analisada, mas nenhuma rota segura foi encontrada."
-        };
-        this.rememberCurrentOcrAnalysis();
-        this.emitSnapshot();
-        return;
-      }
-
-      const dispatchKey = `${groupJid}:${normalizarTexto(detected.route)}:${detected.code}`;
-      if (this.lastOcrDispatchKey === dispatchKey) {
-        this.logger.info(`A IA recebeu rota repetida: ${detected.route} ${detected.code}. Atualizando opções no painel.`);
-      }
-
-      this.lastOcrDispatchKey = dispatchKey;
-      this.lastOcrInsight = {
-        analysisId,
-        source: ocr.source,
-        text: ocr.text,
-        line: detected.line,
-        route: detected.route,
-        cidade: detected.cidade,
-        bairro: detected.bairro,
-        code: detected.code,
-        confidence: detected.confidence,
-        processedAt: new Date().toISOString()
-      };
-      this.emit("image-analysis", {
-        id: `${this.clientEmail}:${messageId}`,
-        messageId,
-        result: "detected",
-        route: detected.route,
-        bairro: detected.bairro,
-        gaiola: detected.code,
-        confidence: detected.confidence,
-        ...analysisContext()
-      });
-
-      const optionDetections = config.ocrSelectionMode === "manual"
-        ? detectedRoutes
-        : detectedRoutes.filter((route) =>
-          isSafeAutomaticGaiolaDetection(route) || this.isExactRomaneioAtDetection(route));
-      const unrankedOptions = optionDetections
-        .flatMap((route) => this.buildOcrRouteOptions(route, config.ocrSelectionMode === "manual"))
-        .filter((option, index, all) => all.findIndex((item) => item.id === option.id) === index);
-      const options = rankImageRouteOptions(
-        unrankedOptions,
-        this.romaneioStore?.getSettings().prioridade || "equilibrio_geral"
-      );
-      const comparisonFinishedAtMs = Date.now();
+      const decision = selectPreferredNeighborhoodFromOcr(ocr, preferences);
+      const comparedAt = Date.now();
       const timing = {
         startedAt: analysisStartedAt,
-        downloadMs: Math.max(0, downloadFinishedAtMs - analysisStartedAtMs),
-        ocrMs: Math.max(0, ocrFinishedAtMs - downloadFinishedAtMs),
-        comparisonMs: Math.max(0, comparisonFinishedAtMs - ocrFinishedAtMs)
+        downloadMs: downloadFinishedAtMs - analysisStartedAtMs,
+        ocrMs: ocrFinishedAtMs - downloadFinishedAtMs,
+        comparisonMs: comparedAt - ocrFinishedAtMs
       };
-      if (!options.length) {
-        const romaneioStatus = this.romaneioStore?.status();
-        const noSafeDetections = optionDetections.length === 0;
-        const romaneioUnavailable = !romaneioStatus?.loaded || !romaneioStatus.totalRoutes;
-        const failureMessage = noSafeDetections
-          ? "A imagem foi lida, mas nenhuma gaiola atingiu o consenso de segurança. O romaneio continua carregado e o bot continua aguardando."
-          : romaneioUnavailable
-          ? "O romaneio não está carregado. Confirme o arquivo correto antes de continuar."
-          : "As gaiolas lidas não correspondem às rotas do romaneio confirmado. O arquivo continua carregado.";
+      const detected = decision.detection;
+      if (decision.status !== "selected" || !detected) {
+        this.emit("image-analysis", { id: analysisId, messageId, result: "unreadable", ...analysisContext() });
+        this.lastOcrInsight = undefined;
         this.ocrRouteSelection = {
-          status: "error",
-          analysisId,
-          timing: { ...timing, totalMs: comparisonFinishedAtMs - analysisStartedAtMs },
-          detected: { rota: detected.route, bairro: detected.bairro, gaiola: detected.code },
-          source: ocr.source,
-          line: detected.line,
-          processedAt: new Date().toISOString(),
-          options: [],
-          message: failureMessage
+          status: "error", analysisId, options: [], source: ocr.source,
+          timing: { ...timing, totalMs: comparedAt - analysisStartedAtMs },
+          processedAt: new Date().toISOString(), message: decision.reason
         };
+        this.logger.warning(`[IA] Envio bloqueado: ${decision.reason}`);
         this.rememberCurrentOcrAnalysis();
-        this.logger.warning(`[ROMANEIO] Cruzamento sem opções: leituras=${detectedRoutes.length}, seguras=${optionDetections.length}, romaneioCarregado=${Boolean(romaneioStatus?.loaded)}, rotasRomaneio=${romaneioStatus?.totalRoutes || 0}.`);
         this.emitSnapshot();
         return;
       }
 
-      const readySelection = {
-        status: "ready",
-        analysisId,
-        timing,
-        detected: { rota: detected.route, bairro: detected.bairro, gaiola: detected.code },
-        source: ocr.source,
-        line: detected.line,
-        processedAt: new Date().toISOString(),
-        options,
-        detectedRouteCount: optionDetections.length,
-        preferredCity: PREFERRED_IMAGE_CITY,
-        preferredCityFound: detectedRoutes.some((route) => isPreferredImageCity(route.line)) || options.some((option) => isPreferredImageCity(option.cidade)),
-        message: `Imagem analisada. ${optionDetections.length} rota(s) segura(s) encontrada(s) na foto e listada(s) pelo romaneio.`
-      } as const;
-      if (config.ocrSelectionMode !== "manual") {
-        const eligibleOptions = options.filter((option) =>
-          option.romaneioMatch !== false && (config.ocrSelectionMode === "cages" || option.passedFilters));
-        const automaticOptions = config.ocrSelectionMode === "cages"
-          ? selectRankedDesiredCages(eligibleOptions, config.ocrDesiredCages, config.ocrCageMessageLimit)
-          : eligibleOptions.slice(0, 1);
-        if (!automaticOptions.length) {
-          this.ocrRouteSelection = {
-            ...readySelection,
-            message: config.ocrSelectionMode === "cages"
-              ? "Imagem analisada, mas nenhuma das gaiolas desejadas apareceu. O bot continua aguardando."
-              : "Rotas identificadas, mas nenhuma respeita todos os filtros configurados e possui correspondência no romaneio. Envio bloqueado."
-          };
-          this.rememberCurrentOcrAnalysis();
-          this.logger.info(config.ocrSelectionMode === "cages"
-            ? "[ROMANEIO] Nenhuma gaiola desejada foi encontrada nesta imagem."
-            : "[ROMANEIO] Envio automático bloqueado: nenhuma rota identificada passou por todos os filtros configurados.");
-          this.emitSnapshot();
-          return;
-        }
-        this.ocrRouteSelection = readySelection;
-        this.applyOcrRouteSelection(automaticOptions, "automatic");
-        dispatchRaceReady = true;
-        this.logger.success(config.ocrSelectionMode === "cages"
-          ? `[ROMANEIO] ${automaticOptions.length} gaiola(s) desejada(s) encontrada(s) e preparada(s) para envio.`
-          : `[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s); melhor opção selecionada automaticamente.`);
-        const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
-        if (!sentImmediately) {
-          dispatchRaceReady = false;
-          this.logger.info("[ROMANEIO] Melhor rota escolhida automaticamente e preparada para quando o grupo abrir.");
-        }
-      } else {
-        this.ocrRouteSelection = readySelection;
-        this.rememberCurrentOcrAnalysis();
-        this.logger.success(`[ROMANEIO] Imagem analisada. ${detectedRoutes.length} rota(s) detectada(s) e ${options.length} opção(ões) disponível(is) para aprovação manual.`);
-      }
-      this.emitSnapshot();
-    } catch (error) {
-      if (sequence !== this.latestRouteImageSequence) return;
+      const preference = preferences[decision.preferenceIndex!];
+      const option: OcrRouteOption = {
+        id: `neighborhood::${analysisId}::${decision.preferenceIndex}::${detected.code}`,
+        rank: 1, rota: detected.route, gaiola: detected.code,
+        bairro: preference.bairro, cidade: preference.cidade || detected.cidade,
+        distanciaKm: 0, pacotes: 0, paradas: 0,
+        passedFilters: true,
+        reasons: [`Preferência ${decision.preferenceIndex! + 1}: ${preference.bairro}`, "Bairro e gaiola conferidos na mesma linha em leituras concordantes."],
+        score: detected.confidence,
+        observation: "Selecionado diretamente da imagem, sem romaneio."
+      };
+      this.lastOcrDispatchKey = `${groupJid}:${messageId}:${detected.code}`;
+      this.lastOcrInsight = {
+        analysisId, source: ocr.source, text: ocr.text, line: detected.line,
+        route: detected.route, cidade: option.cidade, bairro: option.bairro,
+        code: detected.code, confidence: detected.confidence, processedAt: new Date().toISOString()
+      };
       this.emit("image-analysis", {
-        id: `${this.clientEmail}:${messageId}`,
-        messageId,
-        result: "failed",
-        ...analysisContext()
+        id: analysisId, messageId, result: "detected", route: detected.route,
+        bairro: option.bairro, gaiola: detected.code, confidence: detected.confidence, ...analysisContext()
       });
       this.ocrRouteSelection = {
-        status: "error",
-        analysisId,
-        options: [],
-        processedAt: new Date().toISOString(),
+        status: "ready", analysisId, timing, source: ocr.source, line: detected.line,
+        detected: { rota: detected.route, bairro: option.bairro, gaiola: detected.code },
+        processedAt: new Date().toISOString(), options: [option], detectedRouteCount: decision.detections.length,
+        message: `Preferência ${decision.preferenceIndex! + 1}: ${option.bairro}, gaiola ${detected.code}.`
+      };
+      this.applyOcrRouteSelection([option], "automatic");
+      dispatchRaceReady = true;
+      reportState("ready");
+      this.logger.success(`[IA] ${option.bairro} corresponde à gaiola ${detected.code}. Seleção pela ordem de preferência.`);
+      const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
+      if (!sentImmediately && isCurrent()) this.logger.info("[IA] Bairro e gaiola preparados; aguardando abertura do grupo ou recuperação da conexão.");
+      this.emitSnapshot();
+    } catch (error) {
+      dispatchRaceReady = false;
+      if (!isCurrent()) return;
+      this.emit("image-analysis", { id: analysisId, messageId, result: "failed", ...analysisContext() });
+      this.ocrRouteSelection = {
+        status: "error", analysisId, options: [], processedAt: new Date().toISOString(),
         message: `Análise da IA falhou: ${this.getErrorMessage(error)}`
       };
       this.rememberCurrentOcrAnalysis();
       this.emitSnapshot();
       this.logger.warning(`Análise da IA falhou: ${this.getErrorMessage(error)}`);
     } finally {
-      if (!dispatchRaceReady) {
-        this.dispatchRaceEventReporter?.({
-          clientEmail: this.clientEmail,
-          groupKey: groupJid,
-          eventDetectedAt: analysisStartedAtMs,
-          eventKey: messageId,
-          state: "unavailable"
-        });
-      }
+      if (!dispatchRaceReady || !isCurrent()) reportState("unavailable");
       if (sequence === this.latestRouteImageSequence) {
         this.ocrAnalysisDurationsMs = [...this.ocrAnalysisDurationsMs, Date.now() - analysisStartedAtMs].slice(-10);
       }
-      try {
-        for (const imagePath of imagePaths) fs.rmSync(imagePath, { force: true });
-      } catch {
-        // Arquivo temporário já pode ter sido removido.
+      if (imageDirectory) {
+        // Only remove this invocation's mkdtemp directory inside the OS temp root.
+        const resolved = path.resolve(imageDirectory);
+        if (path.dirname(resolved) === path.resolve(os.tmpdir()) && path.basename(resolved).startsWith("bot-route-analysis-")) {
+          await fs.promises.rm(resolved, { recursive: true, force: true }).catch(() => {
+            this.logger.warning("Não consegui remover uma imagem temporária da análise.");
+          });
+        }
       }
     }
   }
@@ -2852,7 +2736,8 @@ export class BotService extends EventEmitter {
       this.deferOcrDispatchUntilReconnect(trigger);
       return false;
     }
-    const cycleId = ++this.sendCycleId;
+    if (!this.monitoringEnabled || this.preparedTargetDispatchMode !== "ocr") return false;
+    const cycleId = this.activeSendCycle ? this.sendCycleId : ++this.sendCycleId;
     const recoveryBeforeDispatch = this.pendingOcrReconnectDispatch;
     this.pendingOcrReconnectDispatch = undefined;
     const dispatched = this.enviarMensagensRapidas(cycleId, trigger, Date.now(), "image_ready");
@@ -2863,9 +2748,9 @@ export class BotService extends EventEmitter {
       this.logger.warning("[ROMANEIO] A rota ficou pronta com o grupo aberto, mas outro disparo ainda estava concluindo. Tentarei novamente imediatamente após ele terminar.");
       const activeCycle = this.activeSendCycle;
       if (activeCycle) {
-        void activeCycle.finally(() => {
-          if (this.groupState === "open" && this.monitoringEnabled) void this.dispatchPreparedOcrIfGroupOpen(trigger);
-        });
+        void activeCycle.then(() => {
+          if (this.groupState === "open" && this.monitoringEnabled) return this.dispatchPreparedOcrIfGroupOpen(trigger);
+        }).catch((error) => this.logger.warning(`Não consegui retomar a rota preparada: ${this.getErrorMessage(error)}`));
       }
       return false;
     }
@@ -2944,7 +2829,6 @@ export class BotService extends EventEmitter {
 
   private applyOcrRouteSelection(selected: OcrRouteOption[], mode: "manual" | "automatic") {
     const config = this.configStore.load();
-    const desiredCagesMode = mode === "automatic" && config.ocrSelectionMode === "cages";
     const messages = selected
       .map((option) => `${config.nomeEnvio} ${option.gaiola}`.trim())
       .filter(Boolean);
@@ -2963,16 +2847,12 @@ export class BotService extends EventEmitter {
       preparedMessages: messages,
       message: mode === "manual"
         ? "Rotas confirmadas. O bot enviará quando o grupo abrir."
-        : desiredCagesMode
-        ? `${messages.length} gaiola(s) desejada(s) pronta(s) para envio automático.`
-        : "Modo automático: melhor rota escolhida pelo bot."
+        : `Bairro ${selected[0].bairro}: gaiola ${selected[0].gaiola} preparada pela ordem de preferência.`
     };
     this.rememberCurrentOcrAnalysis();
     this.logger.success(mode === "manual"
       ? `[ROMANEIO] Cliente confirmou ${selected.length} rota(s): ${messages.join(" | ")}.`
-      : desiredCagesMode
-      ? `[ROMANEIO] Bot preparou ${selected.length} gaiola(s) desejada(s): ${messages.join(" | ")}.`
-      : `[ROMANEIO] Bot escolheu automaticamente a melhor rota: ${messages.join(" | ")}.`);
+      : `[IA] Bairro preferido selecionado: ${messages.join(" | ")}.`);
   }
 
   private isExactRomaneioAtDetection(detected: { code?: string; plannedAt?: string; confidence?: number }) {
@@ -3805,7 +3685,8 @@ export class BotService extends EventEmitter {
           clientEmail: this.clientEmail,
           groupKey: jid,
           eventDetectedAt,
-          eventKey: this.getDispatchRaceEventKey()
+          eventKey: this.getDispatchRaceEventKey(),
+          targetDispatchMode: this.preparedTargetDispatchMode
         });
         dispatchGateToken = grant.token;
         if (cycleId !== this.sendCycleId || (trigger === "automatic" && !this.monitoringEnabled)) {
@@ -3846,6 +3727,9 @@ export class BotService extends EventEmitter {
               : 0;
           const staggerMs = index === 0 ? 0 : baseStaggerMs * index + adaptiveStaggerMs;
           if (staggerMs > 0) await this.delay(staggerMs);
+          if (cycleId !== this.sendCycleId || this.stopping || this.sock !== sock || (trigger === "automatic" && !this.monitoringEnabled)) {
+            throw new Error("Ciclo cancelado antes do relay.");
+          }
           const calledAt = Date.now();
           if (!timeline.firstRelayCalledAt) {
             timeline.firstRelayCalledAt = new Date(calledAt).toISOString();
@@ -3896,9 +3780,13 @@ export class BotService extends EventEmitter {
             }
             throw error;
           });
-        if (index === 0 && !speculativeSecondLane) {
+        if (index === 0) {
           void finalPromise.then(releaseFirstMessageLane, releaseFirstMessageLane);
         }
+
+        // Observe falhas imediatamente; o relatório final preserva o motivo
+        // mesmo enquanto outra mensagem aguarda confirmação.
+        const settledFinalPromise = Promise.allSettled([finalPromise]).then(([result]) => result);
 
         const timedInitialAttempt = index === 0
           ? this.withTimeout(firstAttempt, TARGET_ACK_TIMEOUT_MS)
@@ -3917,7 +3805,7 @@ export class BotService extends EventEmitter {
           }
         );
 
-        return { initialPromise, finalPromise };
+        return { initialPromise, finalPromise: settledFinalPromise };
       });
 
       const initialResults = await Promise.all(jobs.map((job) => job.initialPromise));
@@ -3943,6 +3831,8 @@ export class BotService extends EventEmitter {
         sendStartedAt,
         trigger,
         timeline
+      }).catch((error) => {
+        this.logger.error(`Falha ao concluir histórico do disparo: ${this.getErrorMessage(error)}`);
       });
     } catch (error) {
       if (dispatchGateToken && !dispatchGateSettled) {
@@ -3960,7 +3850,7 @@ export class BotService extends EventEmitter {
   }
 
   private async finishTargetDispatchInBackground(input: {
-    jobs: Promise<string | false>[];
+    jobs: Promise<PromiseSettledResult<string | false>>[];
     cycleId: number;
     total: number;
     eventDetectedAt: number;
@@ -3968,7 +3858,7 @@ export class BotService extends EventEmitter {
     trigger: RouteDispatch["trigger"];
     timeline: RouteDispatchTimeline;
   }) {
-    const results = await Promise.allSettled(input.jobs);
+    const results = await Promise.all(input.jobs);
     let confirmed = 0;
     results.forEach((result, index) => {
       const messageNumber = index + 1;
@@ -4022,6 +3912,7 @@ export class BotService extends EventEmitter {
     error: unknown,
     timeline: RouteDispatchTimeline
   ): Promise<string | false> {
+    if (cycleId !== this.sendCycleId || this.stopping) return false;
     const firstMessage = this.getErrorMessage(error);
     if (this.isConnectionUnavailableError(firstMessage)) {
       this.deferOcrDispatchUntilReconnect(
@@ -4044,6 +3935,7 @@ export class BotService extends EventEmitter {
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
       if (cycleId !== this.sendCycleId) return false;
       await this.delay(delays[attempt]);
+      if (cycleId !== this.sendCycleId || this.stopping) return false;
       try {
         this.addTimelineEvent(timeline, `Retry ${messageNumber}.${attempt + 1}`, Date.now(), "info", firstMessage);
         if (!this.sock) throw new Error("Não há conexão ativa para retry.");
@@ -4860,7 +4752,7 @@ export class BotService extends EventEmitter {
       },
       {
         id: "messages",
-        label: this.monitoringMode === "test" ? "Mensagens de teste prontas" : "Mensagens do alvo prontas",
+        label: this.monitoringMode === "test" ? "Mensagens de teste prontas" : config.targetDispatchMode === "ocr" ? "Nome e bairros preferidos configurados" : "Mensagens do alvo prontas",
         ok: this.hasReadyMessages(this.monitoringMode)
       },
       {
@@ -4884,9 +4776,18 @@ export class BotService extends EventEmitter {
   private hasReadyMessages(mode: MonitoringMode = this.monitoringMode) {
     const config = this.configStore.load();
     const codes = mode === "test" ? config.codigosMensagensTeste : config.codigosMensagensAlvo;
-    if (mode === "target" && config.targetDispatchMode === "ocr") return true;
+    if (mode === "target" && config.targetDispatchMode === "ocr") return Boolean(config.nomeEnvio.trim() && this.getConfiguredOcrPreferences(config).length);
     if ((codes || []).some((item) => item.trim())) return true;
     return false;
+  }
+
+  private getConfiguredOcrPreferences(config = this.configStore.load()) {
+    const detailed = config.rotasMonitoradasDetalhadas.filter((item) => item.bairro.trim());
+    if (detailed.length) return detailed;
+    return config.rotasMonitoradas.map((query) => {
+      const parts = query.split("/").map((part) => part.trim());
+      return parts.length === 2 ? { cidade: parts[0], bairro: parts[1] } : { cidade: "", bairro: query.trim() };
+    }).filter((item) => item.bairro);
   }
 
   private describeConfiguredOcrRoutes(config = this.configStore.load()) {
