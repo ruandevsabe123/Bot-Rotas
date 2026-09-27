@@ -9,7 +9,7 @@ export type NeighborhoodSelection = {
   detections: DetectedRouteCode[];
 };
 
-type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string };
+type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string };
 type Match = { row: Row; code: string; confidence: number; variant: number };
 
 export function normalizeNeighborhoodIdentity(value: string) {
@@ -106,16 +106,18 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   const city = normalizeNeighborhoodIdentity(preference.cidade);
   const district = normalizeNeighborhoodIdentity(preference.bairro);
   const normalizedTail = normalizeNeighborhoodIdentity(tail);
-  if (city) {
+  if (row.districtText !== undefined) {
+    tail = row.districtText;
+    if (city && row.localityText && !isCompatibleCity(row.localityText, city)) return undefined;
+  } else if (city && normalizedTail.startsWith(`${city} `)) {
     // The city must be complete and immediately precede the neighborhood data.
-    if (!normalizedTail.startsWith(`${city} `)) return undefined;
     // Retain real separators between multiple explicitly listed neighborhoods.
     const tokens = city.split(" ").length;
     tail = removeLeadingPlaceTokens(tail, tokens);
-  } else if (row.districtText !== undefined) {
-    // A configured city is optional only when the table itself supplies an
-    // explicit BAIRRO column, or the entire tail is the neighborhood name.
-    tail = row.districtText;
+  } else if (normalizeNeighborhoodIdentity(tail) !== district) {
+    // Some screenshots omit the city/cluster column. In that case only an
+    // exact neighborhood cell is safe; a suffix/substring is never enough.
+    return undefined;
   }
   const districts = tail.split(/[|;,/\n]+/).map(normalizeNeighborhoodIdentity).filter(Boolean);
   if (!districts.includes(district)) return undefined;
@@ -125,6 +127,16 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
     .some((token) => relevant.has(token))).map((word) => word.confidence);
   const confidence = Math.round(Math.min(row.confidence, ...(wordConfidence.length ? wordConfidence : [row.confidence])));
   return { code, confidence };
+}
+
+function isCompatibleCity(value: string, configuredCity: string) {
+  const locality = normalizeNeighborhoodIdentity(value);
+  const city = normalizeNeighborhoodIdentity(configuredCity);
+  if (!locality || !city) return true;
+  if (locality === city || locality.startsWith(`${city} `) || locality.endsWith(` ${city}`)) return true;
+  // The operational table abbreviates Campos dos Goytacazes as "Campos".
+  if (city === "campos dos goytacazes") return locality === "campos" || locality.startsWith("campos ");
+  return false;
 }
 
 function removeLeadingPlaceTokens(text: string, count: number) {
@@ -175,11 +187,26 @@ function readRows(reading: RouteOcrResult): Row[] {
     .sort((left, right) => right.left - left.left)[0] : undefined;
   const districtStart = districtHeader && precedingHeader
     ? (precedingHeader.left + precedingHeader.width + districtHeader.left) / 2 : undefined;
+  const localityHeaders = withWords.filter((word) => /^(cidade|cluster)$/.test(normalizeNeighborhoodIdentity(word.text)) && word.confidence >= 65);
+  const localityHeader = localityHeaders.length === 1 ? localityHeaders[0] : undefined;
+  const beforeLocalityHeader = localityHeader ? withWords.filter((word) =>
+    word.left + word.width < localityHeader.left &&
+    Math.abs(word.top - localityHeader.top) <= localityHeader.height * 0.4)
+    .sort((left, right) => right.left - left.left)[0] : undefined;
+  const localityStart = localityHeader && beforeLocalityHeader
+    ? (beforeLocalityHeader.left + beforeLocalityHeader.width + localityHeader.left) / 2 : undefined;
+  const localityEnd = localityHeader && districtHeader && localityHeader.left < districtHeader.left
+    ? (localityHeader.left + localityHeader.width + districtHeader.left) / 2 : undefined;
   return groups.map((words) => {
     const sorted = [...words].sort((left, right) => left.left - right.left);
     return { text: sorted.map((word) => word.text).join(" "), words: sorted,
       districtText: districtStart !== undefined && sorted[0].top > districtHeader!.top + districtHeader!.height
         ? sorted.filter((word) => word.left + word.width / 2 >= districtStart).map((word) => word.text).join(" ") : undefined,
+      localityText: localityStart !== undefined && sorted[0].top > localityHeader!.top + localityHeader!.height
+        ? sorted.filter((word) => {
+          const center = word.left + word.width / 2;
+          return center >= localityStart && (localityEnd === undefined || center < localityEnd);
+        }).map((word) => word.text).join(" ") : undefined,
       confidence: sorted.reduce((total, word) => total + word.confidence, 0) / sorted.length };
   });
 }

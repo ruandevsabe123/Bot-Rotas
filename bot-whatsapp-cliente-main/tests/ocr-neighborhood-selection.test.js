@@ -152,6 +152,25 @@ test("cidade opcional usa a coluna BAIRRO, sem confundir sufixo de bairro maior"
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus(["F-14 Cidade Centro"]), [{ cidade: "", bairro: "Centro" }]).status, "no-match");
 });
 
+test("layout novo valida CLUSTER quando existe e aceita bairro exato quando cidade foi omitida", () => {
+  const headers = [line("ROTA", 10, 20), line("AT", 10, 220), line("CLUSTER", 10, 520), line("BAIRRO", 10, 850)];
+  const campos = consensus([
+    ...headers,
+    line("H-31", 60, 20), line("AT2026092600001", 60, 220), line("Campos - Centro", 60, 520), line("Centro", 60, 850)
+  ]);
+  assert.equal(selectPreferredNeighborhoodFromOcr(campos, preferred).status, "selected");
+
+  const outraCidade = consensus([
+    ...headers,
+    line("G-32", 60, 20), line("AT2026092600002", 60, 220), line("Italva", 60, 520), line("Centro", 60, 850)
+  ]);
+  assert.equal(selectPreferredNeighborhoodFromOcr(outraCidade, preferred).status, "no-match");
+
+  assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
+    "J-21 AT2026092600003 78 Parque Rodoviário"
+  ]), preferred).status, "selected");
+});
+
 test("linha com um código válido e outro ilegível continua ambígua", () => {
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
     "1-24 F-14 Campos dos Goytacazes Parque Rodoviário"
