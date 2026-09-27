@@ -183,6 +183,13 @@ test("captura clara sem cabecalho encontra o bloco cidade-bairro sem misturar a 
     "PM G-32 AT202609059DITO 89 Centro Italva"
   ]), [{ cidade: "Campos dos Goytacazes", bairro: "Centro" }]);
   assert.equal(wrongCity.status, "no-match");
+
+  const withoutHyphen = selectPreferredNeighborhoodFromOcr(consensus([
+    "PM H-31 AT202609059D9V8 85 Centro Campos Centro",
+    "PM G-32 AT202609059DITO 89 Centro Italva"
+  ]), [{ cidade: "Campos dos Goytacazes", bairro: "Centro" }]);
+  assert.equal(withoutHyphen.status, "selected");
+  assert.equal(withoutHyphen.detection.code, "H-31");
 });
 
 test("linha com um código válido e outro ilegível continua ambígua", () => {

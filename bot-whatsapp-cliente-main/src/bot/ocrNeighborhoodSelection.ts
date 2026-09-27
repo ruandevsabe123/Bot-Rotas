@@ -140,6 +140,11 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
 function hasExplicitCityDistrictPair(value: string, configuredCity: string, configuredDistrict: string) {
   const cityAliases = getCityAliases(configuredCity);
   const district = normalizeNeighborhoodIdentity(configuredDistrict);
+  const normalizedValue = normalizeNeighborhoodIdentity(value);
+  // OCR frequently drops the visual hyphen from the final "Campos - Centro"
+  // cell. Requiring the exact city+district pair at the end remains safe and
+  // does not turn an earlier unrelated neighborhood into a match.
+  if ([...cityAliases].some((city) => normalizedValue.endsWith(`${city} ${district}`))) return true;
   // Headerless screenshots commonly expose a final cell as
   // "Campos - Parque Santa Clara". Only explicit separators are accepted so
   // another free-text column cannot be mistaken for the configured city.
