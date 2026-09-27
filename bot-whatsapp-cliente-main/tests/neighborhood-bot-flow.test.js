@@ -81,6 +81,20 @@ test("IA escolhe apenas o primeiro bairro preferido, sem arquivo ou consulta de 
   assert.deepEqual(states.map((event) => event.state), ["processing", "ready"]);
 });
 
+test("painel recebe previa compacta enquanto OCR usa a imagem completa", async (t) => {
+  const { bot } = createBot(t);
+  const sharp = require("sharp");
+  const source = await sharp({ create: { width: 1200, height: 500, channels: 3, background: "white" } }).png().toBuffer();
+  bot.downloadRouteImage = async () => source;
+  mockReading(t, async (_imagePath, options) => {
+    assert.equal(options.preferCageCrop, false);
+    assert.equal(options.fastFirst, false);
+    return reading(["A-1 Cidade Centro"]);
+  });
+  await bot.processRouteImageBatch(batch("preview"), 1);
+  assert.match(bot.ocrRouteSelection.imagePreviewUrl, /^data:image\/jpeg;base64,/);
+});
+
 test("bairro repetido prepara somente a primeira gaiola visual confirmada", async (t) => {
   const { bot, states } = createBot(t);
   mockReading(t, async () => reading(["A-1 Cidade Centro", "B-2 Cidade Centro", "C-3 Cidade Jardim Azul"]));

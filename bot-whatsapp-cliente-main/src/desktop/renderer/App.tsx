@@ -2568,6 +2568,12 @@ function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRou
           <article className={analyzing ? "analysis-step" : "analysis-step done"}><Route size={19} /><span><strong>Conferindo as preferências</strong><small>{analyzing ? "Aguardando a leitura terminar." : selectedOptions.length ? "Preferência identificada e associação com a gaiola validada." : "Nenhuma escolha liberada para envio."}</small></span></article>
           <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>Disparo automático</strong><small>{selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} mensagem(ns) preparada(s) ou enviada(s).` : analyzing ? "Aguardando uma preferência com leitura segura." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
         </div>
+        {selection.imagePreviewUrl ? (
+          <figure className="automatic-analysis-preview">
+            <figcaption>Imagem completa recebida do WhatsApp e usada na anÃ¡lise</figcaption>
+            <img src={selection.imagePreviewUrl} alt="Imagem completa analisada pelo bot" />
+          </figure>
+        ) : null}
         {!analyzing && selection.timing ? (
           <div className="automatic-analysis-timing" aria-label="Tempos da análise e do envio">
             <span><small>Baixar imagem</small><strong>{formatAnalysisTime(selection.timing.downloadMs)}</strong></span>

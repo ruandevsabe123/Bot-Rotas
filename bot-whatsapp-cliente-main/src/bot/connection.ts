@@ -2532,6 +2532,7 @@ export class BotService extends EventEmitter {
     const analysisStartedAtMs = Date.now();
     const analysisStartedAt = new Date(analysisStartedAtMs).toISOString();
     let imageDirectory: string | undefined;
+    let imagePreviewUrl: string | undefined;
     let dispatchRaceReady = false;
     const isCurrent = () => sequence === this.latestRouteImageSequence && this.monitoringEnabled && this.configStore.load().targetDispatchMode === "ocr";
     const reportState = (state: DispatchRaceEventState) => this.dispatchRaceEventReporter?.({
@@ -2571,6 +2572,18 @@ export class BotService extends EventEmitter {
         if (!isCurrent()) return;
         await fs.promises.writeFile(imagePaths[index], buffer);
       }
+      // The OCR keeps using the original complete image. This compact copy is
+      // only for visual confirmation in the panel and never feeds detection.
+      try {
+        const { default: sharp } = await import("sharp");
+        const preview = await sharp(imagePaths[0]).rotate().resize({ width: 960, withoutEnlargement: true })
+          .jpeg({ quality: 60, mozjpeg: true }).toBuffer();
+        imagePreviewUrl = `data:image/jpeg;base64,${preview.toString("base64")}`;
+        this.ocrRouteSelection = { ...this.ocrRouteSelection, imagePreviewUrl };
+        this.emitSnapshot();
+      } catch (error) {
+        this.logger.warning(`NÃ£o consegui gerar a prÃ©via da imagem: ${this.getErrorMessage(error)}`);
+      }
       const downloadFinishedAtMs = Date.now();
       const readings = [];
       for (const imagePath of imagePaths) {
@@ -2598,6 +2611,7 @@ export class BotService extends EventEmitter {
         this.lastOcrInsight = undefined;
         this.ocrRouteSelection = {
           status: "error", analysisId, options: [], source: ocr.source,
+          imagePreviewUrl,
           timing: { ...timing, totalMs: comparedAt - analysisStartedAtMs },
           processedAt: new Date().toISOString(), message: decision.reason
         };
@@ -2630,6 +2644,7 @@ export class BotService extends EventEmitter {
       });
       this.ocrRouteSelection = {
         status: "ready", analysisId, timing, source: ocr.source, line: detected.line,
+        imagePreviewUrl,
         detected: { rota: detected.route, bairro: option.bairro, gaiola: detected.code },
         processedAt: new Date().toISOString(), options: [option], detectedRouteCount: decision.detections.length,
         message: `Preferência ${decision.preferenceIndex! + 1}: ${option.bairro}, gaiola ${detected.code}.`
@@ -2647,6 +2662,7 @@ export class BotService extends EventEmitter {
       this.emit("image-analysis", { id: analysisId, messageId, result: "failed", ...analysisContext() });
       this.ocrRouteSelection = {
         status: "error", analysisId, options: [], processedAt: new Date().toISOString(),
+        imagePreviewUrl,
         message: `Análise da IA falhou: ${this.getErrorMessage(error)}`
       };
       this.rememberCurrentOcrAnalysis();

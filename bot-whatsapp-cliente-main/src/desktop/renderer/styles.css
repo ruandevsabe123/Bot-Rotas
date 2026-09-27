@@ -7955,6 +7955,27 @@ body,
   gap: 9px;
 }
 
+.automatic-analysis-preview {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.automatic-analysis-preview figcaption {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.automatic-analysis-preview img {
+  display: block;
+  width: 100%;
+  max-height: min(44vh, 430px);
+  object-fit: contain;
+  border: 1px solid rgba(42, 151, 255, 0.3);
+  border-radius: 10px;
+  background: #02070d;
+}
+
 .analysis-step {
   display: flex;
   gap: 12px;
