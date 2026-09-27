@@ -2612,6 +2612,7 @@ export class BotService extends EventEmitter {
         this.ocrRouteSelection = {
           status: "error", analysisId, options: [], source: ocr.source,
           imagePreviewUrl,
+          line: ocr.text.slice(0, 1200),
           timing: { ...timing, totalMs: comparedAt - analysisStartedAtMs },
           processedAt: new Date().toISOString(), message: decision.reason
         };

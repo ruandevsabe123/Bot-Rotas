@@ -192,6 +192,16 @@ test("captura clara sem cabecalho encontra o bloco cidade-bairro sem misturar a 
   assert.equal(withoutHyphen.detection.code, "H-31");
 });
 
+test("aceita sublinhado, espaco ou ausencia de separador na gaiola sublinhada", () => {
+  for (const code of ["H_31", "H 31", "H31"]) {
+    const result = selectPreferredNeighborhoodFromOcr(consensus([
+      `PM ${code} AT202609059D9V8 85 Centro Campos Centro`
+    ]), [{ cidade: "Campos dos Goytacazes", bairro: "Centro" }]);
+    assert.equal(result.status, "selected", code);
+    assert.equal(result.detection.code, "H-31", code);
+  }
+});
+
 test("linha com um código válido e outro ilegível continua ambígua", () => {
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
     "1-24 F-14 Campos dos Goytacazes Parque Rodoviário"

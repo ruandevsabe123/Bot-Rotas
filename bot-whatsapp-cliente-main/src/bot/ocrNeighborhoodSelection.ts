@@ -98,16 +98,18 @@ export function selectPreferredNeighborhoodFromOcr(
 }
 
 function matchPreference(row: Row, preference: MonitoredRoute) {
-  // Never turn 1/l/|/II into I, drop a code digit, or guess a missing hyphen.
-  const codeMatches = [...row.text.matchAll(/(?:^|\s|[|;])([A-Za-z])\s*[-\u2013\u2014]\s*(\d{1,2})(?=$|\s|[|;,])/g)];
-  const cageLike = [...row.text.matchAll(/(?:^|\s|[|;])([A-Za-z1|]{1,2})\s*[-\u2013\u2014:.]\s*(\d{1,3})(?=$|\s|[|;,])/g)];
-  const code = codeMatches.length === 1 && cageLike.length === 1 && codeMatches[0][1] !== "l"
+  // Underlined route links are commonly read as H_31, H 31 or H31. Accept
+  // those shapes only for a real letter followed by 1-2 digits. Never turn
+  // 1/l/|/II into I or truncate a three-digit value.
+  const codeMatches = [...row.text.matchAll(/(?:^|[\s|;])([A-Z])[-_\u2013\u2014:.\s]*(\d{1,2})(?=$|[\s|;,])/g)];
+  const suspiciousCodes = [...row.text.matchAll(/(?:^|[\s|;])([1|]|II|l|i)\s*[-_\u2013\u2014:.]\s*(\d{1,3})(?=$|[\s|;,])/g)];
+  const code = codeMatches.length === 1 && suspiciousCodes.length === 0
     ? `${codeMatches[0][1].toUpperCase()}-${codeMatches[0][2]}` : "";
   const lastCode = codeMatches[codeMatches.length - 1];
   let tail = lastCode ? row.text.slice(lastCode.index! + lastCode[0].length) : row.text;
   // Strip an unreadable cage only to record unsafe evidence for this preference.
   // It must never become the code used for a message.
-  if (!lastCode) tail = tail.replace(/^\s*[A-Za-z1|]{1,2}\s*[-\u2013\u2014:.]\s*\d{1,3}\b/, "");
+  if (!lastCode) tail = tail.replace(/^\s*[A-Za-z1|]{1,2}\s*[-_\u2013\u2014:.]?\s*\d{1,3}\b/, "");
   tail = stripMetadata(tail);
   const city = normalizeNeighborhoodIdentity(preference.cidade);
   const district = normalizeNeighborhoodIdentity(preference.bairro);

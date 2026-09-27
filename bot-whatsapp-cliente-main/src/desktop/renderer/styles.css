@@ -7976,6 +7976,29 @@ body,
   background: #02070d;
 }
 
+.automatic-analysis-diagnostic {
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 170, 70, 0.28);
+  border-radius: 9px;
+  color: var(--muted);
+  background: rgba(30, 18, 4, 0.42);
+}
+
+.automatic-analysis-diagnostic summary {
+  cursor: pointer;
+  color: #ffc879;
+  font-weight: 700;
+}
+
+.automatic-analysis-diagnostic pre {
+  margin: 10px 0 0;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 0.76rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
 .analysis-step {
   display: flex;
   gap: 12px;

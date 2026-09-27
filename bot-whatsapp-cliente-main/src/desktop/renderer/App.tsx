@@ -2585,6 +2585,12 @@ function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRou
         ) : null}
         {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span>{option.cidade ? <small>{option.cidade}</small> : null}{option.observation ? <small>{option.observation}</small> : null}{option.romaneioMatch === true ? <small>{option.pacotes} pct · {option.paradas} paradas · {option.distanciaKm.toFixed(3)} km</small> : null}</article>)}</div> : null}
         {!analyzing && selection.message ? <p className={selection.status === "error" ? "inline-error" : "approval-message"}>{uiText(selection.message)}</p> : null}
+        {!analyzing && selection.status === "error" && selection.line ? (
+          <details className="automatic-analysis-diagnostic">
+            <summary>Ver texto reconhecido pela IA</summary>
+            <pre>{selection.line}</pre>
+          </details>
+        ) : null}
         {finished ? <div className="review-actions"><button className="button primary" type="button" onClick={onClose}>Fechar análise</button></div> : null}
       </section>
     </div>
