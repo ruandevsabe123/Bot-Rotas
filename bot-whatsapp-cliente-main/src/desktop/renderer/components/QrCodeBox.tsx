@@ -77,10 +77,10 @@ export function QrCodeBox({
         </button>
       </div>
       <div className="qr-box">
-        {qrCode && !expired ? (
+        {qrCode ? (
           <canvas ref={canvasRef} aria-label="QR Code do WhatsApp" />
         ) : (
-          <div className="qr-empty">{expired ? "Gerando um QR Code novo..." : "Aguardando o WhatsApp gerar o QR Code..."}</div>
+          <div className="qr-empty">Aguardando o WhatsApp gerar o QR Code...</div>
         )}
       </div>
     </article>
