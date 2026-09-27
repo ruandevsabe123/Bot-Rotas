@@ -202,6 +202,19 @@ test("aceita sublinhado, espaco ou ausencia de separador na gaiola sublinhada", 
   }
 });
 
+test("layout sem cabecalho aceita Campos abreviado na configuracao e cidade completa na imagem", () => {
+  const result = selectPreferredNeighborhoodFromOcr(consensus([
+    "H-17 AT20260926ABVRN 106 Campos dos Goytacazes Centro",
+    "G-2 AT20260926ABWLR 79 Sao Francisco de Itabapoana Floresta"
+  ]), [
+    { cidade: "Campos", bairro: "Floresta" },
+    { cidade: "Campos", bairro: "Centro" }
+  ]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.preferenceIndex, 1);
+  assert.equal(result.detection.code, "H-17");
+});
+
 test("linha com um código válido e outro ilegível continua ambígua", () => {
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
     "1-24 F-14 Campos dos Goytacazes Parque Rodoviário"

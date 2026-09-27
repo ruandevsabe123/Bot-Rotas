@@ -114,13 +114,14 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   const city = normalizeNeighborhoodIdentity(preference.cidade);
   const district = normalizeNeighborhoodIdentity(preference.bairro);
   const normalizedTail = normalizeNeighborhoodIdentity(tail);
+  const leadingCity = city ? findLeadingCityAlias(normalizedTail, city) : undefined;
   if (row.districtText !== undefined) {
     tail = row.districtText;
     if (city && row.localityText && !isCompatibleCity(row.localityText, city)) return undefined;
-  } else if (city && normalizedTail.startsWith(`${city} `)) {
+  } else if (city && leadingCity) {
     // The city must be complete and immediately precede the neighborhood data.
     // Retain real separators between multiple explicitly listed neighborhoods.
-    const tokens = city.split(" ").length;
+    const tokens = leadingCity.split(" ").length;
     tail = removeLeadingPlaceTokens(tail, tokens);
   } else if (city && hasExplicitCityDistrictPair(tail, city, district)) {
     tail = preference.bairro;
@@ -161,7 +162,14 @@ function getCityAliases(value: string) {
   const city = normalizeNeighborhoodIdentity(value);
   const aliases = new Set([city]);
   if (city === "campos dos goytacazes") aliases.add("campos");
+  if (city === "campos") aliases.add("campos dos goytacazes");
   return aliases;
+}
+
+function findLeadingCityAlias(value: string, configuredCity: string) {
+  return [...getCityAliases(configuredCity)]
+    .sort((left, right) => right.length - left.length)
+    .find((alias) => value.startsWith(`${alias} `));
 }
 
 function isCompatibleCity(value: string, configuredCity: string) {
