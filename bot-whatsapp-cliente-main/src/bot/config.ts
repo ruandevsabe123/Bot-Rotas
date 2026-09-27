@@ -1,3 +1,4 @@
+import { readJsonFile, writeJsonAtomic } from "../storageJson";
 import fs from "fs";
 import path from "path";
 import { BotConfig } from "../shared/types";
@@ -21,8 +22,8 @@ export const DEFAULT_CONFIG: BotConfig = {
   minSendDelayMs: 0,
   alwaysWarmMode: true,
   keepAliveIntervalMs: 300000,
-  ocrManualRouteSelection: true,
-  ocrSelectionMode: "manual",
+  ocrManualRouteSelection: false,
+  ocrSelectionMode: "neighborhoods",
   ocrDesiredCages: [],
   ocrCageMessageLimit: 0
 };
@@ -40,15 +41,9 @@ export class ConfigStore {
     if (this.cached) return this.cached;
     this.ensureConfigFile();
 
-    try {
-      const content = fs.readFileSync(this.configPath, "utf-8");
-      this.cached = this.normalize(JSON.parse(content));
-      return this.cached;
-    } catch {
-      const fallback = { ...DEFAULT_CONFIG };
-      this.save(fallback);
-      return this.cached || fallback;
-    }
+    this.cached = this.normalize(readJsonFile<Partial<BotConfig>>(this.configPath, () => ({ ...DEFAULT_CONFIG }),
+      (value) => Boolean(value && typeof value === "object" && !Array.isArray(value))));
+    return this.cached;
   }
 
   save(config: Partial<BotConfig>): BotConfig {
@@ -57,8 +52,7 @@ export class ConfigStore {
       ...config
     });
 
-    fs.mkdirSync(path.dirname(this.configPath), { recursive: true });
-    fs.writeFileSync(this.configPath, JSON.stringify(nextConfig, null, 2));
+    writeJsonAtomic(this.configPath, nextConfig);
     this.cached = nextConfig;
     return this.cached;
   }
@@ -109,14 +103,25 @@ export class ConfigStore {
       return { ...DEFAULT_CONFIG };
     }
 
-    try {
-      return this.normalize(JSON.parse(fs.readFileSync(this.configPath, "utf-8")));
-    } catch {
-      return { ...DEFAULT_CONFIG };
-    }
+    return this.normalize(readJsonFile<Partial<BotConfig>>(this.configPath, () => ({ ...DEFAULT_CONFIG }),
+      (value) => Boolean(value && typeof value === "object" && !Array.isArray(value))));
   }
 
   private normalize(input: Partial<BotConfig>): BotConfig {
+    const manualSelection = typeof input.ocrManualRouteSelection === "boolean"
+      ? input.ocrManualRouteSelection
+      : input.ocrSelectionMode === "manual";
+    const wantedCages = Array.isArray(input.ocrDesiredCages)
+      ? input.ocrDesiredCages.filter((item): item is string => typeof item === "string" && item.trim().length > 0).length
+      : 0;
+    const legacyCageMigration = input.ocrSelectionMode === "cages" && wantedCages > 200;
+    const selectionMode = legacyCageMigration
+      ? "neighborhoods"
+      : input.ocrSelectionMode === "best" || input.ocrSelectionMode === "manual"
+        || input.ocrSelectionMode === "cages" || input.ocrSelectionMode === "neighborhoods"
+        ? input.ocrSelectionMode
+        : manualSelection ? "manual" : "neighborhoods";
+
     return {
       grupoAlvoJid: typeof input.grupoAlvoJid === "string" ? input.grupoAlvoJid : "",
       grupoAlvoNome: typeof input.grupoAlvoNome === "string" ? input.grupoAlvoNome : "",
@@ -131,14 +136,10 @@ export class ConfigStore {
       minSendDelayMs: this.clampNumber(input.minSendDelayMs, 0, 5000, DEFAULT_CONFIG.minSendDelayMs),
       alwaysWarmMode: typeof input.alwaysWarmMode === "boolean" ? input.alwaysWarmMode : DEFAULT_CONFIG.alwaysWarmMode,
       keepAliveIntervalMs: this.clampNumber(input.keepAliveIntervalMs, 60000, 600000, DEFAULT_CONFIG.keepAliveIntervalMs),
-      ocrManualRouteSelection: input.ocrSelectionMode === "manual"
-        ? true
-        : input.ocrSelectionMode === "best" || input.ocrSelectionMode === "cages"
-        ? false
-        : typeof input.ocrManualRouteSelection === "boolean" ? input.ocrManualRouteSelection : DEFAULT_CONFIG.ocrManualRouteSelection,
-      ocrSelectionMode: input.ocrSelectionMode === "best" || input.ocrSelectionMode === "cages" || input.ocrSelectionMode === "manual"
-        ? input.ocrSelectionMode
-        : input.ocrManualRouteSelection === false ? "best" : DEFAULT_CONFIG.ocrSelectionMode,
+      // Preserve legacy OCR modes when they were explicitly configured, while
+      // keeping the neighborhood-first behavior as the safe default for new users.
+      ocrManualRouteSelection: manualSelection,
+      ocrSelectionMode: selectionMode,
       ocrDesiredCages: Array.isArray(input.ocrDesiredCages)
         ? Array.from(new Set(input.ocrDesiredCages
             .filter((item): item is string => typeof item === "string")
