@@ -42,9 +42,15 @@ export function selectPreferredNeighborhoodFromOcr(
   for (const preference of configured) {
     const matches: Match[] = [];
     for (const [variant, variantRows] of rows.entries()) {
+      // One neighborhood can legitimately have multiple cages. The product
+      // sends one message, so each OCR treatment contributes only its first
+      // visual occurrence. Independent treatments must still agree on it.
       for (const row of variantRows) {
         const match = matchPreference(row, preference);
-        if (match) matches.push({ row, ...match, variant });
+        if (match) {
+          matches.push({ row, ...match, variant });
+          break;
+        }
       }
     }
     if (!matches.length) continue;
@@ -114,6 +120,8 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
     // Retain real separators between multiple explicitly listed neighborhoods.
     const tokens = city.split(" ").length;
     tail = removeLeadingPlaceTokens(tail, tokens);
+  } else if (city && hasExplicitCityDistrictPair(tail, city, district)) {
+    tail = preference.bairro;
   } else if (normalizeNeighborhoodIdentity(tail) !== district) {
     // Some screenshots omit the city/cluster column. In that case only an
     // exact neighborhood cell is safe; a suffix/substring is never enough.
@@ -129,13 +137,33 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   return { code, confidence };
 }
 
+function hasExplicitCityDistrictPair(value: string, configuredCity: string, configuredDistrict: string) {
+  const cityAliases = getCityAliases(configuredCity);
+  const district = normalizeNeighborhoodIdentity(configuredDistrict);
+  // Headerless screenshots commonly expose a final cell as
+  // "Campos - Parque Santa Clara". Only explicit separators are accepted so
+  // another free-text column cannot be mistaken for the configured city.
+  const parts = String(value || "").split(/\s+(?:-|–|—)\s+|[|;,/\n]+/)
+    .map(normalizeNeighborhoodIdentity).filter(Boolean);
+  return parts.some((part, index) =>
+    [...cityAliases].some((city) => part === city || part.endsWith(` ${city}`)) &&
+    parts[index + 1] === district);
+}
+
+function getCityAliases(value: string) {
+  const city = normalizeNeighborhoodIdentity(value);
+  const aliases = new Set([city]);
+  if (city === "campos dos goytacazes") aliases.add("campos");
+  return aliases;
+}
+
 function isCompatibleCity(value: string, configuredCity: string) {
   const locality = normalizeNeighborhoodIdentity(value);
   const city = normalizeNeighborhoodIdentity(configuredCity);
   if (!locality || !city) return true;
   if (locality === city || locality.startsWith(`${city} `) || locality.endsWith(` ${city}`)) return true;
   // The operational table abbreviates Campos dos Goytacazes as "Campos".
-  if (city === "campos dos goytacazes") return locality === "campos" || locality.startsWith("campos ");
+  if (getCityAliases(city).has("campos")) return locality === "campos" || locality.startsWith("campos ");
   return false;
 }
 

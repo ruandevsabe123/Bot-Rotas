@@ -67,15 +67,15 @@ test("normaliza somente acentuação, caixa e separadores explícitos", () => {
   assert.equal(result.detection.code, "F-14");
 });
 
-test("gaiolas diferentes para o bairro prioritário bloqueiam sem cair no segundo bairro", () => {
+test("bairro repetido escolhe a primeira ocorrencia visual confirmada", () => {
   const result = selectPreferredNeighborhoodFromOcr(consensus([
     "F-14 Campos dos Goytacazes Parque Rodoviário",
     "H-20 Campos dos Goytacazes Parque Rodoviário",
     "B-12 Campos dos Goytacazes Centro"
   ]), preferred);
-  assert.equal(result.status, "unsafe");
+  assert.equal(result.status, "selected");
   assert.equal(result.preferenceIndex, 0);
-  assert.equal(result.detection, undefined);
+  assert.equal(result.detection.code, "F-14");
 });
 
 test("conflito entre tratamentos bloqueia mesmo contra duas leituras concordantes", () => {
@@ -169,6 +169,20 @@ test("layout novo valida CLUSTER quando existe e aceita bairro exato quando cida
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
     "J-21 AT2026092600003 78 Parque Rodoviário"
   ]), preferred).status, "selected");
+});
+
+test("captura clara sem cabecalho encontra o bloco cidade-bairro sem misturar a outra localidade", () => {
+  const result = selectPreferredNeighborhoodFromOcr(consensus([
+    "PM J-6 AT202609059D9VB 106 Parque Presidente Vargas Campos - Parque Santa Clara",
+    "PM G-32 AT202609059DITO 89 Centro Italva"
+  ]), [{ cidade: "Campos dos Goytacazes", bairro: "Parque Santa Clara" }]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "J-6");
+
+  const wrongCity = selectPreferredNeighborhoodFromOcr(consensus([
+    "PM G-32 AT202609059DITO 89 Centro Italva"
+  ]), [{ cidade: "Campos dos Goytacazes", bairro: "Centro" }]);
+  assert.equal(wrongCity.status, "no-match");
 });
 
 test("linha com um código válido e outro ilegível continua ambígua", () => {

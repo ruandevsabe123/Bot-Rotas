@@ -81,13 +81,13 @@ test("IA escolhe apenas o primeiro bairro preferido, sem arquivo ou consulta de 
   assert.deepEqual(states.map((event) => event.state), ["processing", "ready"]);
 });
 
-test("bairro prioritario ambiguo bloqueia envio e libera os outros clientes", async (t) => {
+test("bairro repetido prepara somente a primeira gaiola visual confirmada", async (t) => {
   const { bot, states } = createBot(t);
   mockReading(t, async () => reading(["A-1 Cidade Centro", "B-2 Cidade Centro", "C-3 Cidade Jardim Azul"]));
   await bot.processRouteImageBatch(batch("ambiguous"), 1);
-  assert.deepEqual(bot.pendingOcrMessages, []);
-  assert.equal(bot.ocrRouteSelection.status, "error");
-  assert.deepEqual(states.map((event) => event.state), ["processing", "unavailable"]);
+  assert.deepEqual(bot.pendingOcrMessages, ["Cliente A-1"]);
+  assert.equal(bot.ocrRouteSelection.status, "confirmed");
+  assert.deepEqual(states.map((event) => event.state), ["processing", "ready"]);
 });
 
 test("parar durante download descarta a analise e nao prepara envio", async (t) => {
