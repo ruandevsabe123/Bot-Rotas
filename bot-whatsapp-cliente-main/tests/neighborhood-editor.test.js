@@ -115,6 +115,7 @@ test("editor salva bairros visíveis e sua nova ordem, sem reutilizar códigos o
   editor.change(editor.find((node) => node.props["aria-label"] === "Bairro da preferência 1"), "Centro");
   editor.change(editor.find((node) => node.props["aria-label"] === "Cidade da preferência 1 (opcional)"), "Cidade B");
   editor.change(editor.find((node) => node.props["aria-label"] === "Cidade padrão dos bairros"), "Campos dos Goytacazes");
+  editor.change(editor.find((node) => node.props["aria-label"] === "Máximo de mensagens por imagem"), "2");
   editor.click(editor.find((node) => node.type === "button" && node.props.children === "Adicionar outro bairro"));
   editor.change(editor.find((node) => node.props["aria-label"] === "Bairro da preferência 2"), "Jardim Sul");
   editor.click(editor.all((node) => node.props.title === "Aumentar preferência")[1]);
@@ -123,6 +124,7 @@ test("editor salva bairros visíveis e sua nova ordem, sem reutilizar códigos o
   assert.deepEqual(JSON.parse(JSON.stringify(args[4])), ["Jardim Sul", "Centro"]);
   assert.deepEqual(JSON.parse(JSON.stringify(args[8])), [{ cidade: "Campos dos Goytacazes", bairro: "Jardim Sul" }, { cidade: "Cidade B", bairro: "Centro" }]);
   assert.equal(args[9], "ocr");
+  assert.equal(args[10], 2);
   assert.equal(editor.config.rotasMonitoradasDetalhadas[0].bairro, "Bairro antigo");
 });
 

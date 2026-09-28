@@ -20,7 +20,15 @@ test("preserva gaiolas legadas sem truncar, migrando o envio para bairros", () =
   assert.equal(saved.ocrDesiredCages.length, 350);
   assert.deepEqual(saved.ocrDesiredCages.slice(0, 3), ["G-1", "G-2", "G-3"]);
   assert.equal(store.load().ocrDesiredCages.length, 350);
-  assert.equal(saved.ocrCageMessageLimit, 0);
+  assert.equal(saved.ocrCageMessageLimit, 3);
+});
+
+test("limite de mensagens fica sempre entre um e tres", () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "desired-cages-hard-limit-"));
+  const store = new ConfigStore(path.join(directory, "config.json"));
+  assert.equal(store.save({ ocrCageMessageLimit: 0 }).ocrCageMessageLimit, 3);
+  assert.equal(store.save({ ocrCageMessageLimit: 99 }).ocrCageMessageLimit, 3);
+  assert.equal(store.save({ ocrCageMessageLimit: 1 }).ocrCageMessageLimit, 1);
 });
 
 test("salva o limite personalizado de mensagens por gaiola", () => {

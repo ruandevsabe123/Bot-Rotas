@@ -140,7 +140,7 @@ const emptySnapshot: BotSnapshot = {
     ocrManualRouteSelection: false,
     ocrSelectionMode: "neighborhoods",
     ocrDesiredCages: [],
-    ocrCageMessageLimit: 0
+    ocrCageMessageLimit: 3
   },
   groups: [],
   readinessChecks: [],
@@ -2965,7 +2965,7 @@ function PanelApp() {
     return /OCR|IA|imagem|foto|romaneio|rota\(s\)|rotas encontradas|Ranking de rotas|Cliente confirmou|gaiola/i.test(message);
   }
 
-  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual") {
+  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual", ocrCageMessageLimit = 3) {
     const selectedGroupName = groupName || group;
     const isImageMode = targetDispatchMode === "ocr";
     const preferences = isImageMode ? normalizeNeighborhoodPreferences(monitoredRoutes || codes.map((bairro) => ({ cidade: "", bairro }))) : [];
@@ -2979,7 +2979,7 @@ function PanelApp() {
     setConfirmation({
       title: startAfterSave ? (isImageMode ? "Salvar e iniciar imagem" : "Salvar e iniciar manual") : isImageMode ? "Salvar bot imagem" : "Salvar mensagens",
       message: `Grupo alvo: ${selectedGroupName}`,
-      details: isImageMode ? [...messages, "Será escolhida somente a primeira preferência disponível com leitura segura."] : messages,
+      details: isImageMode ? [...messages, `Serão enviadas até ${ocrCageMessageLimit} mensagens, seguindo a ordem de preferência.`] : messages,
       confirmLabel: startAfterSave ? "Salvar e iniciar" : "Salvar",
       onConfirm: async () => {
         await runAction(async () => {
@@ -2989,7 +2989,8 @@ function PanelApp() {
             codes: isImageMode ? snapshot.config.codigosMensagensAlvo || [] : codes,
             routes: isImageMode ? routes : snapshot.config.rotasMonitoradas || [],
             monitoredRoutes: isImageMode ? preferences : snapshot.config.rotasMonitoradasDetalhadas || [],
-            targetDispatchMode
+            targetDispatchMode,
+            ocrCageMessageLimit
           });
           setGroupEditor(undefined);
           return startAfterSave ? (isImageMode ? botApi.startImageMonitoring() : botApi.startMonitoring()) : botApi.getSnapshot();
@@ -3096,7 +3097,7 @@ function PanelApp() {
 
     setConfirmation({
       title: "Iniciar bot imagem",
-      message: "O bot vai procurar os bairros na ordem salva e preparar somente a gaiola da primeira preferência disponível com leitura segura.",
+      message: `O bot vai procurar os bairros na ordem salva e preparar até ${Math.max(1, Math.min(3, snapshot.config.ocrCageMessageLimit || 3))} mensagens com leitura segura.`,
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Nome: ${snapshot.config.nomeEnvio}`,

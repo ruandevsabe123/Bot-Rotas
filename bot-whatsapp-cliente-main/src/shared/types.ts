@@ -54,8 +54,7 @@ export type BotConfig = {
   ocrManualRouteSelection: boolean;
   ocrSelectionMode: "neighborhoods" | "best" | "manual" | "cages"; // Legacy values migrate on load.
   ocrDesiredCages: string[];
-  // 0 envia todas as gaiolas desejadas encontradas; valores positivos limitam
-  // o envio às melhores opções do ranking.
+  // Limite absoluto de mensagens automáticas encontradas na imagem (1 a 3).
   ocrCageMessageLimit: number;
 };
 
@@ -662,6 +661,7 @@ export type SaveTargetMessageSettingsPayload = {
   routes?: string[];
   monitoredRoutes?: MonitoredRoute[];
   targetDispatchMode?: "manual" | "ocr";
+  ocrCageMessageLimit?: number;
 };
 
 export type GeneralSettingsPayload = {

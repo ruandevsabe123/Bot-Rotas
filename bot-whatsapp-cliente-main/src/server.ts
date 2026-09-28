@@ -1104,7 +1104,8 @@ async function handleAction(bot: BotProcessProxy, action: string, body: any) {
         Array.isArray(body.codes) ? body.codes : [],
         Array.isArray(body.routes) ? body.routes : undefined,
         Array.isArray(body.monitoredRoutes) ? body.monitoredRoutes : undefined,
-        body.targetDispatchMode === "ocr" ? "ocr" : body.targetDispatchMode === "manual" ? "manual" : undefined
+        body.targetDispatchMode === "ocr" ? "ocr" : body.targetDispatchMode === "manual" ? "manual" : undefined,
+        body.ocrCageMessageLimit
       );
       break;
     case "save-warmup-message-settings":

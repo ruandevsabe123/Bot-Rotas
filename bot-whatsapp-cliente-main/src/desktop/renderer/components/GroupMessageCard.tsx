@@ -21,7 +21,8 @@ type Props = {
     intervalMs?: number,
     startAfterSave?: boolean,
     monitoredRoutes?: MonitoredRoute[],
-    targetDispatchMode?: "manual" | "ocr"
+    targetDispatchMode?: "manual" | "ocr",
+    ocrCageMessageLimit?: number
   ) => void;
   onSaveManual?: (
     group: string,
@@ -77,6 +78,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   const [codes, setCodes] = useState("");
   const [monitoredRoutes, setMonitoredRoutes] = useState<MonitoredRoute[]>([createEmptyRoute()]);
   const [defaultCity, setDefaultCity] = useState(DEFAULT_OCR_CITY);
+  const [ocrMessageLimit, setOcrMessageLimit] = useState(3);
   const [manualCodes, setManualCodes] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [messageCount, setMessageCount] = useState(15);
@@ -110,6 +112,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     setMonitoredRoutes(savedPreferences.length ? savedPreferences.map((route) => ({ ...route })) : [createEmptyRoute()]);
     const savedCities = [...new Set(savedPreferences.map((route) => route.cidade.trim()).filter(Boolean))];
     setDefaultCity(savedCities.length === 1 ? savedCities[0] : DEFAULT_OCR_CITY);
+    setOcrMessageLimit(Math.max(1, Math.min(3, Number(config.ocrCageMessageLimit) || 3)));
     setManualCodes((config.codigosMensagensAlvo || []).join("\n"));
     setMessageCount(config.testMessageCount || 15);
     setIntervalMs(config.testMessageIntervalMs || 0);
@@ -121,6 +124,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     config.nomeEnvio,
     config.testMessageCount,
     config.testMessageIntervalMs,
+    config.ocrCageMessageLimit,
     isTarget,
     savedCodesKey,
     savedPreferencesKey
@@ -144,7 +148,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
 
     if (!value || !senderName.trim() || !nextCodes.length || (isImageTarget && hasIncompletePreference)) return;
     setCodes(nextCodes.join("\n"));
-    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes, isImageTarget ? "ocr" : "manual");
+    onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes, isImageTarget ? "ocr" : "manual", ocrMessageLimit);
   }
 
   function submitManual(event: Pick<FormEvent, "preventDefault">) {
@@ -229,6 +233,22 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
 
         {isImageTarget ? (
           <section className="ocr-route-fields">
+            <div className="settings-grid compact-settings">
+              <label>
+                Máximo de mensagens por imagem
+                <select
+                  aria-label="Máximo de mensagens por imagem"
+                  value={ocrMessageLimit}
+                  disabled={busy}
+                  onChange={(event) => setOcrMessageLimit(Number(event.target.value))}
+                >
+                  <option value={1}>1 mensagem</option>
+                  <option value={2}>2 mensagens</option>
+                  <option value={3}>3 mensagens</option>
+                </select>
+              </label>
+              <small>Se a imagem tiver menos bairros confirmados, o bot envia somente os encontrados.</small>
+            </div>
             <div className="settings-grid compact-settings">
               <label>
                 Cidade padrão dos bairros

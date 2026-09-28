@@ -1681,7 +1681,7 @@ export class BotService extends EventEmitter {
     this.logger.success("Mensagens do grupo alvo atualizadas.");
   }
 
-  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: { cidade: string; bairro: string }[], targetDispatchMode?: BotConfig["targetDispatchMode"]) {
+  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: { cidade: string; bairro: string }[], targetDispatchMode?: BotConfig["targetDispatchMode"], ocrCageMessageLimit?: number) {
     if (typeof senderName !== "string" || !Array.isArray(codes) || codes.some((item) => typeof item !== "string")) throw new Error("Nome e códigos de mensagem inválidos.");
     // Update target (alvo) message settings. Do NOT reset warmup completion.
     this.codigosEscolhidos = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
@@ -1697,6 +1697,7 @@ export class BotService extends EventEmitter {
       codigosMensagensAlvo: this.codigosEscolhidos,
       rotasMonitoradas: monitoredRoutes,
       rotasMonitoradasDetalhadas: detailedRoutes,
+      ...(ocrCageMessageLimit !== undefined ? { ocrCageMessageLimit } : {}),
       ...(targetDispatchMode ? { targetDispatchMode } : {})
     });
     this.cancelPendingRouteImageBatch();
@@ -2622,9 +2623,10 @@ export class BotService extends EventEmitter {
         return;
       }
 
-      const selections = decision.selections.length ? decision.selections : [{
+      const messageLimit = Math.max(1, Math.min(3, Number(config.ocrCageMessageLimit) || 3));
+      const selections = (decision.selections.length ? decision.selections : [{
         preferenceIndex: decision.preferenceIndex!, detection: detected
-      }];
+      }]).slice(0, messageLimit);
       const options: OcrRouteOption[] = selections.map(({ preferenceIndex, detection }, rank) => {
         const preference = preferences[preferenceIndex];
         return {

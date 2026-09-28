@@ -82,6 +82,17 @@ test("IA envia todos os bairros encontrados na ordem de preferencia, sem romanei
   assert.deepEqual(states.map((event) => event.state), ["processing", "ready"]);
 });
 
+test("IA respeita escolha de uma mensagem e nunca ultrapassa tres", async (t) => {
+  const { bot } = createBot(t);
+  bot.configStore.save({ ocrCageMessageLimit: 1 });
+  mockReading(t, async () => reading(["A-1 Cidade Centro", "B-2 Cidade Jardim Azul"]));
+  await bot.processRouteImageBatch(batch("limited-image"), 1);
+  assert.deepEqual(bot.pendingOcrMessages, ["Cliente A-1"]);
+
+  bot.configStore.save({ ocrCageMessageLimit: 99 });
+  assert.equal(bot.configStore.load().ocrCageMessageLimit, 3);
+});
+
 test("painel recebe previa compacta enquanto OCR usa a imagem completa", async (t) => {
   const { bot } = createBot(t);
   const sharp = require("sharp");
