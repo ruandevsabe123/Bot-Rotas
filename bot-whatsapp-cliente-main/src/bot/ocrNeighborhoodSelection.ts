@@ -11,7 +11,7 @@ export type NeighborhoodSelection = {
 };
 
 type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string; trailingCellText?: string };
-type Match = { row: Row; code: string; confidence: number; variant: number };
+type Match = { row: Row; code: string; confidence: number; variant: number; requiresThreeEvidence?: boolean };
 
 export function normalizeNeighborhoodIdentity(value: string) {
   return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
@@ -79,7 +79,7 @@ export function selectPreferredNeighborhoodFromOcr(
       // digit (6-2). An incomplete reading must not veto the normal consensus
       // of two independent treatments. A second valid, conflicting cage is
       // still represented in `codes` and blocks the automatic send.
-      const requiredEvidence = 2;
+      const requiredEvidence = matching.some((match) => match.requiresThreeEvidence) ? 3 : 2;
       const detection: DetectedRouteCode = {
         route: preference.cidade ? `${preference.cidade} | ${preference.bairro}` : preference.bairro,
         cidade: preference.cidade,
@@ -129,11 +129,20 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   // still required before automatic dispatch.
   const suspiciousPrefix = suspiciousCodes.length === 1 ? suspiciousCodes[0][1] : "";
   const hasExactAt = /\bAT[A-Z0-9]{8,}\b/i.test(row.text);
+  const malformedSingleI = row.text.match(/(?:^|[\s|;])(-{1,2}\s*(\d))(?=$|[\s|;,])/);
+  let requiresThreeEvidence = false;
   if (!code && hasExactAt && /^[1|li]$/i.test(suspiciousPrefix) && suspiciousCodes[0][2].length === 2) {
     code = `I-${suspiciousCodes[0][2]}`;
   }
+  if (!code && hasExactAt && malformedSingleI) {
+    code = `I-${malformedSingleI[2]}`;
+    requiresThreeEvidence = true;
+  }
   const lastCode = codeMatches[codeMatches.length - 1];
-  let tail = lastCode ? row.text.slice(lastCode.index! + lastCode[0].length) : row.text;
+  const recoveredCodeEnd = malformedSingleI?.index !== undefined
+    ? malformedSingleI.index + malformedSingleI[0].length : undefined;
+  let tail = lastCode ? row.text.slice(lastCode.index! + lastCode[0].length)
+    : recoveredCodeEnd !== undefined ? row.text.slice(recoveredCodeEnd) : row.text;
   // Strip an unreadable cage only to record unsafe evidence for this preference.
   // It must never become the code used for a message.
   if (!lastCode) tail = tail.replace(/^\s*[A-Za-z1|]{1,2}\s*[-_\u2013\u2014:.]?\s*\d{1,3}\b/, "");
@@ -166,17 +175,17 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   if (!districts.includes(district)) return undefined;
 
   const relevant = new Set(`${city} ${district} ${code.replace("-", " ")}`.split(/\s+/).filter(Boolean));
-  const codeBackedByAt = hasExactAt && /^I-\d{2}$/.test(code);
+  const codeBackedByAt = hasExactAt && /^I-\d{1,2}$/.test(code);
   const wordConfidence = row.words.filter((word) => {
     // The thin I is commonly the lowest-confidence glyph in an otherwise
     // clear row. A complete AT on that same row supplies the structural
     // confirmation, so score the city and district instead of vetoing the
     // consensus because of the I/1 glyph alone.
-    if (codeBackedByAt && /^(?:I|1|l|\|)\s*[-_:.]?\s*\d{2}$/i.test(word.text)) return false;
+    if (codeBackedByAt && /^(?:(?:I|1|l|\|)\s*[-_:.]?|-{1,2})\s*\d{1,2}$/i.test(word.text)) return false;
     return normalizeNeighborhoodIdentity(word.text).split(" ").some((token) => relevant.has(token));
   }).map((word) => word.confidence);
   const confidence = Math.round(Math.min(row.confidence, ...(wordConfidence.length ? wordConfidence : [row.confidence])));
-  return { code, confidence };
+  return { code, confidence, requiresThreeEvidence };
 }
 
 function hasExplicitCityDistrictPair(value: string, configuredCity: string, configuredDistrict: string) {

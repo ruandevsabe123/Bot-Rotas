@@ -152,6 +152,21 @@ test("AT completo impede a baixa confianca do caractere I de vetar I-24", () => 
   assert.ok(result.detection.confidence >= 65);
 });
 
+test("recupera I-6 lido como dois hifens somente com tres evidencias e AT", () => {
+  const text = "--6 | AT20260926ABV48 | 88 Campos dos Goytacazes | Parque Leopoldina";
+  const variants = [reading([text], "a"), reading([text], "b"), reading([text], "c")];
+  const preference = [{ cidade: "Campos dos Goytacazes", bairro: "Parque Leopoldina" }];
+  const result = selectPreferredNeighborhoodFromOcr({ ...variants[0], variants }, preference);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "I-6");
+
+  const onlyTwo = variants.slice(0, 2);
+  assert.equal(selectPreferredNeighborhoodFromOcr({ ...onlyTwo[0], variants: onlyTwo }, preference).status, "unsafe");
+  assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
+    "--6 | 88 Campos dos Goytacazes | Parque Leopoldina"
+  ]), preference).status, "unsafe");
+});
+
 test("não usa gaiola da linha vizinha e reúne fragmentos da mesma linha visual", () => {
   const unsafe = consensus([
     line("F-14", 30, 20),
