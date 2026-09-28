@@ -9,7 +9,7 @@ export type NeighborhoodSelection = {
   detections: DetectedRouteCode[];
 };
 
-type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string };
+type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string; trailingCellText?: string };
 type Match = { row: Row; code: string; confidence: number; variant: number };
 
 export function normalizeNeighborhoodIdentity(value: string) {
@@ -67,6 +67,11 @@ export function selectPreferredNeighborhoodFromOcr(
       }
       const confirmed = [...evidence.values()];
       const best = [...matching].sort((left, right) => right.confidence - left.confidence)[0];
+      // A single treatment can read a letter-shaped cage (for example G-2)
+      // as a digit (6-2). Do not let that incomplete reading veto three
+      // independent, confident agreements; with fewer than three, keep the
+      // conservative block.
+      const requiredEvidence = incomplete ? 3 : 2;
       const detection: DetectedRouteCode = {
         route: preference.cidade ? `${preference.cidade} | ${preference.bairro}` : preference.bairro,
         cidade: preference.cidade,
@@ -76,7 +81,7 @@ export function selectPreferredNeighborhoodFromOcr(
         confidence: confirmed.length ? Math.round(Math.min(...confirmed.map((match) => match.confidence))) : best.confidence,
         evidenceCount: evidence.size,
         variantCount: variants.length,
-        safeForAutomatic: codes.length === 1 && !incomplete && evidence.size >= 2
+        safeForAutomatic: codes.length === 1 && evidence.size >= requiredEvidence
       };
       return detection;
     });
@@ -118,6 +123,11 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   if (row.districtText !== undefined) {
     tail = row.districtText;
     if (city && row.localityText && !isCompatibleCity(row.localityText, city)) return undefined;
+  } else if (!city && row.trailingCellText !== undefined) {
+    // Headerless exports still preserve column geometry. When the client did
+    // not configure a city, compare only the physically isolated last cell;
+    // this accepts "Centro" but never the suffix of "Novo Centro".
+    tail = row.trailingCellText;
   } else if (city && leadingCity) {
     // The city must be complete and immediately precede the neighborhood data.
     // Retain real separators between multiple explicitly listed neighborhoods.
@@ -250,6 +260,23 @@ function readRows(reading: RouteOcrResult): Row[] {
           const center = word.left + word.width / 2;
           return center >= localityStart && (localityEnd === undefined || center < localityEnd);
         }).map((word) => word.text).join(" ") : undefined,
+      trailingCellText: districtStart === undefined ? inferTrailingCellText(sorted) : undefined,
       confidence: sorted.reduce((total, word) => total + word.confidence, 0) / sorted.length };
   });
+}
+
+function inferTrailingCellText(words: OcrLine["words"]) {
+  if (words.length < 4) return undefined;
+  const heights = words.map((word) => word.height).filter((height) => height > 0).sort((a, b) => a - b);
+  const typicalHeight = heights[Math.floor(heights.length / 2)] || 0;
+  // Choose the rightmost real column gap. Normal spaces inside a city or
+  // multi-word neighborhood are substantially narrower than one text height.
+  let cellStart = -1;
+  for (let index = 1; index < words.length; index += 1) {
+    const previous = words[index - 1];
+    const gap = words[index].left - (previous.left + previous.width);
+    if (gap >= typicalHeight * 1.35) cellStart = index;
+  }
+  if (cellStart < 0) return undefined;
+  return words.slice(cellStart).map((word) => word.text).join(" ");
 }

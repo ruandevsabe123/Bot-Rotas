@@ -87,6 +87,18 @@ test("conflito entre tratamentos bloqueia mesmo contra duas leituras concordante
   assert.equal(selectPreferredNeighborhoodFromOcr({ ...variants[0], variants }, preferred).status, "unsafe");
 });
 
+test("tres leituras iguais superam uma leitura sem letra da gaiola", () => {
+  const variant = (code, source) => reading([
+    line("ROTA", 10, 20), line("CIDADE", 10, 500), line("BAIRRO", 10, 1000),
+    line(code, 60, 20), line("Sao Francisco de Itabapoana", 60, 500), line("Floresta", 60, 1000)
+  ], source);
+  const variants = [variant("G-2", "a"), variant("G-2", "b"), variant("G-2", "c"), variant("6-2", "d")];
+  const result = selectPreferredNeighborhoodFromOcr({ ...variants[0], variants }, [{ cidade: "", bairro: "Floresta" }]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "G-2");
+  assert.equal(result.detection.evidenceCount, 3);
+});
+
 test("não inventa I a partir de 1, l, barra ou letra duplicada", () => {
   for (const code of ["1-24", "l-24", "|-24", "II-24"]) {
     const result = selectPreferredNeighborhoodFromOcr(consensus([`${code} Campos dos Goytacazes Parque Rodoviário`]), preferred);
@@ -213,6 +225,27 @@ test("layout sem cabecalho aceita Campos abreviado na configuracao e cidade comp
   assert.equal(result.status, "selected");
   assert.equal(result.preferenceIndex, 1);
   assert.equal(result.detection.code, "H-17");
+});
+
+test("layout sem cabecalho usa a ultima coluna quando a cidade nao foi configurada", () => {
+  const visualRow = (code, at, quantity, city, district, top) => [
+    line(code, top, 20), line(at, top, 150), line(String(quantity), top, 410),
+    line(city, top, 540), line(district, top, 1050)
+  ];
+  const rows = [
+    ...visualRow("H-17", "AT20260926ABVRN", 106, "Campos dos Goytacazes", "Centro", 30),
+    ...visualRow("G-2", "AT20260926ABWLR", 79, "Sao Francisco de Itabapoana", "Floresta", 70)
+  ];
+  const result = selectPreferredNeighborhoodFromOcr(consensus(rows), [
+    { cidade: "", bairro: "Floresta" },
+    { cidade: "", bairro: "Centro" }
+  ]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.preferenceIndex, 0);
+  assert.equal(result.detection.code, "G-2");
+
+  const longer = consensus(visualRow("H-17", "AT20260926ABVRN", 106, "Campos dos Goytacazes", "Novo Centro", 30));
+  assert.equal(selectPreferredNeighborhoodFromOcr(longer, [{ cidade: "", bairro: "Centro" }]).status, "no-match");
 });
 
 test("linha com um código válido e outro ilegível continua ambígua", () => {

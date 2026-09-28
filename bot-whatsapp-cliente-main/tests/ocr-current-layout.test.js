@@ -36,11 +36,11 @@ test("OCR reconhece o layout operacional atual sem cabecalho", {
 
     const ocr = await readRouteImageOcr(image, { preferCageCrop: false, fastFirst: false, maxReadings: 4 });
     const result = selectPreferredNeighborhoodFromOcr(ocr, [
-      { cidade: "Campos dos Goytacazes", bairro: "Floresta" },
-      { cidade: "Campos dos Goytacazes", bairro: "Centro" }
+      { cidade: "", bairro: "Floresta" },
+      { cidade: "", bairro: "Centro" }
     ]);
     assert.equal(result.status, "selected", JSON.stringify({ result, variants: ocr.variants?.map((item) => item.text) }));
-    assert.equal(result.detection.code, "H-17");
+    assert.equal(result.detection.code, "G-2");
   } finally {
     await shutdownRouteOcrEngine();
     fs.rmSync(temp, { recursive: true, force: true });
