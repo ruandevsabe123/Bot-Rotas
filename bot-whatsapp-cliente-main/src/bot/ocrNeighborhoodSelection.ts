@@ -67,11 +67,11 @@ export function selectPreferredNeighborhoodFromOcr(
       }
       const confirmed = [...evidence.values()];
       const best = [...matching].sort((left, right) => right.confidence - left.confidence)[0];
-      // A single treatment can read a letter-shaped cage (for example G-2)
-      // as a digit (6-2). Do not let that incomplete reading veto three
-      // independent, confident agreements; with fewer than three, keep the
-      // conservative block.
-      const requiredEvidence = incomplete ? 3 : 2;
+      // A treatment can read a letter-shaped cage (for example G-2) as a
+      // digit (6-2). An incomplete reading must not veto the normal consensus
+      // of two independent treatments. A second valid, conflicting cage is
+      // still represented in `codes` and blocks the automatic send.
+      const requiredEvidence = 2;
       const detection: DetectedRouteCode = {
         route: preference.cidade ? `${preference.cidade} | ${preference.bairro}` : preference.bairro,
         cidade: preference.cidade,

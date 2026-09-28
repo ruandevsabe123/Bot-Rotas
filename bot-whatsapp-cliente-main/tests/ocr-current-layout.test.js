@@ -22,16 +22,16 @@ test("OCR reconhece o layout operacional atual sem cabecalho", {
       ["G-2", "AT20260926ABWLR", "79", "São Francisco de Itabapoana", "Floresta"]
     ];
     const lines = rows.map((row, index) => {
-      const y = 78 + index * 58;
+      const y = 78 + index * 29;
       const fill = index % 2 ? "#f4f5f6" : "#ffffff";
-      return `<rect x="0" y="${y - 36}" width="1500" height="58" fill="${fill}"/>` +
-        `<text x="18" y="${y}">${row[0]}</text><text x="155" y="${y}">${row[1]}</text>` +
-        `<text x="455" y="${y}">${row[2]}</text><text x="700" y="${y}">${row[3]}</text>` +
-        `<text x="1210" y="${y}">${row[4]}</text>`;
+      return `<rect x="0" y="${y - 19}" width="1000" height="29" fill="${fill}"/>` +
+        `<text x="12" y="${y}">${row[0]}</text><text x="104" y="${y}">${row[1]}</text>` +
+        `<text x="303" y="${y}">${row[2]}</text><text x="467" y="${y}">${row[3]}</text>` +
+        `<text x="837" y="${y}">${row[4]}</text>`;
     }).join("");
-    const svg = `<svg width="1500" height="300" xmlns="http://www.w3.org/2000/svg">
-      <rect width="1500" height="300" fill="white"/><rect width="1500" height="35" fill="#f04400"/>
-      <g font-family="Arial" font-size="25" fill="#303030">${lines}</g></svg>`;
+    const svg = `<svg width="1000" height="201" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1000" height="201" fill="white"/><rect width="1000" height="27" fill="#f04400"/>
+      <g font-family="Arial" font-size="16" fill="#303030">${lines}</g></svg>`;
     await sharp(Buffer.from(svg)).png().toFile(image);
 
     const ocr = await readRouteImageOcr(image, { preferCageCrop: false, fastFirst: false, maxReadings: 4 });

@@ -87,16 +87,21 @@ test("conflito entre tratamentos bloqueia mesmo contra duas leituras concordante
   assert.equal(selectPreferredNeighborhoodFromOcr({ ...variants[0], variants }, preferred).status, "unsafe");
 });
 
-test("tres leituras iguais superam uma leitura sem letra da gaiola", () => {
+test("duas leituras iguais superam uma leitura sem letra da gaiola", () => {
   const variant = (code, source) => reading([
     line("ROTA", 10, 20), line("CIDADE", 10, 500), line("BAIRRO", 10, 1000),
     line(code, 60, 20), line("Sao Francisco de Itabapoana", 60, 500), line("Floresta", 60, 1000)
   ], source);
-  const variants = [variant("G-2", "a"), variant("G-2", "b"), variant("G-2", "c"), variant("6-2", "d")];
+  const variants = [variant("G-2", "a"), variant("G-2", "b"), variant("6-2", "c")];
   const result = selectPreferredNeighborhoodFromOcr({ ...variants[0], variants }, [{ cidade: "", bairro: "Floresta" }]);
   assert.equal(result.status, "selected");
   assert.equal(result.detection.code, "G-2");
-  assert.equal(result.detection.evidenceCount, 3);
+  assert.equal(result.detection.evidenceCount, 2);
+
+  const insufficient = [variant("G-2", "a"), variant("6-2", "b")];
+  assert.equal(selectPreferredNeighborhoodFromOcr(
+    { ...insufficient[0], variants: insufficient }, [{ cidade: "", bairro: "Floresta" }]
+  ).status, "unsafe");
 });
 
 test("não inventa I a partir de 1, l, barra ou letra duplicada", () => {
