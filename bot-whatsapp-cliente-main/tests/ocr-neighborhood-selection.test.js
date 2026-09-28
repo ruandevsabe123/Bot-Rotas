@@ -140,6 +140,18 @@ test("recupera I-24 pela gaiola ambigua quando a mesma linha possui AT completo"
   ]), [{ cidade: "Campos dos Goytacazes", bairro: "Parque Presidente Vargas" }]).status, "unsafe");
 });
 
+test("AT completo impede a baixa confianca do caractere I de vetar I-24", () => {
+  const row = line("I-24 AT20260926ABWU3 100 Campos dos Goytacazes Parque Presidente Vargas");
+  row.words[0].confidence = 18;
+  const variants = [reading([structuredClone(row)], "a"), reading([structuredClone(row)], "b")];
+  const result = selectPreferredNeighborhoodFromOcr({ ...variants[0], variants }, [
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Presidente Vargas" }
+  ]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "I-24");
+  assert.ok(result.detection.confidence >= 65);
+});
+
 test("não usa gaiola da linha vizinha e reúne fragmentos da mesma linha visual", () => {
   const unsafe = consensus([
     line("F-14", 30, 20),

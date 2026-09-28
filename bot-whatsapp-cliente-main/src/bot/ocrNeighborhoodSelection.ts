@@ -166,8 +166,15 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   if (!districts.includes(district)) return undefined;
 
   const relevant = new Set(`${city} ${district} ${code.replace("-", " ")}`.split(/\s+/).filter(Boolean));
-  const wordConfidence = row.words.filter((word) => normalizeNeighborhoodIdentity(word.text).split(" ")
-    .some((token) => relevant.has(token))).map((word) => word.confidence);
+  const codeBackedByAt = hasExactAt && /^I-\d{2}$/.test(code);
+  const wordConfidence = row.words.filter((word) => {
+    // The thin I is commonly the lowest-confidence glyph in an otherwise
+    // clear row. A complete AT on that same row supplies the structural
+    // confirmation, so score the city and district instead of vetoing the
+    // consensus because of the I/1 glyph alone.
+    if (codeBackedByAt && /^(?:I|1|l|\|)\s*[-_:.]?\s*\d{2}$/i.test(word.text)) return false;
+    return normalizeNeighborhoodIdentity(word.text).split(" ").some((token) => relevant.has(token));
+  }).map((word) => word.confidence);
   const confidence = Math.round(Math.min(row.confidence, ...(wordConfidence.length ? wordConfidence : [row.confidence])));
   return { code, confidence };
 }
