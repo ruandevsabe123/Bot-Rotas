@@ -14,6 +14,7 @@ import { LeaderStore, normalizePhone as normalizeLeaderPhone } from "./leaderSto
 import { defaultUserColor, normalizeDispatchAdvantageMs, normalizeDispatchBeatsEmail, normalizeDispatchMatchups, normalizeDispatchPriorityLevel, normalizeUserColor, PanelUserStore, StoredPanelUser } from "./panelUserStore";
 import { SupportMessageStore } from "./supportMessageStore";
 import { ImageUsageStore } from "./imageUsageStore";
+import { isAlwaysBillableValidatedRouteClient, validatedRouteUsagePayload } from "./validatedRouteUsage";
 import { PushNotificationStore } from "./pushNotificationStore";
 import { getCurrentRelease, shouldShowCurrentReleaseToClients } from "./releaseNotes";
 import { RomaneioStore } from "./services/romaneio/romaneioStore";
@@ -770,22 +771,8 @@ async function validateAdminRoute(routeId: string, adminEmail: string) {
 }
 
 function approveRouteImageUsage(route: RouteDispatch | undefined, clientEmail: string, reviewedBy: string) {
-  if (!route?.ocr) return false;
-  const processedAt = route.ocr.processedAt || route.createdAt;
-  return imageUsageStore.decideValidatedRoute({
-    analysisId: route.ocr.analysisId,
-    routeDispatchId: route.id,
-    clientEmail,
-    messageId: route.sentMessageIds[0] || route.id,
-    result: "detected",
-    route: route.ocr.route,
-    bairro: route.ocr.bairro,
-    gaiola: route.ocr.code,
-    confidence: route.ocr.confidence,
-    groupJid: route.groupJid,
-    groupName: route.groupName,
-    analysisFinishedAt: processedAt
-  }, reviewedBy);
+  if (!route || (!route.ocr && !isAlwaysBillableValidatedRouteClient(clientEmail))) return false;
+  return imageUsageStore.decideValidatedRoute(validatedRouteUsagePayload(route, clientEmail), reviewedBy);
 }
 
 async function rejectAdminRoute(routeId: string, adminEmail: string, reason?: string) {
