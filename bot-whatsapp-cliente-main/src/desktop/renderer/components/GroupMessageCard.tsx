@@ -64,8 +64,10 @@ function parseCodes(value: string) {
     .filter(Boolean);
 }
 
-function createEmptyRoute(): MonitoredRoute {
-  return { cidade: "", bairro: "" };
+const DEFAULT_OCR_CITY = "Campos dos Goytacazes";
+
+function createEmptyRoute(city = ""): MonitoredRoute {
+  return { cidade: city.trim(), bairro: "" };
 }
 
 export function GroupMessageCard({ kind, targetMode = "manual", config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup, onSaveRoutePreset, onDeleteRoutePreset }: Props) {
@@ -74,6 +76,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   const [senderName, setSenderName] = useState("");
   const [codes, setCodes] = useState("");
   const [monitoredRoutes, setMonitoredRoutes] = useState<MonitoredRoute[]>([createEmptyRoute()]);
+  const [defaultCity, setDefaultCity] = useState(DEFAULT_OCR_CITY);
   const [manualCodes, setManualCodes] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
   const [messageCount, setMessageCount] = useState(15);
@@ -105,6 +108,8 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     setCodes(savedCodesKey);
     const savedPreferences = getNeighborhoodPreferences(config);
     setMonitoredRoutes(savedPreferences.length ? savedPreferences.map((route) => ({ ...route })) : [createEmptyRoute()]);
+    const savedCities = [...new Set(savedPreferences.map((route) => route.cidade.trim()).filter(Boolean))];
+    setDefaultCity(savedCities.length === 1 ? savedCities[0] : DEFAULT_OCR_CITY);
     setManualCodes((config.codigosMensagensAlvo || []).join("\n"));
     setMessageCount(config.testMessageCount || 15);
     setIntervalMs(config.testMessageIntervalMs || 0);
@@ -218,12 +223,35 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
         {isImageTarget ? (
           <div className="ocr-primary-copy">
             <strong>Bairros por ordem de preferência</strong>
-            <span>O bot procura seus bairros na imagem e prepara uma única mensagem para a gaiola da primeira preferência disponível com leitura segura.</span>
+            <span>O bot procura todos os bairros na imagem e envia as gaiolas confirmadas na ordem configurada.</span>
           </div>
         ) : null}
 
         {isImageTarget ? (
           <section className="ocr-route-fields">
+            <div className="settings-grid compact-settings">
+              <label>
+                Cidade padrão dos bairros
+                <input
+                  aria-label="Cidade padrão dos bairros"
+                  value={defaultCity}
+                  maxLength={200}
+                  disabled={busy}
+                  onChange={(event) => setDefaultCity(event.target.value)}
+                  placeholder={DEFAULT_OCR_CITY}
+                />
+              </label>
+              <button
+                className="button secondary"
+                disabled={busy || !defaultCity.trim() || !monitoredRoutes.some((route) => !route.cidade.trim())}
+                type="button"
+                onClick={() => setMonitoredRoutes(monitoredRoutes.map((route) => route.cidade.trim()
+                  ? route : { ...route, cidade: defaultCity.trim() }))}
+              >
+                Aplicar onde está vazio
+              </button>
+            </div>
+            <small>Novos bairros usam esta cidade. Você pode trocar a cidade individualmente quando a rota for de outro município.</small>
             <div className="settings-grid compact-settings">
               <label>
                 Nome da configuração
@@ -313,7 +341,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </div>
             ))}
             <div className="ocr-route-actions">
-              <button className="button secondary" disabled={busy} type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute()])}>
+              <button className="button secondary" disabled={busy} type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute(defaultCity)])}>
                 Adicionar outro bairro
               </button>
               <small>{nextPreferences.length} bairro(s) configurado(s). Use as setas para ordenar suas preferências. A cidade ajuda a distinguir bairros com o mesmo nome; quando preenchida, ela também precisa ser identificada na imagem.</small>

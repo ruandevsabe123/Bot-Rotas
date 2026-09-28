@@ -114,15 +114,30 @@ test("editor salva bairros visíveis e sua nova ordem, sem reutilizar códigos o
   assert.equal(editor.all((node) => node.type === "textarea").length, 0);
   editor.change(editor.find((node) => node.props["aria-label"] === "Bairro da preferência 1"), "Centro");
   editor.change(editor.find((node) => node.props["aria-label"] === "Cidade da preferência 1 (opcional)"), "Cidade B");
+  editor.change(editor.find((node) => node.props["aria-label"] === "Cidade padrão dos bairros"), "Campos dos Goytacazes");
   editor.click(editor.find((node) => node.type === "button" && node.props.children === "Adicionar outro bairro"));
   editor.change(editor.find((node) => node.props["aria-label"] === "Bairro da preferência 2"), "Jardim Sul");
   editor.click(editor.all((node) => node.props.title === "Aumentar preferência")[1]);
   editor.submit();
   const args = editor.saved[0];
   assert.deepEqual(JSON.parse(JSON.stringify(args[4])), ["Jardim Sul", "Centro"]);
-  assert.deepEqual(JSON.parse(JSON.stringify(args[8])), [{ cidade: "", bairro: "Jardim Sul" }, { cidade: "Cidade B", bairro: "Centro" }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(args[8])), [{ cidade: "Campos dos Goytacazes", bairro: "Jardim Sul" }, { cidade: "Cidade B", bairro: "Centro" }]);
   assert.equal(args[9], "ocr");
   assert.equal(editor.config.rotasMonitoradasDetalhadas[0].bairro, "Bairro antigo");
+});
+
+test("cidade padrão começa em Campos e preenche somente bairros sem cidade", () => {
+  const editor = renderEditor({
+    config: {
+      grupoAlvoJid: "test@g.us", grupoAlvoNome: "Grupo teste", nomeEnvio: "Cliente",
+      codigosMensagensAlvo: [], rotasMonitoradas: ["Centro"], rotasMonitoradasDetalhadas: [],
+      routePresets: [], testMessageCount: 15, testMessageIntervalMs: 0
+    }
+  });
+  const city = editor.find((node) => node.props["aria-label"] === "Cidade padrão dos bairros");
+  assert.equal(city.props.value, "Campos dos Goytacazes");
+  editor.click(editor.find((node) => node.type === "button" && node.props.children === "Aplicar onde está vazio"));
+  assert.equal(editor.find((node) => node.props["aria-label"] === "Cidade da preferência 1 (opcional)").props.value, "Campos dos Goytacazes");
 });
 
 test("editor não inicia IA sem bairro ou com uma cidade sem bairro", () => {
