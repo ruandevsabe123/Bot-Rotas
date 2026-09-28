@@ -127,6 +127,19 @@ test("não inventa I a partir de 1, l, barra ou letra duplicada", () => {
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus(["I-24 Campos dos Goytacazes Parque Rodoviário"]), preferred).status, "selected");
 });
 
+test("recupera I-24 pela gaiola ambigua quando a mesma linha possui AT completo", () => {
+  for (const code of ["1-24", "l-24", "|-24"]) {
+    const result = selectPreferredNeighborhoodFromOcr(consensus([
+      `${code} AT20260926ABWU3 100 Campos dos Goytacazes Parque Presidente Vargas`
+    ]), [{ cidade: "Campos dos Goytacazes", bairro: "Parque Presidente Vargas" }]);
+    assert.equal(result.status, "selected", code);
+    assert.equal(result.detection.code, "I-24", code);
+  }
+  assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
+    "1-24 100 Campos dos Goytacazes Parque Presidente Vargas"
+  ]), [{ cidade: "Campos dos Goytacazes", bairro: "Parque Presidente Vargas" }]).status, "unsafe");
+});
+
 test("não usa gaiola da linha vizinha e reúne fragmentos da mesma linha visual", () => {
   const unsafe = consensus([
     line("F-14", 30, 20),

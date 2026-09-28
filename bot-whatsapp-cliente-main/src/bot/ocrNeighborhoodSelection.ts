@@ -121,8 +121,17 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   // 1/l/|/II into I or truncate a three-digit value.
   const codeMatches = [...row.text.matchAll(/(?:^|[\s|;])([A-Z])[-_\u2013\u2014:.\s]*(\d{1,2})(?=$|[\s|;,])/g)];
   const suspiciousCodes = [...row.text.matchAll(/(?:^|[\s|;])([1|]|II|l|i)\s*[-_\u2013\u2014:.]\s*(\d{1,3})(?=$|[\s|;,])/g)];
-  const code = codeMatches.length === 1 && suspiciousCodes.length === 0
+  let code = codeMatches.length === 1 && suspiciousCodes.length === 0
     ? `${codeMatches[0][1].toUpperCase()}-${codeMatches[0][2]}` : "";
+  // In the narrow route column Tesseract frequently reads I-24 as 1-24,
+  // l-24 or |-24. Recover only a two-digit I route when the same physical row
+  // also contains a complete AT identifier; consensus across OCR treatments is
+  // still required before automatic dispatch.
+  const suspiciousPrefix = suspiciousCodes.length === 1 ? suspiciousCodes[0][1] : "";
+  const hasExactAt = /\bAT[A-Z0-9]{8,}\b/i.test(row.text);
+  if (!code && hasExactAt && /^[1|li]$/i.test(suspiciousPrefix) && suspiciousCodes[0][2].length === 2) {
+    code = `I-${suspiciousCodes[0][2]}`;
+  }
   const lastCode = codeMatches[codeMatches.length - 1];
   let tail = lastCode ? row.text.slice(lastCode.index! + lastCode[0].length) : row.text;
   // Strip an unreadable cage only to record unsafe evidence for this preference.
