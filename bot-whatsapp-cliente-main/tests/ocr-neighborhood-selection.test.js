@@ -40,6 +40,7 @@ test("escolhe somente o bairro na ordem de preferência, independente da ordem v
   assert.equal(result.preferenceIndex, 0);
   assert.equal(result.detection.code, "F-14");
   assert.equal(result.detection.evidenceCount, 2);
+  assert.deepEqual(result.selections.map((item) => item.detection.code), ["F-14", "B-12"]);
 });
 
 test("passa à próxima preferência apenas quando a anterior está ausente", () => {
@@ -265,7 +266,9 @@ test("lote mantém coordenadas de fotos separadas e não empresta gaiola entre f
   const combined = combineRouteImageBatch([photoA, photoB]);
   assert.equal(selectPreferredNeighborhoodFromOcr(combined, preferred).detection.code, "H-20");
   const noCode = consensus(["Campos dos Goytacazes Parque Rodoviário"]);
-  assert.equal(selectPreferredNeighborhoodFromOcr(combineRouteImageBatch([photoA, noCode]), preferred).status, "unsafe");
+  const partial = selectPreferredNeighborhoodFromOcr(combineRouteImageBatch([photoA, noCode]), preferred);
+  assert.equal(partial.status, "selected");
+  assert.deepEqual(partial.selections.map((item) => item.detection.code), ["F-14"]);
 });
 
 test("OCR real mantém cidade e bairro à direita da imagem completa", {

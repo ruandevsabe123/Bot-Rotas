@@ -2622,18 +2622,24 @@ export class BotService extends EventEmitter {
         return;
       }
 
-      const preference = preferences[decision.preferenceIndex!];
-      const option: OcrRouteOption = {
-        id: `neighborhood::${analysisId}::${decision.preferenceIndex}::${detected.code}`,
-        rank: 1, rota: detected.route, gaiola: detected.code,
-        bairro: preference.bairro, cidade: preference.cidade || detected.cidade,
-        distanciaKm: 0, pacotes: 0, paradas: 0,
-        passedFilters: true,
-        reasons: [`Preferência ${decision.preferenceIndex! + 1}: ${preference.bairro}`, "Bairro e gaiola conferidos na mesma linha em leituras concordantes."],
-        score: detected.confidence,
-        observation: "Selecionado diretamente da imagem, sem romaneio."
-      };
-      this.lastOcrDispatchKey = `${groupJid}:${messageId}:${detected.code}`;
+      const selections = decision.selections.length ? decision.selections : [{
+        preferenceIndex: decision.preferenceIndex!, detection: detected
+      }];
+      const options: OcrRouteOption[] = selections.map(({ preferenceIndex, detection }, rank) => {
+        const preference = preferences[preferenceIndex];
+        return {
+          id: `neighborhood::${analysisId}::${preferenceIndex}::${detection.code}`,
+          rank: rank + 1, rota: detection.route, gaiola: detection.code,
+          bairro: preference.bairro, cidade: preference.cidade || detection.cidade,
+          distanciaKm: 0, pacotes: 0, paradas: 0,
+          passedFilters: true,
+          reasons: [`Preferência ${preferenceIndex + 1}: ${preference.bairro}`, "Bairro e gaiola conferidos na mesma linha em leituras concordantes."],
+          score: detection.confidence,
+          observation: "Selecionado diretamente da imagem, sem romaneio."
+        };
+      });
+      const option = options[0];
+      this.lastOcrDispatchKey = `${groupJid}:${messageId}:${options.map((item) => item.gaiola).join(",")}`;
       this.lastOcrInsight = {
         analysisId, source: ocr.source, text: ocr.text, line: detected.line,
         route: detected.route, cidade: option.cidade, bairro: option.bairro,
@@ -2647,13 +2653,13 @@ export class BotService extends EventEmitter {
         status: "ready", analysisId, timing, source: ocr.source, line: detected.line,
         imagePreviewUrl,
         detected: { rota: detected.route, bairro: option.bairro, gaiola: detected.code },
-        processedAt: new Date().toISOString(), options: [option], detectedRouteCount: decision.detections.length,
-        message: `Preferência ${decision.preferenceIndex! + 1}: ${option.bairro}, gaiola ${detected.code}.`
+        processedAt: new Date().toISOString(), options, detectedRouteCount: options.length,
+        message: `${options.length} bairro(s) confirmado(s): ${options.map((item) => `${item.bairro}, gaiola ${item.gaiola}`).join("; ")}.`
       };
-      this.applyOcrRouteSelection([option], "automatic");
+      this.applyOcrRouteSelection(options, "automatic");
       dispatchRaceReady = true;
       reportState("ready");
-      this.logger.success(`[IA] ${option.bairro} corresponde à gaiola ${detected.code}. Seleção pela ordem de preferência.`);
+      this.logger.success(`[IA] ${options.map((item) => `${item.bairro} corresponde à gaiola ${item.gaiola}`).join("; ")}. Seleção pela ordem de preferência.`);
       const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
       if (!sentImmediately && isCurrent()) this.logger.info("[IA] Bairro e gaiola preparados; aguardando abertura do grupo ou recuperação da conexão.");
       this.emitSnapshot();

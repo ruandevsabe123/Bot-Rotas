@@ -65,7 +65,7 @@ function batch(...ids) {
   return ids.map((messageId) => ({ messageId, msg: {}, groupJid: "group@g.us" }));
 }
 
-test("IA escolhe apenas o primeiro bairro preferido, sem arquivo ou consulta de romaneio", async (t) => {
+test("IA envia todos os bairros encontrados na ordem de preferencia, sem romaneio", async (t) => {
   const { bot, states } = createBot(t);
   // The lower preference is the first physical row. Configuration order wins.
   mockReading(t, async (_imagePath, options) => {
@@ -75,8 +75,9 @@ test("IA escolhe apenas o primeiro bairro preferido, sem arquivo ou consulta de 
   });
   bot.romaneioStore = { routes() { throw new Error("No romaneio should be read"); }, getSettings() { throw new Error("No ranking should be used"); } };
   await bot.processRouteImageBatch(batch("image-1"), 1);
-  assert.deepEqual(bot.pendingOcrMessages, ["Cliente A-1"]);
+  assert.deepEqual(bot.pendingOcrMessages, ["Cliente A-1", "Cliente B-2"]);
   assert.equal(bot.ocrRouteSelection.options[0].bairro, "Centro");
+  assert.equal(bot.ocrRouteSelection.options[1].bairro, "Jardim Azul");
   assert.equal(bot.ocrRouteSelection.status, "confirmed");
   assert.deepEqual(states.map((event) => event.state), ["processing", "ready"]);
 });
@@ -95,11 +96,11 @@ test("painel recebe previa compacta enquanto OCR usa a imagem completa", async (
   assert.match(bot.ocrRouteSelection.imagePreviewUrl, /^data:image\/jpeg;base64,/);
 });
 
-test("bairro repetido prepara somente a primeira gaiola visual confirmada", async (t) => {
+test("bairro repetido usa a primeira gaiola e continua para os demais bairros", async (t) => {
   const { bot, states } = createBot(t);
   mockReading(t, async () => reading(["A-1 Cidade Centro", "B-2 Cidade Centro", "C-3 Cidade Jardim Azul"]));
   await bot.processRouteImageBatch(batch("ambiguous"), 1);
-  assert.deepEqual(bot.pendingOcrMessages, ["Cliente A-1"]);
+  assert.deepEqual(bot.pendingOcrMessages, ["Cliente A-1", "Cliente C-3"]);
   assert.equal(bot.ocrRouteSelection.status, "confirmed");
   assert.deepEqual(states.map((event) => event.state), ["processing", "ready"]);
 });

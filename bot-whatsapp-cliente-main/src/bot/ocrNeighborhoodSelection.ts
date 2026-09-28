@@ -7,6 +7,7 @@ export type NeighborhoodSelection = {
   preferenceIndex?: number;
   reason: string;
   detections: DetectedRouteCode[];
+  selections: { detection: DetectedRouteCode; preferenceIndex: number }[];
 };
 
 type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string; trailingCellText?: string };
@@ -32,12 +33,14 @@ export function selectPreferredNeighborhoodFromOcr(
     bairro: String(preference.bairro || "").trim(),
     index
   })).filter((preference) => normalizeNeighborhoodIdentity(preference.bairro));
-  if (!configured.length) return { status: "unconfigured", reason: "Nenhum bairro preferido configurado.", detections: [] };
+  if (!configured.length) return { status: "unconfigured", reason: "Nenhum bairro preferido configurado.", detections: [], selections: [] };
 
   const variants = ocr.variants?.length ? ocr.variants : [ocr];
   const rows = variants.map(readRows);
   const detections: DetectedRouteCode[] = [];
-  let firstDecision: Omit<NeighborhoodSelection, "detections"> | undefined;
+  const selections: NeighborhoodSelection["selections"] = [];
+  const selectedCodes = new Set<string>();
+  let firstFailure: Omit<NeighborhoodSelection, "detections" | "selections"> | undefined;
 
   for (const preference of configured) {
     const matches: Match[] = [];
@@ -86,20 +89,25 @@ export function selectPreferredNeighborhoodFromOcr(
       return detection;
     });
     detections.push(...byCode);
-    if (firstDecision) continue;
     const detection = byCode.find((candidate) => candidate.safeForAutomatic);
     if (detection) {
-      firstDecision = { status: "selected", preferenceIndex: preference.index, detection,
-        reason: "Bairro prioritário e gaiola confirmados em pelo menos duas leituras." };
-    } else {
-      firstDecision = { status: "unsafe", preferenceIndex: preference.index,
+      if (!selectedCodes.has(detection.code)) {
+        selectedCodes.add(detection.code);
+        selections.push({ preferenceIndex: preference.index, detection });
+      }
+    } else if (!firstFailure) {
+      firstFailure = { status: "unsafe", preferenceIndex: preference.index,
         reason: codes.length > 1 ? "O bairro prioritário aparece associado a gaiolas diferentes. Envio bloqueado."
           : incomplete ? "O bairro prioritário foi encontrado sem uma gaiola inequívoca na mesma linha. Envio bloqueado."
             : "O bairro prioritário não obteve duas leituras confiáveis da mesma gaiola. Envio bloqueado." };
     }
   }
-  return firstDecision ? { ...firstDecision, detections }
-    : { status: "no-match", reason: "Nenhuma linha corresponde exatamente à cidade e ao bairro configurados.", detections };
+  if (selections.length) return {
+    status: "selected", detection: selections[0].detection, preferenceIndex: selections[0].preferenceIndex,
+    reason: `${selections.length} bairro(s) confirmado(s) para envio na ordem de preferência.`, detections, selections
+  };
+  return firstFailure ? { ...firstFailure, detections, selections }
+    : { status: "no-match", reason: "Nenhuma linha corresponde exatamente à cidade e ao bairro configurados.", detections, selections };
 }
 
 function matchPreference(row: Row, preference: MonitoredRoute) {
