@@ -58,7 +58,12 @@ export function selectPreferredNeighborhoodFromOcr(
     }
     if (!matches.length) continue;
 
-    const codes = [...new Set(matches.map((match) => match.code).filter(Boolean))];
+    // Sparse OCR can visit a later occurrence of the same neighborhood first.
+    // A weak isolated code must not veto the strong consensus for the first
+    // visual row; conflicting cages still block when they reach this same
+    // confidence floor.
+    const codes = [...new Set(matches.filter((match) => match.confidence >= 65)
+      .map((match) => match.code).filter(Boolean))];
     const incomplete = matches.some((match) => !match.code);
     const byCode = codes.map((code) => {
       const matching = matches.filter((match) => match.code === code);

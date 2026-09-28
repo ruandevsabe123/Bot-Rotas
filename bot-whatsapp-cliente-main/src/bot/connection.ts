@@ -2591,7 +2591,7 @@ export class BotService extends EventEmitter {
         // Same complete-image profile for all clients; preferences are applied
         // afterwards so the expensive reading can be shared by the OCR cache.
         readings.push(await readRouteImageOcrWithoutBlockingSocket(imagePath, {
-          maxReadings: 4, fastFirst: false, preferCageCrop: false
+          maxReadings: 5, fastFirst: false, preferCageCrop: false
         }));
       }
       if (!isCurrent()) return;

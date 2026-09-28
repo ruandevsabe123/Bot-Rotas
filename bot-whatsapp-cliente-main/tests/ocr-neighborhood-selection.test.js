@@ -88,6 +88,20 @@ test("conflito entre tratamentos bloqueia mesmo contra duas leituras concordante
   assert.equal(selectPreferredNeighborhoodFromOcr({ ...variants[0], variants }, preferred).status, "unsafe");
 });
 
+test("leitura fraca de uma ocorrencia posterior nao veta o primeiro bairro confirmado", () => {
+  const weak = reading(["H-20 Campos dos Goytacazes Parque Rodoviário"], "weak");
+  weak.lines[0].confidence = 59;
+  weak.lines[0].words.forEach((word) => { word.confidence = 59; });
+  const variants = [
+    reading(["F-14 Campos dos Goytacazes Parque Rodoviário"], "a"),
+    reading(["F-14 Campos dos Goytacazes Parque Rodoviário"], "b"),
+    weak
+  ];
+  const result = selectPreferredNeighborhoodFromOcr({ ...variants[0], variants }, preferred);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "F-14");
+});
+
 test("duas leituras iguais superam uma leitura sem letra da gaiola", () => {
   const variant = (code, source) => reading([
     line("ROTA", 10, 20), line("CIDADE", 10, 500), line("BAIRRO", 10, 1000),
@@ -285,7 +299,7 @@ test("OCR real mantém cidade e bairro à direita da imagem completa", {
       <text x="25" y="220">B-12</text><text x="380" y="220">Campos dos Goytacazes</text><text x="1010" y="220">Centro</text>
       </g></svg>`;
     await sharp(Buffer.from(svg)).png().toFile(image);
-    const ocr = await readRouteImageOcr(image, { preferCageCrop: false, fastFirst: false, maxReadings: 4 });
+    const ocr = await readRouteImageOcr(image, { preferCageCrop: false, fastFirst: false, maxReadings: 5 });
     const result = selectPreferredNeighborhoodFromOcr(ocr, preferred);
     assert.equal(result.status, "selected", JSON.stringify({ result, text: ocr.variants?.map((item) => item.text) }));
     assert.equal(result.detection.code, "F-14");

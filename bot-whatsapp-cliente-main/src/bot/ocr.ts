@@ -434,19 +434,26 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
     if (!preferCageCrop) {
       // Neighborhood selection needs the entire row: the previous "full"
       // profile actually cropped ROTA + AT and discarded city/neighborhood.
-      const completeWidth = width > 0 ? Math.min(2800, Math.max(1800, width * 2)) : 2200;
+      // WhatsApp often recompresses wide table screenshots until route letters
+      // are only a few pixels wide. A 3x/Lanczos enlargement gives Tesseract
+      // enough edge information to distinguish B from 8 without guessing.
+      const completeWidth = width > 0 ? Math.min(3600, Math.max(2400, width * 3)) : 2800;
       const base = path.join(os.tmpdir(), `ocr-neighborhood-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       const contrast = `${base}-contrast.png`;
+      const soft = `${base}-soft.png`;
       const binary = `${base}-binary.png`;
-      generatedPaths.push(contrast, binary);
+      generatedPaths.push(contrast, soft, binary);
       await Promise.all([
         sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
-          .sharpen({ sigma: 0.7 }).png().toFile(contrast),
+          .sharpen({ sigma: 0.9, m1: 0.8, m2: 1.8 }).png().toFile(contrast),
+        sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
+          .linear(1.12, -8).sharpen({ sigma: 0.45 }).png().toFile(soft),
         sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
           .threshold(165).png().toFile(binary)
       ]);
       return [
         { path: contrast, label: "bairros-tabela-completa-contraste", generated: true, psm: 6 },
+        { path: soft, label: "bairros-tabela-completa-suave", generated: true, psm: 6 },
         { path: binary, label: "bairros-tabela-completa-binaria", generated: true, psm: 6 },
         { path: contrast, label: "bairros-tabela-completa-esparsa", generated: false, psm: 11 },
         { path: imagePath, label: "bairros-original", generated: false, psm: 11 }
