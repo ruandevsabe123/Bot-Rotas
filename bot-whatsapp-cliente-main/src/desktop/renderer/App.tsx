@@ -90,6 +90,55 @@ import {
 } from "./api";
 import "./styles.css";
 
+function useEdgeSwipeBack(onBack: () => void, enabled = true) {
+  const onBackRef = useRef(onBack);
+  onBackRef.current = onBack;
+
+  useEffect(() => {
+    if (!enabled) return;
+    let startX = 0;
+    let startY = 0;
+    let startedAt = 0;
+    let tracking = false;
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1 || event.touches[0].clientX > 36) {
+        tracking = false;
+        return;
+      }
+      startX = event.touches[0].clientX;
+      startY = event.touches[0].clientY;
+      startedAt = Date.now();
+      tracking = true;
+    };
+    const onTouchMove = (event: TouchEvent) => {
+      if (!tracking || event.touches.length !== 1) return;
+      const deltaX = event.touches[0].clientX - startX;
+      const deltaY = Math.abs(event.touches[0].clientY - startY);
+      if (deltaX > 18 && deltaX > deltaY * 1.4) event.preventDefault();
+      if (deltaY > 90 && deltaY > deltaX) tracking = false;
+    };
+    const onTouchEnd = (event: TouchEvent) => {
+      if (!tracking) return;
+      tracking = false;
+      const touch = event.changedTouches[0];
+      if (!touch) return;
+      const deltaX = touch.clientX - startX;
+      const deltaY = Math.abs(touch.clientY - startY);
+      if (deltaX >= 78 && deltaX > deltaY * 1.5 && Date.now() - startedAt <= 800) onBackRef.current();
+    };
+
+    document.addEventListener("touchstart", onTouchStart, { passive: true, capture: true });
+    document.addEventListener("touchmove", onTouchMove, { passive: false, capture: true });
+    document.addEventListener("touchend", onTouchEnd, { passive: true, capture: true });
+    return () => {
+      document.removeEventListener("touchstart", onTouchStart, true);
+      document.removeEventListener("touchmove", onTouchMove, true);
+      document.removeEventListener("touchend", onTouchEnd, true);
+    };
+  }, [enabled]);
+}
+
 type PendingConfirmation = {
   title: string;
   message: string;
@@ -1409,6 +1458,21 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [actionToast, setActionToast] = useState("");
   const [reportStartDate, setReportStartDate] = useState(getCurrentMonthStartInput);
   const [reportEndDate, setReportEndDate] = useState(() => toDateInputValue(new Date()));
+
+  useEdgeSwipeBack(() => {
+    if (leaderAlert) return setLeaderAlert("");
+    if (routeDetail) return setRouteDetail(undefined);
+    if (detail) return setDetail(undefined);
+    if (editor) return setEditor(undefined);
+    if (activeSection) {
+      setActiveSection(undefined);
+      setConfirmLogout(false);
+      setConfirmCleanup(undefined);
+      return;
+    }
+    if (notificationsOpen) return setNotificationsOpen(false);
+    if (activeAdminTab !== "dashboard") setActiveAdminTab("dashboard");
+  });
 
   const clientOptions = useMemo(
     () => usersDashboard.users.filter((user) => user.role === "client"),
@@ -2867,6 +2931,15 @@ function PanelApp() {
   const pendingIncidentAuditLines = useMemo(() => {
     return pendingClientIncident ? getIncidentAuditLines(pendingClientIncident) : [];
   }, [pendingClientIncident]);
+
+  useEdgeSwipeBack(() => {
+    if (confirmation && !busy) return setConfirmation(undefined);
+    if (historyOcrSelection) return setHistoryOcrSelection(undefined);
+    if (automaticOcrAnalysisOpen) return setAutomaticOcrAnalysisOpen(false);
+    if (groupEditor && !busy) return setGroupEditor(undefined);
+    if (ocrAnalysisHistoryOpen) return setOcrAnalysisHistoryOpen(false);
+    if (activeTab !== "home") setActiveTab("home");
+  }, !releaseNotice && !pendingClientIncident);
 
   const pendingIncidentSnoozeDelay = pendingClientIncident ? getIncidentSnoozeDelayMinutes(pendingClientIncident) : undefined;
   const homeTimelineLogs = useMemo(() => snapshot.logs.filter((log) => !isImageOperationLog(log.message)), [snapshot.logs]);
