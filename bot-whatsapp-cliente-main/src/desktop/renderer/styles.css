@@ -3567,6 +3567,17 @@ h2 {
   gap: 14px;
 }
 
+html,
+body {
+  touch-action: pan-x pan-y;
+}
+
+html:has(.modal-backdrop),
+body:has(.modal-backdrop) {
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 .ocr-settings-section {
   display: grid;
   gap: 10px;
@@ -4096,6 +4107,8 @@ h2 {
   place-items: center;
   padding: 20px;
   background: rgba(0, 0, 0, 0.78);
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 .confirmation-dialog,
@@ -8040,6 +8053,8 @@ body,
   margin: 10px 0 0;
   max-height: 180px;
   overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
   white-space: pre-wrap;
   word-break: break-word;
   font: 0.76rem/1.45 ui-monospace, SFMono-Regular, Consolas, monospace;

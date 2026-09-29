@@ -70,6 +70,14 @@ function createWindow() {
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   mainWindow.webContents.on("will-navigate", (event) => event.preventDefault());
+  mainWindow.webContents.setZoomFactor(1);
+  mainWindow.webContents.setVisualZoomLevelLimits(1, 1).catch(() => undefined);
+  mainWindow.webContents.on("before-input-event", (event, input) => {
+    const zoomShortcut = (input.control || input.meta) && ["+", "=", "-", "0"].includes(input.key);
+    if (!zoomShortcut) return;
+    event.preventDefault();
+    mainWindow?.webContents.setZoomFactor(1);
+  });
 
   if (isDev) {
     mainWindow.loadURL("http://127.0.0.1:5173");
