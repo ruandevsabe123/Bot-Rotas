@@ -32,8 +32,6 @@ type Props = {
     codes: string[]
   ) => void;
   onWarmup?: () => void;
-  onSaveRoutePreset?: (name: string, routes: MonitoredRoute[]) => void;
-  onDeleteRoutePreset?: (id: string) => void;
 };
 
 const labels = {
@@ -71,7 +69,7 @@ function createEmptyRoute(city = ""): MonitoredRoute {
   return { cidade: city.trim(), bairro: "", enabled: true };
 }
 
-export function GroupMessageCard({ kind, targetMode = "manual", config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup, onSaveRoutePreset, onDeleteRoutePreset }: Props) {
+export function GroupMessageCard({ kind, targetMode = "manual", config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup }: Props) {
   const [group, setGroup] = useState("");
   const [selectedGroupId, setSelectedGroupId] = useState("");
   const [senderName, setSenderName] = useState("");
@@ -83,8 +81,6 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   const [manualOpen, setManualOpen] = useState(false);
   const [messageCount, setMessageCount] = useState(15);
   const [intervalMs, setIntervalMs] = useState(0);
-  const [presetName, setPresetName] = useState("");
-  const [selectedPresetId, setSelectedPresetId] = useState("");
   const requestedGroupsRef = useRef(false);
 
   const isTarget = kind === "target";
@@ -279,55 +275,9 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
             </div>
             <small>Novos bairros usam esta cidade. Você pode trocar a cidade individualmente quando a rota for de outro município.</small>
             </div>
-            <div className="ocr-settings-section">
-              <div className="ocr-settings-title">
-                <strong>2. Configurações salvas</strong>
-                <span>Guarde ou carregue uma lista completa para reutilizar depois.</span>
-              </div>
-            <div className="settings-grid compact-settings">
-              <label>
-                Nome da configuração
-                <input value={presetName} onChange={(event) => setPresetName(event.target.value)} placeholder="Ex: Rotas da manhã" />
-              </label>
-              <button
-                className="button secondary"
-                disabled={busy || !presetName.trim() || !nextPreferences.length || hasIncompletePreference || !onSaveRoutePreset}
-                type="button"
-                onClick={() => onSaveRoutePreset?.(presetName.trim(), normalizeMonitoredRoutes(monitoredRoutes))}
-              >
-                Salvar configuração
-              </button>
-              <label>
-                Carregar configuração
-                <select value={selectedPresetId} onChange={(event) => setSelectedPresetId(event.target.value)}>
-                  <option value="">Escolha uma configuração</option>
-                  {(config.routePresets || []).map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
-                </select>
-              </label>
-              <div className="ocr-route-actions">
-                <button
-                  className="button secondary"
-                  disabled={busy || !selectedPresetId}
-                  type="button"
-                  onClick={() => {
-                    const preset = (config.routePresets || []).find((item) => item.id === selectedPresetId);
-                    if (preset) {
-                      setMonitoredRoutes(preset.routes.map((route) => ({ ...route })));
-                      setPresetName(preset.name);
-                    }
-                  }}
-                >
-                  Carregar
-                </button>
-                <button className="button danger" disabled={busy || !selectedPresetId || !onDeleteRoutePreset} type="button" onClick={() => onDeleteRoutePreset?.(selectedPresetId)}>
-                  Excluir salva
-                </button>
-              </div>
-            </div>
-            </div>
             <div className="ocr-settings-section ocr-preferences-section">
             <div className="ocr-settings-title">
-              <strong>3. Bairros preferidos</strong>
+              <strong>2. Bairros preferidos</strong>
               <span>Pause um bairro sem apagá-lo e reative quando quiser.</span>
             </div>
             <div className="ocr-preference-summary">

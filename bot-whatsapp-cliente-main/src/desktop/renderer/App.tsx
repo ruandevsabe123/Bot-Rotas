@@ -3652,8 +3652,6 @@ function PanelApp() {
               onSave={groupEditor === "target" || groupEditor === "image" ? confirmSaveTarget : confirmSaveTest}
               onSaveManual={undefined}
               onWarmup={groupEditor === "test" ? confirmWarmup : undefined}
-              onSaveRoutePreset={groupEditor === "image" ? (name, routes) => runAction(() => botApi.saveRoutePreset({ name, routes })) : undefined}
-              onDeleteRoutePreset={groupEditor === "image" ? (id) => runAction(() => botApi.deleteRoutePreset({ id })) : undefined}
             />
           </section>
         </div>
