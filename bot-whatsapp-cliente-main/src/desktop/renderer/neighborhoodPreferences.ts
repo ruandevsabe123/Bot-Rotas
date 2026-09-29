@@ -8,7 +8,11 @@ function preferenceKey(value: string) {
 export function normalizeNeighborhoodPreferences(routes: MonitoredRoute[]): MonitoredRoute[] {
   const seen = new Set<string>();
   return routes
-    .map((route) => ({ cidade: String(route?.cidade || "").trim().replace(/\s+/g, " "), bairro: String(route?.bairro || "").trim().replace(/\s+/g, " ") }))
+    .map((route) => ({
+      cidade: String(route?.cidade || "").trim().replace(/\s+/g, " "),
+      bairro: String(route?.bairro || "").trim().replace(/\s+/g, " "),
+      enabled: route?.enabled !== false
+    }))
     .filter((route) => {
       if (!route.bairro) return false;
       const key = JSON.stringify([preferenceKey(route.cidade), preferenceKey(route.bairro)]);
@@ -20,7 +24,11 @@ export function normalizeNeighborhoodPreferences(routes: MonitoredRoute[]): Moni
 
 export function getNeighborhoodPreferences(config: Pick<BotConfig, "rotasMonitoradas" | "rotasMonitoradasDetalhadas">): MonitoredRoute[] {
   const detailed = normalizeNeighborhoodPreferences(config.rotasMonitoradasDetalhadas || []);
-  return detailed.length ? detailed : normalizeNeighborhoodPreferences((config.rotasMonitoradas || []).map((bairro) => ({ cidade: "", bairro })));
+  return detailed.length ? detailed : normalizeNeighborhoodPreferences((config.rotasMonitoradas || []).map((bairro) => ({ cidade: "", bairro, enabled: true })));
+}
+
+export function getEnabledNeighborhoodPreferences(routes: MonitoredRoute[]): MonitoredRoute[] {
+  return routes.filter((route) => route.enabled !== false);
 }
 
 export function moveNeighborhoodPreference(routes: MonitoredRoute[], fromIndex: number, toIndex: number): MonitoredRoute[] {

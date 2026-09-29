@@ -3564,13 +3564,35 @@ h2 {
 
 .ocr-route-fields {
   display: grid;
+  gap: 14px;
+}
+
+.ocr-settings-section {
+  display: grid;
   gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.ocr-settings-title { display: grid; gap: 3px; }
+.ocr-settings-title strong { color: #f4f7f8; }
+.ocr-settings-title span,
+.ocr-settings-section > small { color: #8e99a3; font-size: 0.78rem; line-height: 1.4; }
+.ocr-preference-summary { display: flex; flex-wrap: wrap; gap: 8px; }
+.ocr-preference-summary span {
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(45, 156, 219, 0.12);
+  color: #b9dfff;
+  font-size: 0.75rem;
 }
 
 .ocr-route-heading,
 .ocr-route-row {
   display: grid;
-  grid-template-columns: 104px minmax(0, 1fr) auto;
+  grid-template-columns: 104px minmax(0, 1fr) 104px auto;
   gap: 8px;
   align-items: center;
 }
@@ -3586,6 +3608,25 @@ h2 {
   width: 38px;
   height: 38px;
 }
+
+.ocr-route-row.is-paused { opacity: 0.68; }
+.preference-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 6px 9px;
+  border: 1px solid rgba(63, 185, 129, 0.45);
+  border-radius: 999px;
+  background: rgba(63, 185, 129, 0.12);
+  color: #95e7bd;
+  font-size: 0.72rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+.preference-toggle > span { width: 9px; height: 9px; border-radius: 50%; background: currentColor; }
+.preference-toggle.is-off { border-color: rgba(255, 255, 255, 0.18); background: rgba(255, 255, 255, 0.06); color: #a2aab2; }
 
 .ocr-route-rank-actions {
   display: grid;
@@ -3633,6 +3674,11 @@ h2 {
     grid-column: 1 / 2;
   }
 
+  .ocr-route-row .preference-toggle {
+    grid-column: 1 / 2;
+    justify-self: start;
+  }
+
   .ocr-route-row .icon-button {
     width: 36px;
     height: 36px;
@@ -3640,7 +3686,7 @@ h2 {
 
   .ocr-route-rank-actions {
     grid-column: 2 / 3;
-    grid-row: 1 / span 3;
+    grid-row: 1 / span 4;
     grid-template-columns: 36px;
   }
 }

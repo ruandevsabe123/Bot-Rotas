@@ -161,7 +161,8 @@ export class ConfigStore {
         ? input.rotasMonitoradasDetalhadas
             .map((item: any) => ({
               cidade: typeof item?.cidade === "string" ? item.cidade.trim() : "",
-              bairro: typeof item?.bairro === "string" ? item.bairro.trim() : ""
+              bairro: typeof item?.bairro === "string" ? item.bairro.trim() : "",
+              enabled: item?.enabled !== false
             }))
             .filter((item) => item.bairro)
         : [],
@@ -173,7 +174,8 @@ export class ConfigStore {
               routes: Array.isArray(preset?.routes)
                 ? preset.routes.map((item: any) => ({
                     cidade: typeof item?.cidade === "string" ? item.cidade.trim() : "",
-                    bairro: typeof item?.bairro === "string" ? item.bairro.trim() : ""
+                    bairro: typeof item?.bairro === "string" ? item.bairro.trim() : "",
+                    enabled: item?.enabled !== false
                   })).filter((item: any) => item.bairro)
                 : [],
               createdAt: typeof preset?.createdAt === "string" ? preset.createdAt : new Date().toISOString(),

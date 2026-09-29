@@ -209,6 +209,19 @@ test("nenhuma preferência jamais vira seleção automática de todas as gaiolas
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus(["F-14 Cidade Centro"]), []).status, "unconfigured");
 });
 
+test("preferência pausada permanece salva mas é ignorada pela análise", () => {
+  const result = selectPreferredNeighborhoodFromOcr(consensus([
+    "F-14 Campos dos Goytacazes Centro",
+    "H-20 Campos dos Goytacazes Parque Rodoviário"
+  ]), [
+    { cidade: "Campos dos Goytacazes", bairro: "Centro", enabled: false },
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Rodoviário", enabled: true }
+  ]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "H-20");
+  assert.equal(result.preferenceIndex, 1);
+});
+
 test("cidade opcional usa a coluna BAIRRO, sem confundir sufixo de bairro maior", () => {
   const headers = [line("GAIOLA", 10, 20), line("CIDADE", 10, 250), line("BAIRRO", 10, 700)];
   const source = consensus([

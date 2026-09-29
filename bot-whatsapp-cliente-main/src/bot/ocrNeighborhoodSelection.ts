@@ -31,8 +31,9 @@ export function selectPreferredNeighborhoodFromOcr(
   const configured = preferences.map((preference, index) => ({
     cidade: String(preference.cidade || "").trim(),
     bairro: String(preference.bairro || "").trim(),
-    index
-  })).filter((preference) => normalizeNeighborhoodIdentity(preference.bairro));
+    index,
+    enabled: preference.enabled !== false
+  })).filter((preference) => preference.enabled && normalizeNeighborhoodIdentity(preference.bairro));
   if (!configured.length) return { status: "unconfigured", reason: "Nenhum bairro preferido configurado.", detections: [], selections: [] };
 
   const variants = ocr.variants?.length ? ocr.variants : [ocr];

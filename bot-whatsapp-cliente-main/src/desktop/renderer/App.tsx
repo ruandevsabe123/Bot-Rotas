@@ -61,7 +61,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminCommandCenter } from "./admin/AdminCommandCenter";
 import { enableWebPushNotifications } from "./pushNotifications";
 import { uiText } from "./uiText";
-import { getNeighborhoodPreferences, neighborhoodPreferenceLabel, normalizeNeighborhoodPreferences } from "./neighborhoodPreferences";
+import { getEnabledNeighborhoodPreferences, getNeighborhoodPreferences, neighborhoodPreferenceLabel, normalizeNeighborhoodPreferences } from "./neighborhoodPreferences";
 import {
   acknowledgeRelease,
   botApi,
@@ -2969,12 +2969,13 @@ function PanelApp() {
     const selectedGroupName = groupName || group;
     const isImageMode = targetDispatchMode === "ocr";
     const preferences = isImageMode ? normalizeNeighborhoodPreferences(monitoredRoutes || codes.map((bairro) => ({ cidade: "", bairro }))) : [];
-    if (isImageMode && !preferences.length) {
+    const activePreferences = getEnabledNeighborhoodPreferences(preferences);
+    if (isImageMode && (!preferences.length || (startAfterSave && !activePreferences.length))) {
       showActionToast("Adicione pelo menos um bairro preferido.", "manual");
       return;
     }
     const routes = preferences.map((route) => route.bairro);
-    const messages = isImageMode ? buildRoutePreview(routes, preferences) : buildMessagePreview(senderName, codes);
+    const messages = isImageMode ? buildRoutePreview(activePreferences.map((route) => route.bairro), activePreferences) : buildMessagePreview(senderName, codes);
 
     setConfirmation({
       title: startAfterSave ? (isImageMode ? "Salvar e iniciar imagem" : "Salvar e iniciar manual") : isImageMode ? "Salvar bot imagem" : "Salvar mensagens",
@@ -3077,7 +3078,8 @@ function PanelApp() {
   function confirmStartImageMonitoring() {
     const hasGroup = Boolean(snapshot.config.grupoAlvoJid || snapshot.config.grupoAlvoNome);
     const hasName = Boolean(snapshot.config.nomeEnvio.trim());
-    const hasNeighborhoods = neighborhoodPreferences.length > 0;
+    const activeNeighborhoodPreferences = getEnabledNeighborhoodPreferences(neighborhoodPreferences);
+    const hasNeighborhoods = activeNeighborhoodPreferences.length > 0;
 
     if (!hasGroup || !hasName || !hasNeighborhoods) {
       setGroupEditor("image");
@@ -3087,7 +3089,7 @@ function PanelApp() {
         details: [
           hasGroup ? `Grupo: ${groupLabel}` : "Grupo alvo ainda não configurado.",
           hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",
-          hasNeighborhoods ? `${neighborhoodPreferences.length} preferência(s) salva(s).` : "Adicione pelo menos um bairro preferido."
+          hasNeighborhoods ? `${activeNeighborhoodPreferences.length} preferência(s) ativa(s).` : "Ative pelo menos um bairro preferido."
         ],
         confirmLabel: "Entendi",
         onConfirm: () => undefined
@@ -3101,7 +3103,7 @@ function PanelApp() {
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Nome: ${snapshot.config.nomeEnvio}`,
-        ...neighborhoodPreferences.map((route, index) => `${index + 1}ª preferência: ${neighborhoodPreferenceLabel(route)}`),
+        ...activeNeighborhoodPreferences.map((route, index) => `${index + 1}ª preferência ativa: ${neighborhoodPreferenceLabel(route)}`),
         "Bairro e gaiola precisam estar associados na mesma linha da imagem. Se houver dúvida nessa associação, o envio fica bloqueado."
       ],
       confirmLabel: "Iniciar imagem",
@@ -3490,7 +3492,7 @@ function PanelApp() {
             <p className="approval-message">O bot escolhe uma única gaiola: a do primeiro bairro da sua lista que aparecer com leitura segura na imagem. Bairros parecidos ou associações duvidosas não liberam o envio.</p>
             <div className="confirmation-details">
               {neighborhoodPreferences.length ? neighborhoodPreferences.map((route, index) => (
-                <span key={`${route.cidade}-${route.bairro}`}>{index + 1}ª preferência: {neighborhoodPreferenceLabel(route)}</span>
+                <span key={`${route.cidade}-${route.bairro}`}>{index + 1}ª preferência: {neighborhoodPreferenceLabel(route)}{route.enabled === false ? " — pausada" : ""}</span>
               )) : <span>Adicione seus bairros preferidos antes de iniciar o bot imagem.</span>}
             </div>
           </section>

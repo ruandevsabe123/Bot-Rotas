@@ -20,15 +20,15 @@ test("preferências preservam ordem e bairros homônimos em cidades diferentes",
     { cidade: "São Paulo", bairro: "" }
   ]);
   assert.deepEqual(routes, [
-    { cidade: "São Paulo", bairro: "Vila São José" },
-    { cidade: "Guarulhos", bairro: "Vila São José" },
-    { cidade: "", bairro: "Centro" }
+    { cidade: "São Paulo", bairro: "Vila São José", enabled: true },
+    { cidade: "Guarulhos", bairro: "Vila São José", enabled: true },
+    { cidade: "", bairro: "Centro", enabled: true }
   ]);
   assert.equal(first.cidade, " São Paulo ");
   assert.deepEqual(moveNeighborhoodPreference(routes, 2, 0), [routes[2], routes[0], routes[1]]);
   assert.equal(moveNeighborhoodPreference(routes, -1, 0), routes);
   assert.deepEqual(getNeighborhoodPreferences({ rotasMonitoradas: ["Antigo"], rotasMonitoradasDetalhadas: routes }), routes);
-  assert.deepEqual(getNeighborhoodPreferences({ rotasMonitoradas: ["Centro"], rotasMonitoradasDetalhadas: [] }), [{ cidade: "", bairro: "Centro" }]);
+  assert.deepEqual(getNeighborhoodPreferences({ rotasMonitoradas: ["Centro"], rotasMonitoradasDetalhadas: [] }), [{ cidade: "", bairro: "Centro", enabled: true }]);
 });
 
 // Exercise the component's real inputs and handlers without a browser dependency.
@@ -122,7 +122,7 @@ test("editor salva bairros visíveis e sua nova ordem, sem reutilizar códigos o
   editor.submit();
   const args = editor.saved[0];
   assert.deepEqual(JSON.parse(JSON.stringify(args[4])), ["Jardim Sul", "Centro"]);
-  assert.deepEqual(JSON.parse(JSON.stringify(args[8])), [{ cidade: "Campos dos Goytacazes", bairro: "Jardim Sul" }, { cidade: "Cidade B", bairro: "Centro" }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(args[8])), [{ cidade: "Campos dos Goytacazes", bairro: "Jardim Sul", enabled: true }, { cidade: "Cidade B", bairro: "Centro", enabled: true }]);
   assert.equal(args[9], "ocr");
   assert.equal(args[10], 2);
   assert.equal(editor.config.rotasMonitoradasDetalhadas[0].bairro, "Bairro antigo");
@@ -148,6 +148,18 @@ test("editor não inicia IA sem bairro ou com uma cidade sem bairro", () => {
   assert.equal(editor.find((node) => node.type === "button" && node.props.type === "submit").props.disabled, true);
   editor.submit();
   assert.equal(editor.saved.length, 0);
+});
+
+test("editor pausa e reativa uma preferência sem apagar bairro, cidade ou ordem", () => {
+  const editor = renderEditor();
+  editor.click(editor.find((node) => node.props["aria-label"] === "Pausar preferência 1"));
+  assert.equal(editor.find((node) => node.props["aria-label"] === "Ativar preferência 1").props["aria-checked"], false);
+  editor.submit();
+  assert.deepEqual(JSON.parse(JSON.stringify(editor.saved[0][8])), [
+    { cidade: "Cidade A", bairro: "Bairro antigo", enabled: false }
+  ]);
+  editor.click(editor.find((node) => node.props["aria-label"] === "Ativar preferência 1"));
+  assert.equal(editor.find((node) => node.props["aria-label"] === "Pausar preferência 1").props["aria-checked"], true);
 });
 
 test("editor do target mantém códigos manuais e não aplica preferências da IA", () => {

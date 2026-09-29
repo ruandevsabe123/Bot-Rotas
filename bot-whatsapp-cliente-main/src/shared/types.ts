@@ -66,6 +66,8 @@ export type DispatchPriorityProfile = {
 export type MonitoredRoute = {
   cidade: string;
   bairro: string;
+  /** Missing on older saved configurations means enabled. */
+  enabled?: boolean;
 };
 
 export type RoutePreset = {

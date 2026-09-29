@@ -19,7 +19,7 @@ import { useSqliteAuthState } from "./sqliteAuthState";
 import { DEFAULT_LEADER_CONTACTS } from "./leaderDefaults";
 import { RomaneioStore } from "../services/romaneio/romaneioStore";
 import { isPreferredImageCity, PREFERRED_IMAGE_CITY, rankImageRouteOptions } from "../services/romaneio/rankImageRoutes";
-import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, DispatchPriorityProfile, LeaderContact, OcrRouteOption, OcrRouteSelectionState, RomaneioCandidate, RomaneioLocateResult, RomaneioRankedRoute, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
+import { BotConfig, BotGroup, BotGroupState, BotPerformanceMetrics, BotReadinessCheck, BotSnapshot, BotStatus, BotStatusEvent, BotTestStatus, DispatchPriorityProfile, LeaderContact, MonitoredRoute, OcrRouteOption, OcrRouteSelectionState, RomaneioCandidate, RomaneioLocateResult, RomaneioRankedRoute, RomaneioSnapshot, RouteDispatch, RouteDispatchTimeline, RouteOcrInsight, RouteReaction } from "../shared/types";
 
 const originalConsoleLog = console.log.bind(console);
 console.log = (...args: unknown[]) => {
@@ -1681,7 +1681,7 @@ export class BotService extends EventEmitter {
     this.logger.success("Mensagens do grupo alvo atualizadas.");
   }
 
-  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: { cidade: string; bairro: string }[], targetDispatchMode?: BotConfig["targetDispatchMode"], ocrCageMessageLimit?: number) {
+  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: MonitoredRoute[], targetDispatchMode?: BotConfig["targetDispatchMode"], ocrCageMessageLimit?: number) {
     if (typeof senderName !== "string" || !Array.isArray(codes) || codes.some((item) => typeof item !== "string")) throw new Error("Nome e códigos de mensagem inválidos.");
     // Update target (alvo) message settings. Do NOT reset warmup completion.
     this.codigosEscolhidos = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
@@ -1689,7 +1689,8 @@ export class BotService extends EventEmitter {
     const detailedRoutes = (monitoredRouteDetails || [])
       .map((item) => ({
         cidade: String(item?.cidade || "").trim(),
-        bairro: String(item?.bairro || "").trim()
+        bairro: String(item?.bairro || "").trim(),
+        enabled: item?.enabled !== false
       }))
       .filter((item) => item.bairro);
     this.configStore.save({
@@ -1714,10 +1715,10 @@ export class BotService extends EventEmitter {
     );
   }
 
-  saveRoutePreset(name: string, routes: { cidade: string; bairro: string }[]) {
+  saveRoutePreset(name: string, routes: MonitoredRoute[]) {
     const presetName = name.trim();
     const normalizedRoutes = routes
-      .map((route) => ({ cidade: String(route?.cidade || "").trim(), bairro: String(route?.bairro || "").trim() }))
+      .map((route) => ({ cidade: String(route?.cidade || "").trim(), bairro: String(route?.bairro || "").trim(), enabled: route?.enabled !== false }))
       .filter((route) => route.bairro);
     if (!presetName) throw new Error("Digite um nome para a configuração.");
     if (!normalizedRoutes.length) throw new Error("Adicione pelo menos um bairro antes de salvar a configuração.");
@@ -4807,8 +4808,8 @@ export class BotService extends EventEmitter {
   }
 
   private getConfiguredOcrPreferences(config = this.configStore.load()) {
-    const detailed = config.rotasMonitoradasDetalhadas.filter((item) => item.bairro.trim());
-    if (detailed.length) return detailed;
+    const savedDetailed = config.rotasMonitoradasDetalhadas.filter((item) => item.bairro.trim());
+    if (savedDetailed.length) return savedDetailed.filter((item) => item.enabled !== false);
     return config.rotasMonitoradas.map((query) => {
       const parts = query.split("/").map((part) => part.trim());
       return parts.length === 2 ? { cidade: parts[0], bairro: parts[1] } : { cidade: "", bairro: query.trim() };
