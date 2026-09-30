@@ -4,7 +4,6 @@ services:
     env: docker
     plan: starter
     healthCheckPath: /api/ping
-    maxShutdownDelaySeconds: 60
     envVars:
       - key: NODE_ENV
         value: production
