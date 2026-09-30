@@ -132,7 +132,6 @@ export class DispatchRaceCoordinator {
         this.failRelay(token, clientEmail);
         reject(new Error("O ciclo do grupo expirou antes da confirmação do envio."));
       }, this.gateTimeoutMs);
-      timeout.unref?.();
       cycle.pending.set(clientEmail, {
         token,
         clientEmail,
@@ -238,7 +237,6 @@ export class DispatchRaceCoordinator {
           pending.joinTimer = undefined;
           this.evaluate(cycle, clientEmail);
         }, Math.max(0, joinDeadlineAt - Date.now()));
-        pending.joinTimer.unref?.();
       }
       return;
     }
@@ -263,7 +261,6 @@ export class DispatchRaceCoordinator {
       if (cycle.pending.get(clientEmail) !== pending) return;
       this.resolvePending(cycle, clientEmail, pending);
     }, remainingMs);
-    pending.releaseTimer.unref?.();
   }
 
   private evaluateGroupCycles(groupKey: string) {
