@@ -8834,3 +8834,114 @@ body,
   .crack-energy path { animation: none !important; opacity: 0.26; stroke-dasharray: 22 90; }
   .electric-cracks { opacity: 0.45; }
 }
+
+/* Mobile performance profile: preserve atmosphere without taxing iPhone compositing. */
+@media (max-width: 720px) {
+  body {
+    background:
+      radial-gradient(circle at 50% -5%, rgba(126, 57, 202, 0.25), transparent 34%),
+      radial-gradient(circle at 105% 42%, rgba(102, 43, 168, 0.16), transparent 30%),
+      radial-gradient(circle at -8% 75%, rgba(74, 29, 121, 0.14), transparent 28%),
+      linear-gradient(180deg, #030105 0%, #08030d 48%, #000000 100%) !important;
+  }
+
+  .app-shell,
+  .login-shell,
+  .admin-shell,
+  .adminx-shell {
+    background: transparent !important;
+  }
+
+  .app-shell:not(.admin-shell) {
+    width: min(100%, calc(100vw - 20px)) !important;
+  }
+
+  .app-shell:not(.admin-shell) .mobile-home,
+  .app-shell:not(.admin-shell) .tab-stack {
+    animation: liquid-mobile-page-in 190ms ease-out both !important;
+  }
+
+  .app-shell:not(.admin-shell) .mobile-home > * {
+    animation: none !important;
+  }
+
+  .app-shell .panel,
+  .app-shell .quick-panel,
+  .app-shell .operation-panel,
+  .app-shell .engine-visual-panel,
+  .app-shell .message-strip,
+  .app-shell .command-hero,
+  .app-shell .support-card,
+  .app-shell .support-note,
+  .app-shell .status-card,
+  .app-shell .readiness-card,
+  .app-shell .metric-card,
+  .app-shell .route-card,
+  .app-shell .settings-card,
+  .app-shell .group-card,
+  .app-shell .launch-review-panel {
+    background:
+      radial-gradient(circle at 7% 0%, rgba(136, 69, 201, 0.13), transparent 36%),
+      linear-gradient(150deg, rgba(17, 8, 25, 0.82), rgba(3, 2, 5, 0.86)) !important;
+    box-shadow: 0 14px 36px rgba(0, 0, 0, 0.48), inset 0 1px rgba(246, 231, 255, 0.065) !important;
+  }
+
+  .app-shell:not(.admin-shell) .app-topbar,
+  .bottom-nav,
+  .admin-bottom-nav,
+  .adminx-bottom-nav {
+    -webkit-backdrop-filter: blur(11px) saturate(125%);
+    backdrop-filter: blur(11px) saturate(125%);
+  }
+
+  .modal-backdrop {
+    -webkit-backdrop-filter: blur(7px);
+    backdrop-filter: blur(7px);
+  }
+
+  .action-toast {
+    -webkit-backdrop-filter: blur(8px);
+    backdrop-filter: blur(8px);
+  }
+
+  .app-shell .button.primary::after {
+    display: none;
+    animation: none;
+  }
+
+  .electric-cracks {
+    opacity: 0.88;
+  }
+
+  .electric-cracks .crack-energy {
+    filter: none !important;
+  }
+
+  .crack-base path {
+    stroke: rgba(166, 106, 231, 0.38);
+    stroke-width: 0.86;
+  }
+
+  .crack-energy path {
+    stroke-width: 1.15;
+  }
+
+  .bot-particle-field {
+    opacity: 0.72 !important;
+    filter: none !important;
+  }
+
+  .bot-ambient::before,
+  .bot-ambient span {
+    animation: none !important;
+  }
+
+  .bot-ambient::before {
+    opacity: 0.34;
+  }
+}
+
+@keyframes liquid-mobile-page-in {
+  from { opacity: 0; transform: translate3d(8px, 0, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}

@@ -621,13 +621,14 @@ function ParticleBackdrop() {
     let frame = 0;
     let compact = false;
     let maxDistance = 142;
+    let lastDrawAt = 0;
     let nodes: Array<{ x: number; y: number; vx: number; vy: number; r: number }> = [];
 
     function createNodes() {
       compact = window.innerWidth < 720;
-      const count = compact ? 74 : 128;
-      maxDistance = compact ? 112 : 164;
-      const speed = compact ? 1.55 : 1.7;
+      const count = compact ? 42 : 128;
+      maxDistance = compact ? 128 : 164;
+      const speed = compact ? 1.2 : 1.7;
       nodes = Array.from({ length: count }, () => ({
         x: Math.random(),
         y: Math.random(),
@@ -638,7 +639,7 @@ function ParticleBackdrop() {
     }
 
     function resize() {
-      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const ratio = Math.min(window.devicePixelRatio || 1, window.innerWidth < 720 ? 1.25 : 2);
       const wasCompact = compact;
       width = window.innerWidth;
       height = window.innerHeight;
@@ -650,7 +651,10 @@ function ParticleBackdrop() {
       if (!nodes.length || wasCompact !== window.innerWidth < 720) createNodes();
     }
 
-    function draw() {
+    function draw(timestamp: number) {
+      frame = window.requestAnimationFrame(draw);
+      if (compact && timestamp - lastDrawAt < 32) return;
+      lastDrawAt = timestamp;
       context.clearRect(0, 0, width, height);
       const accent = [155, 92, 255];
       const secondary = [210, 181, 255];
@@ -684,12 +688,11 @@ function ParticleBackdrop() {
         }
       });
 
-      frame = window.requestAnimationFrame(draw);
     }
 
     createNodes();
     resize();
-    draw();
+    frame = window.requestAnimationFrame(draw);
     window.addEventListener("resize", resize);
     return () => {
       window.cancelAnimationFrame(frame);
