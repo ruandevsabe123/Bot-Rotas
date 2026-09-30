@@ -2092,17 +2092,11 @@ export class BotService extends EventEmitter {
 
       if (!statusCode) {
         this.unknownDisconnects += 1;
-
-        if (
-          this.hasAuthSession() &&
-          !this.qrReceivedInCurrentConnection &&
-          this.unknownDisconnects >= 2
-        ) {
-          this.failConnectionWithoutReconnect(
-            "A sessão local fechou sem motivo claro antes de conectar. Parei para evitar loop de reconexão. Use Limpar sessão para gerar um novo QR Code."
+        if (this.hasAuthSession() && !this.qrReceivedInCurrentConnection && this.unknownDisconnects % 3 === 0) {
+          this.logger.warning(
+            `A conexão fechou ${this.unknownDisconnects}x sem informar um motivo. ` +
+            "A sessão foi preservada e o bot continuará tentando reconectar automaticamente."
           );
-          this.unknownDisconnects = 0;
-          return;
         }
       }
 
@@ -4880,14 +4874,16 @@ export class BotService extends EventEmitter {
     const normalizedMessage = errorMessage.toLowerCase();
 
     return [
-      DisconnectReason.loggedOut,
-      DisconnectReason.badSession,
-      DisconnectReason.multideviceMismatch
-    ].includes(statusCode) ||
+      DisconnectReason?.loggedOut,
+      DisconnectReason?.badSession,
+      DisconnectReason?.multideviceMismatch
+    ].filter((code): code is number => typeof code === "number").includes(statusCode as number) ||
       normalizedMessage.includes("logged out") ||
       normalizedMessage.includes("bad session") ||
       normalizedMessage.includes("multidevice mismatch") ||
-      normalizedMessage.includes("invalid");
+      normalizedMessage.includes("invalid session") ||
+      normalizedMessage.includes("session invalid") ||
+      normalizedMessage.includes("invalid credentials");
   }
 
   private isRestartRequired(statusCode?: number, errorMessage = "") {

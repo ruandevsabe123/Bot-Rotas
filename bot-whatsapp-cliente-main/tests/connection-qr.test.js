@@ -184,3 +184,50 @@ test("regenerar QR apaga tentativa parcial antes de abrir outro socket", async (
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });
+
+test("erro transitório com palavra invalid não é confundido com logout", () => {
+  const { bot, directory } = createBot();
+  try {
+    assert.equal(bot.isInvalidSession(undefined, "invalid frame received from websocket"), false);
+    assert.equal(bot.isInvalidSession(undefined, "invalid session"), true);
+    assert.equal(bot.isInvalidSession(undefined, "logged out"), true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("quedas sem código preservam a sessão e continuam reconectando", async () => {
+  const { bot, authDir, directory } = createBot();
+  try {
+    fs.mkdirSync(authDir, { recursive: true });
+    fs.writeFileSync(path.join(authDir, "creds.json"), "{}");
+    bot.activeConnectionId = 9;
+    bot.isFatalRuntimeError = () => false;
+    bot.isRestartRequired = () => false;
+    bot.isConnectionConflict = () => false;
+    bot.isQrRefAttemptLimit = () => false;
+    bot.isInvalidSession = () => false;
+    let reconnects = 0;
+    bot.scheduleReconnect = () => {
+      reconnects += 1;
+    };
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      bot.sock = {
+        ev: { removeAllListeners: () => undefined },
+        end: () => undefined,
+        ws: { close: () => undefined }
+      };
+      await bot.handleConnectionUpdate({
+        connection: "close",
+        lastDisconnect: { error: new Error("socket closed without status") }
+      }, 9);
+    }
+
+    assert.equal(reconnects, 3);
+    assert.notEqual(bot.getSnapshot().status, "error");
+    assert.equal(fs.existsSync(path.join(authDir, "creds.json")), true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
