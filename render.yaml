@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: bot-whatsapp-painel
+    runtime: docker
+    rootDir: bot-whatsapp-cliente-main
+    plan: starter
+    healthCheckPath: /api/ping
+    maxShutdownDelaySeconds: 60
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATA_DIR
+        value: /data
+      - key: PORT
+        value: "10000"
+      - key: OCR_GLOBAL_CONCURRENCY
+        value: "3"
+      - key: PANEL_USERS
+        sync: false
+      - key: PANEL_ADMIN_EMAILS
+        sync: false
+      - key: PANEL_SESSION_SECRET
+        generateValue: true
+      - key: KEEP_ALIVE_URL
+        sync: false
+      - key: KEEP_ALIVE_WHEN_MONITORING
+        value: "false"
+      - key: DAILY_SESSION_RESET_ENABLED
+        value: "false"
+    disk:
+      name: bot-whatsapp-data
+      mountPath: /data
+      sizeGB: 1
