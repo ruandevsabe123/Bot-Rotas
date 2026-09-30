@@ -626,9 +626,9 @@ function ParticleBackdrop() {
 
     function createNodes() {
       compact = window.innerWidth < 720;
-      const count = compact ? 42 : 128;
-      maxDistance = compact ? 128 : 164;
-      const speed = compact ? 1.2 : 1.7;
+      const count = compact ? 62 : 128;
+      maxDistance = compact ? 108 : 164;
+      const speed = compact ? 2.15 : 1.7;
       nodes = Array.from({ length: count }, () => ({
         x: Math.random(),
         y: Math.random(),

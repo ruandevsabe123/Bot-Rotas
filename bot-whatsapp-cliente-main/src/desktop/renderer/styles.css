@@ -8927,8 +8927,10 @@ body,
   }
 
   .bot-particle-field {
-    opacity: 0.72 !important;
+    z-index: 3;
+    opacity: 0.34 !important;
     filter: none !important;
+    mix-blend-mode: screen;
   }
 
   .bot-ambient::before,
