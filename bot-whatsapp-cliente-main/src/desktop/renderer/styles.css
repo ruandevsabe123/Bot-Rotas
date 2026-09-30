@@ -8528,3 +8528,309 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Obsidian Violet — final identity layer. */
+:root {
+  --hub-bg: #020104;
+  --hub-bg-deep: #000000;
+  --hub-accent: #9b5cff;
+  --hub-accent-strong: #7137d1;
+  --hub-accent-soft: rgba(155, 92, 255, 0.15);
+  --hub-cyan: #d2b5ff;
+  --hub-green: #45d69a;
+  --hub-text: #f8f5ff;
+  --hub-muted: #aaa2b6;
+  --hub-border: rgba(167, 112, 255, 0.24);
+  --liquid-blue: #9b5cff;
+  --liquid-blue-bright: #d2b5ff;
+  --liquid-surface: rgba(22, 12, 32, 0.76);
+  --liquid-surface-strong: rgba(14, 8, 22, 0.92);
+  --liquid-stroke: rgba(180, 132, 255, 0.22);
+  --liquid-highlight: rgba(240, 226, 255, 0.13);
+  --liquid-shadow: 0 22px 64px rgba(0, 0, 0, 0.58), 0 3px 18px rgba(111, 52, 181, 0.13);
+}
+
+body,
+.app-shell,
+.login-shell,
+.admin-shell,
+.adminx-shell {
+  color: #f2edf9 !important;
+  background:
+    radial-gradient(circle at 50% -8%, rgba(102, 42, 164, 0.19), transparent 36%),
+    radial-gradient(circle at 106% 44%, rgba(90, 36, 145, 0.1), transparent 28%),
+    radial-gradient(circle at -8% 78%, rgba(57, 25, 91, 0.1), transparent 26%),
+    linear-gradient(180deg, #030105 0%, #07030b 47%, #000000 100%) !important;
+}
+
+.bot-ambient {
+  background:
+    radial-gradient(circle at 50% 2%, rgba(125, 57, 202, 0.15), transparent 38%),
+    radial-gradient(circle at 10% 58%, rgba(102, 45, 168, 0.07), transparent 25%) !important;
+}
+
+.bot-ambient::before {
+  background:
+    repeating-linear-gradient(90deg, transparent 0 56px, rgba(184, 137, 255, 0.025) 56px 57px),
+    repeating-linear-gradient(0deg, transparent 0 56px, rgba(255, 255, 255, 0.012) 56px 57px) !important;
+  opacity: 0.5;
+}
+
+.bot-ambient span {
+  background: linear-gradient(90deg, transparent, rgba(155, 92, 255, 0.15), rgba(210, 181, 255, 0.08), transparent) !important;
+  opacity: 0.48;
+}
+
+.bot-particle-field {
+  opacity: 0.66 !important;
+  filter: saturate(0.9) contrast(1.08) !important;
+}
+
+.electric-cracks {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+  opacity: 0.72;
+}
+
+.electric-cracks path {
+  fill: none;
+  vector-effect: non-scaling-stroke;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.crack-base path {
+  stroke: rgba(142, 88, 205, 0.24);
+  stroke-width: 0.72;
+}
+
+.crack-energy path {
+  stroke: url(#crack-violet);
+  stroke-width: 1.05;
+  stroke-dasharray: 18 260;
+  stroke-dashoffset: 280;
+  opacity: 0;
+  animation: crack-current 7.8s cubic-bezier(0.42, 0, 0.25, 1) infinite;
+}
+
+.app-shell:not(.admin-shell) .app-topbar,
+.bottom-nav,
+.admin-bottom-nav,
+.adminx-bottom-nav {
+  border-color: rgba(178, 126, 255, 0.28) !important;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(158, 89, 232, 0.16), transparent 46%),
+    linear-gradient(145deg, rgba(25, 13, 36, 0.86), rgba(5, 3, 8, 0.88)) !important;
+  box-shadow: 0 22px 64px rgba(0, 0, 0, 0.64), 0 0 32px rgba(121, 55, 195, 0.09), inset 0 1px rgba(245, 229, 255, 0.1) !important;
+}
+
+.app-shell .panel,
+.app-shell .quick-panel,
+.app-shell .operation-panel,
+.app-shell .engine-visual-panel,
+.app-shell .message-strip,
+.app-shell .command-hero,
+.app-shell .support-card,
+.app-shell .support-note,
+.app-shell .status-card,
+.app-shell .readiness-card,
+.app-shell .metric-card,
+.app-shell .route-card,
+.app-shell .settings-card,
+.app-shell .group-card,
+.app-shell .launch-review-panel,
+.app-shell .admin-section-card,
+.app-shell .admin-metric,
+.app-shell .admin-hero-board,
+.app-shell .admin-preview-panel,
+.app-shell .admin-settings-panel,
+.app-shell .admin-routes-panel,
+.app-shell .admin-list-panel,
+.login-panel,
+.adminx-sidebar,
+.adminx-panel,
+.adminx-sidepanel,
+.adminx-metric,
+.adminx-notification-popover,
+.adminx-table-wrap,
+.adminx-log-row,
+.adminx-support-row,
+.adminx-ocr-list button,
+.adminx-score-list button,
+.adminx-funnel article,
+.adminx-editor,
+.adminx-danger-card,
+.adminx-leader-candidates article,
+.adminx-leader-list article {
+  border-color: rgba(169, 111, 246, 0.22) !important;
+  color: #f1eaf8 !important;
+  background:
+    radial-gradient(circle at 7% 0%, rgba(136, 69, 201, 0.14), transparent 35%),
+    linear-gradient(150deg, rgba(19, 10, 27, 0.93), rgba(3, 2, 5, 0.94)) !important;
+  box-shadow: var(--liquid-shadow), inset 0 1px rgba(246, 231, 255, 0.07) !important;
+}
+
+.app-shell .panel:focus-within,
+.app-shell .quick-panel:focus-within {
+  border-color: rgba(192, 143, 255, 0.48) !important;
+  box-shadow: var(--liquid-shadow), 0 0 0 1px rgba(154, 86, 232, 0.17), inset 0 1px rgba(255, 255, 255, 0.12) !important;
+}
+
+.app-shell svg,
+.app-shell .panel-label,
+.app-shell .eyebrow,
+.app-shell .section-kicker,
+.brand-logo,
+.login-field svg,
+.adminx-brand svg,
+.adminx-sidebar nav button svg,
+.adminx-panel-head svg,
+.adminx-sidepanel svg,
+.adminx-topbar svg {
+  color: #b985ff !important;
+}
+
+.app-shell strong,
+.app-shell h1,
+.app-shell h2,
+.app-shell h3,
+.login-heading h1,
+.brand-logo span {
+  color: #fbf8ff !important;
+}
+
+.brand-logo,
+.login-field,
+.app-shell input,
+.app-shell select,
+.app-shell textarea,
+.adminx-global-filters input,
+.adminx-global-filters select,
+.adminx-page-actions select,
+.adminx-editor input,
+.adminx-editor select,
+.adminx-leader-form input {
+  border-color: rgba(164, 103, 237, 0.24) !important;
+  color: #faf6ff !important;
+  background: linear-gradient(180deg, rgba(19, 10, 28, 0.94), rgba(5, 3, 8, 0.97)) !important;
+}
+
+.login-field:focus-within,
+.app-shell input:focus,
+.app-shell select:focus,
+.app-shell textarea:focus {
+  border-color: rgba(190, 137, 255, 0.68) !important;
+  background: rgba(19, 10, 29, 0.96) !important;
+  box-shadow: 0 0 0 4px rgba(155, 92, 255, 0.13), 0 10px 28px rgba(0, 0, 0, 0.28) !important;
+}
+
+.app-shell .button.primary,
+.app-shell .bottom-nav button.active,
+.app-shell.admin-shell .admin-bottom-nav button.active,
+.app-shell button.active:not(.danger),
+.adminx-client-mode-button,
+.adminx-sidebar nav button.active {
+  border-color: rgba(215, 183, 255, 0.48) !important;
+  color: #ffffff !important;
+  background: linear-gradient(155deg, #ad70ff 0%, #8a49df 46%, #59239e 100%) !important;
+  box-shadow: 0 12px 32px rgba(116, 49, 191, 0.34), inset 0 1px rgba(255, 255, 255, 0.3) !important;
+}
+
+.app-shell .button:not(.danger):not(.primary),
+.app-shell .icon-button,
+.app-shell .bottom-nav button,
+.adminx-sidebar nav button,
+.adminx-pill,
+.adminx-pill-red,
+.adminx-pill-blue,
+.adminx-pill-green,
+.adminx-pill-yellow {
+  border-color: rgba(160, 99, 231, 0.22) !important;
+  color: #e8dcf5 !important;
+  background: linear-gradient(180deg, rgba(25, 12, 36, 0.9), rgba(5, 3, 8, 0.96)) !important;
+}
+
+.app-shell .engine-readouts span,
+.app-shell .operation-step,
+.app-shell .launch-review-panel .review-item,
+.app-shell .group-pill,
+.app-shell .status-badge,
+.app-shell .live-badge,
+.app-shell .send-order-badge,
+.romaneio-candidate,
+.romaneio-adaptation-box,
+.romaneio-found-box,
+.ocr-analysis-history-item,
+.analysis-step,
+.automatic-analysis-routes article,
+.automatic-analysis-timing span {
+  border-color: rgba(165, 105, 238, 0.23) !important;
+  background: linear-gradient(180deg, rgba(24, 12, 35, 0.76), rgba(5, 3, 8, 0.9)) !important;
+}
+
+.modal-backdrop {
+  background: rgba(3, 1, 6, 0.74) !important;
+}
+
+.modal-backdrop > [role="dialog"] {
+  border-color: rgba(191, 140, 255, 0.3) !important;
+  background:
+    radial-gradient(circle at 12% 0%, rgba(154, 82, 229, 0.18), transparent 35%),
+    linear-gradient(155deg, rgba(22, 11, 32, 0.98), rgba(4, 2, 7, 0.97)) !important;
+  box-shadow: 0 34px 96px rgba(0, 0, 0, 0.72), 0 0 42px rgba(115, 47, 184, 0.1), inset 0 1px rgba(255, 255, 255, 0.1) !important;
+}
+
+.action-toast {
+  border-color: rgba(193, 143, 255, 0.36) !important;
+  background: rgba(24, 11, 37, 0.92) !important;
+}
+
+.engine-wave i {
+  background: linear-gradient(180deg, #d8bdff, #9555ec) !important;
+  box-shadow: 0 0 17px rgba(167, 96, 245, 0.46) !important;
+}
+
+.status-dot,
+.live-badge::before {
+  box-shadow: 0 0 0 5px rgba(155, 92, 255, 0.1), 0 0 18px currentColor;
+}
+
+.ready-check.ok,
+.mini-badge.ok {
+  border-color: rgba(69, 214, 154, 0.3) !important;
+  color: #82efbf !important;
+  background: rgba(20, 97, 68, 0.16) !important;
+}
+
+.ready-check.ok svg,
+.mini-badge.ok svg {
+  color: #45d69a !important;
+}
+
+.automatic-analysis-diagnostic {
+  border-color: rgba(255, 179, 90, 0.28);
+  background: rgba(40, 24, 6, 0.4);
+}
+
+@keyframes crack-current {
+  0%, 8% { stroke-dashoffset: 280; opacity: 0; }
+  14% { opacity: 0.2; }
+  34% { opacity: 0.92; }
+  58% { stroke-dashoffset: -110; opacity: 0.34; }
+  70%, 100% { stroke-dashoffset: -260; opacity: 0; }
+}
+
+@media (max-width: 720px) {
+  .electric-cracks { opacity: 0.58; }
+  .bot-particle-field { opacity: 0.52 !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crack-energy path { animation: none !important; opacity: 0.26; stroke-dasharray: 22 90; }
+  .electric-cracks { opacity: 0.45; }
+}

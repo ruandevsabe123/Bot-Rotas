@@ -318,6 +318,7 @@ function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: st
   return (
     <main className="login-shell">
       <ParticleBackdrop />
+      <ElectricCracks />
       <div className="bot-ambient" aria-hidden="true">
         <span />
         <span />
@@ -651,8 +652,8 @@ function ParticleBackdrop() {
 
     function draw() {
       context.clearRect(0, 0, width, height);
-      const accent = [255, 32, 48];
-      const secondary = [255, 92, 105];
+      const accent = [155, 92, 255];
+      const secondary = [210, 181, 255];
 
       nodes.forEach((node, index) => {
         node.x += node.vx / Math.max(width, 1);
@@ -697,6 +698,36 @@ function ParticleBackdrop() {
   }, []);
 
   return <canvas className="bot-particle-field" ref={canvasRef} aria-hidden="true" />;
+}
+
+function ElectricCracks() {
+  const paths = [
+    "M0 155 L92 184 L158 150 L228 238 L310 214 L385 302 L468 285",
+    "M158 150 L176 84 L235 42",
+    "M228 238 L187 302 L205 367",
+    "M1000 118 L923 164 L862 145 L806 228 L724 207 L657 286",
+    "M806 228 L842 304 L817 378",
+    "M1000 716 L914 681 L849 730 L766 692 L687 778 L608 752",
+    "M0 842 L83 796 L145 824 L218 742 L292 771"
+  ];
+  return (
+    <svg className="electric-cracks" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <linearGradient id="crack-violet" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#4b257d" stopOpacity="0" />
+          <stop offset="0.38" stopColor="#9b5cff" />
+          <stop offset="0.72" stopColor="#d2b5ff" />
+          <stop offset="1" stopColor="#6b34b5" stopOpacity="0" />
+        </linearGradient>
+        <filter id="crack-glow" x="-40%" y="-40%" width="180%" height="180%">
+          <feGaussianBlur stdDeviation="3" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
+      </defs>
+      <g className="crack-base">{paths.map((path, index) => <path d={path} key={`base-${index}`} />)}</g>
+      <g className="crack-energy" filter="url(#crack-glow)">{paths.map((path, index) => <path d={path} key={`energy-${index}`} style={{ animationDelay: `${index * 620}ms` }} />)}</g>
+    </svg>
+  );
 }
 
 function EngineVisualPanel({ snapshot }: { snapshot: BotSnapshot }) {
@@ -1876,6 +1907,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   return (
     <main className="app-shell admin-shell admin-mobile-shell">
       <ParticleBackdrop />
+      <ElectricCracks />
       <div className="bot-ambient" aria-hidden="true">
         <span />
         <span />
@@ -3409,6 +3441,7 @@ function PanelApp() {
   return (
     <main className={alertFlash ? "app-shell alert-flash" : "app-shell"}>
       <ParticleBackdrop />
+      <ElectricCracks />
       <div className="bot-ambient" aria-hidden="true">
         <span />
         <span />
