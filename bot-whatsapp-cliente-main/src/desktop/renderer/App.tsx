@@ -319,6 +319,7 @@ function LoginScreen({ error, onSubmit }: { error?: string; onSubmit: (email: st
     <main className="login-shell">
       <ParticleBackdrop />
       <ElectricCracks />
+      <ForegroundSparks />
       <div className="bot-ambient" aria-hidden="true">
         <span />
         <span />
@@ -628,13 +629,13 @@ function ParticleBackdrop() {
       compact = window.innerWidth < 720;
       const count = compact ? 62 : 128;
       maxDistance = compact ? 108 : 164;
-      const speed = compact ? 2.15 : 1.7;
+      const speed = compact ? 2.7 : 1.7;
       nodes = Array.from({ length: count }, () => ({
         x: Math.random(),
         y: Math.random(),
         vx: (Math.random() - 0.5) * speed,
         vy: (Math.random() - 0.5) * speed,
-        r: compact ? Math.random() * 0.95 + 0.5 : Math.random() * 1.25 + 0.65
+        r: compact ? Math.random() * 1.25 + 0.7 : Math.random() * 1.25 + 0.65
       }));
     }
 
@@ -669,7 +670,7 @@ function ParticleBackdrop() {
         const y = node.y * height;
         context.beginPath();
         context.arc(x, y, node.r, 0, Math.PI * 2);
-        context.fillStyle = `rgba(${accent.join(",")},${compact ? 0.62 : 0.7})`;
+        context.fillStyle = `rgba(${accent.join(",")},${compact ? 0.86 : 0.7})`;
         context.fill();
 
         for (let nextIndex = index + 1; nextIndex < nodes.length; nextIndex += 1) {
@@ -678,7 +679,7 @@ function ParticleBackdrop() {
           const ny = next.y * height;
           const distance = Math.hypot(x - nx, y - ny);
           if (distance > maxDistance) continue;
-          const opacity = (1 - distance / maxDistance) * (compact ? 0.28 : 0.34);
+          const opacity = (1 - distance / maxDistance) * (compact ? 0.42 : 0.34);
           context.beginPath();
           context.moveTo(x, y);
           context.lineTo(nx, ny);
@@ -730,6 +731,27 @@ function ElectricCracks() {
       <g className="crack-base">{paths.map((path, index) => <path d={path} key={`base-${index}`} />)}</g>
       <g className="crack-energy" filter="url(#crack-glow)">{paths.map((path, index) => <path d={path} key={`energy-${index}`} style={{ animationDelay: `${index * 620}ms` }} />)}</g>
     </svg>
+  );
+}
+
+function ForegroundSparks() {
+  return (
+    <div className="foreground-sparks" aria-hidden="true">
+      {Array.from({ length: 14 }, (_, index) => (
+        <i
+          key={index}
+          style={{
+            "--spark-index": index,
+            "--spark-delay": `${-(index * 0.73) % 5.8}s`,
+            "--spark-duration": `${3.1 + (index % 5) * 0.46}s`,
+            "--spark-y": `${5 + ((index * 19) % 88)}dvh`,
+            "--spark-size": `${2 + (index % 3) * 0.7}px`,
+            "--spark-trail": `${13 + (index % 4) * 5}px`,
+            "--spark-angle": `${-8 + (index % 4) * 5}deg`
+          } as CSSProperties}
+        />
+      ))}
+    </div>
   );
 }
 
@@ -1911,6 +1933,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     <main className="app-shell admin-shell admin-mobile-shell">
       <ParticleBackdrop />
       <ElectricCracks />
+      <ForegroundSparks />
       <div className="bot-ambient" aria-hidden="true">
         <span />
         <span />
@@ -3445,6 +3468,7 @@ function PanelApp() {
     <main className={alertFlash ? "app-shell alert-flash" : "app-shell"}>
       <ParticleBackdrop />
       <ElectricCracks />
+      <ForegroundSparks />
       <div className="bot-ambient" aria-hidden="true">
         <span />
         <span />
