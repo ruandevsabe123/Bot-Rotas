@@ -2661,6 +2661,32 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   );
 }
 
+const OCR_SUCCESS_SEEN_KEY = "bot-rotas:ocr-success-seen:v1";
+const OCR_ANALYSIS_DISMISSED_KEY = "bot-rotas:ocr-analysis-dismissed:v1";
+
+function readRememberedAnalysisIds(key: string) {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(key) || "[]");
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberAnalysisId(key: string, analysisId?: string) {
+  if (!analysisId) return;
+  try {
+    const ids = readRememberedAnalysisIds(key).filter((item) => item !== analysisId);
+    window.localStorage.setItem(key, JSON.stringify([...ids, analysisId].slice(-100)));
+  } catch {
+    // A interface continua funcionando quando o navegador bloqueia o armazenamento local.
+  }
+}
+
+function wasAnalysisRemembered(key: string, analysisId?: string) {
+  return Boolean(analysisId && readRememberedAnalysisIds(key).includes(analysisId));
+}
+
 function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = false }: {
   selection?: OcrRouteSelectionState;
   onClose: () => void;
@@ -2674,11 +2700,15 @@ function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = fals
   useEffect(() => setManualIds([]), [selection?.analysisId]);
   useEffect(() => {
     if (selection?.dispatchState !== "sent") return;
-    setShowDispatchSuccess(true);
-    const successTimer = window.setTimeout(() => setShowDispatchSuccess(false), 4_000);
-    const analysisTimer = window.setTimeout(() => closeRef.current(), 24_000);
+    const shouldShowSuccess = !wasAnalysisRemembered(OCR_SUCCESS_SEEN_KEY, selection.analysisId);
+    if (shouldShowSuccess) rememberAnalysisId(OCR_SUCCESS_SEEN_KEY, selection.analysisId);
+    setShowDispatchSuccess(shouldShowSuccess);
+    const successTimer = shouldShowSuccess
+      ? window.setTimeout(() => setShowDispatchSuccess(false), 4_000)
+      : undefined;
+    const analysisTimer = window.setTimeout(() => closeRef.current(), shouldShowSuccess ? 24_000 : 20_000);
     return () => {
-      window.clearTimeout(successTimer);
+      if (successTimer !== undefined) window.clearTimeout(successTimer);
       window.clearTimeout(analysisTimer);
     };
   }, [selection?.analysisId, selection?.dispatchCompletedAt, selection?.dispatchState]);
@@ -3010,7 +3040,7 @@ function PanelApp() {
       setAutomaticOcrAnalysisOpen(false);
       return;
     }
-    if (selection && selection.status !== "idle") {
+    if (selection && selection.status !== "idle" && !wasAnalysisRemembered(OCR_ANALYSIS_DISMISSED_KEY, selection.analysisId)) {
       if (selection.status === "analyzing") setActiveTab("image");
       setAutomaticOcrAnalysisOpen(true);
     }
@@ -3873,7 +3903,10 @@ function PanelApp() {
       {automaticOcrAnalysisOpen && snapshot.config.targetDispatchMode === "ocr" ? (
         <AutomaticOcrAnalysisDialog
           selection={snapshot.ocrRouteSelection}
-          onClose={() => setAutomaticOcrAnalysisOpen(false)}
+          onClose={() => {
+            rememberAnalysisId(OCR_ANALYSIS_DISMISSED_KEY, snapshot.ocrRouteSelection?.analysisId);
+            setAutomaticOcrAnalysisOpen(false);
+          }}
           busy={busy}
           onConfirm={async (optionIds) => {
             await runAction(() => botApi.confirmOcrRoutes({ optionIds }));
