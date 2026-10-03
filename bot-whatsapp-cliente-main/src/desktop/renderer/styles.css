@@ -8149,6 +8149,53 @@ body,
   font-size: 1.05rem;
 }
 
+.manual-route-review {
+  display: grid;
+  gap: 10px;
+}
+
+.manual-route-review > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.manual-route-review small {
+  color: var(--muted);
+}
+
+.manual-route-option {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 12px 12px 12px 42px;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+  border-radius: 11px;
+  color: var(--text);
+  background: rgba(15, 8, 25, 0.82);
+  text-align: left;
+}
+
+.manual-route-option.selected {
+  border-color: rgba(192, 132, 252, 0.9);
+  background: rgba(126, 34, 206, 0.22);
+  box-shadow: inset 3px 0 rgba(192, 132, 252, 0.9);
+}
+
+.manual-route-check {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid rgba(192, 132, 252, 0.7);
+  border-radius: 6px;
+  color: white;
+  background: rgba(126, 34, 206, 0.25);
+}
+
 .ocr-analysis-history-list {
   display: grid;
   gap: 10px;

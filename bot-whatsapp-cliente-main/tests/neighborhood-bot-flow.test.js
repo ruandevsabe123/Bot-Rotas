@@ -164,9 +164,30 @@ test("ordem de chegada das fotos nao altera identidade do evento entre clientes"
   assert.equal(bot.lastOcrInsight.analysisId, "client@test.com:image-a+image-b");
 });
 
-test("IA nao arma sem bairros preferidos mesmo com gaiolas legadas salvas", async (t) => {
+test("IA pode operar sem bairros preferidos para oferecer revisao manual", async (t) => {
   const { bot } = createBot(t);
   bot.configStore.save({ rotasMonitoradasDetalhadas: [], rotasMonitoradas: [], ocrSelectionMode: "cages", ocrDesiredCages: ["A-1"] });
-  assert.equal(await bot.enableImageMonitoring(), false);
-  assert.equal(bot.hasReadyMessages(), false);
+  assert.equal(bot.hasReadyMessages(), true);
+});
+
+test("rota sem preferencia segura aparece para confirmacao manual e corrige F-2u", async (t) => {
+  const { bot, states } = createBot(t);
+  bot.configStore.save({ rotasMonitoradasDetalhadas: [], rotasMonitoradas: [] });
+  mockReading(t, async () => reading([
+    "ROTA AT SPR CLUSTER BAIRRO",
+    "F-2u AT20261002AJK75 116 Campos - Parque Aurora Parque Aurora"
+  ]));
+
+  await bot.processRouteImageBatch(batch("manual-fallback"), 1);
+
+  assert.equal(bot.ocrRouteSelection.status, "ready");
+  assert.equal(bot.ocrRouteSelection.options.length, 1);
+  assert.equal(bot.ocrRouteSelection.options[0].gaiola, "F-24");
+  assert.equal(bot.ocrRouteSelection.options[0].manualOnly, true);
+  assert.deepEqual(bot.pendingOcrMessages, []);
+  assert.deepEqual(states.map((event) => event.state), ["processing", "unavailable"]);
+
+  bot.confirmOcrRouteSelection([bot.ocrRouteSelection.options[0].id]);
+  assert.equal(bot.ocrRouteSelection.status, "confirmed");
+  assert.deepEqual(bot.pendingOcrMessages, ["Cliente F-24"]);
 });

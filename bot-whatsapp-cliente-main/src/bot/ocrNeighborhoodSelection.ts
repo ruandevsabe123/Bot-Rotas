@@ -13,6 +13,42 @@ export type NeighborhoodSelection = {
 type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string; trailingCellText?: string };
 type Match = { row: Row; code: string; confidence: number; variant: number; requiresThreeEvidence?: boolean };
 
+export function findManualRouteCandidatesFromOcr(ocr: RouteOcrResult): DetectedRouteCode[] {
+  const variants = ocr.variants?.length ? ocr.variants : [ocr];
+  const found = new Map<string, Array<DetectedRouteCode & { variant: number }>>();
+  for (const [variant, reading] of variants.entries()) {
+    for (const row of readRows(reading)) {
+      const exact = [...row.text.matchAll(/(?:^|[\s|;])([A-Z])[-_\u2013\u2014:.\s]*(\d{1,2})(?=$|[\s|;,])/g)];
+      const misreadFour = [...row.text.matchAll(/(?:^|[\s|;])([A-Z])[-_\u2013\u2014:.\s]*(\d)\s*[uU](?=$|[\s|;,])/g)];
+      const codes = new Set([
+        ...exact.map((match) => `${match[1].toUpperCase()}-${match[2]}`),
+        ...misreadFour.map((match) => `${match[1].toUpperCase()}-${match[2]}4`)
+      ]);
+      if (codes.size !== 1) continue;
+      const code = [...codes][0];
+      const bairro = String(row.districtText || row.trailingCellText || "").trim();
+      const detection: DetectedRouteCode & { variant: number } = {
+        route: bairro || row.text,
+        cidade: String(row.localityText || "").trim() || undefined,
+        bairro: bairro || undefined,
+        code,
+        line: row.text,
+        confidence: Math.round(Math.max(0, Math.min(100, row.confidence))),
+        evidenceCount: 1,
+        variantCount: variants.length,
+        safeForAutomatic: false,
+        variant
+      };
+      found.set(code, [...(found.get(code) || []), detection]);
+    }
+  }
+  return [...found.values()].map((matches) => {
+    const best = [...matches].sort((left, right) => right.confidence - left.confidence)[0];
+    const { variant: _variant, ...candidate } = best;
+    return { ...candidate, evidenceCount: new Set(matches.map((match) => match.variant)).size };
+  }).sort((left, right) => right.evidenceCount - left.evidenceCount || right.confidence - left.confidence);
+}
+
 export function normalizeNeighborhoodIdentity(value: string) {
   return String(value || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
     .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();

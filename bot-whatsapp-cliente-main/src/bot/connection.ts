@@ -10,7 +10,7 @@ import { resolveGroup, normalizarTexto } from "./group";
 import { BotLogger } from "./logger";
 import { combineRouteImageBatch, DetectedRouteCode, extractNeighborhoodAfterCity, findAllGaiolaCodesFromOcr, findAllPlannedAtCodesFromOcr, findNeighborhoodInOcrLine, isSafeAutomaticGaiolaDetection, reconcileGaiolaDetectionsWithRomaneio } from "./ocr";
 import { readRouteImageOcrWithoutBlockingSocket, warmupIsolatedOcrWorker } from "./ocrIsolated";
-import { selectPreferredNeighborhoodFromOcr } from "./ocrNeighborhoodSelection";
+import { findManualRouteCandidatesFromOcr, selectPreferredNeighborhoodFromOcr } from "./ocrNeighborhoodSelection";
 import { DispatchQueueStore } from "./dispatchQueue";
 import { OcrAnalysisHistoryStore } from "./ocrAnalysisHistoryStore";
 import { RouteStore } from "./routeStore";
@@ -790,8 +790,8 @@ export class BotService extends EventEmitter {
 
   async enableImageMonitoring(): Promise<boolean> {
     const config = this.configStore.load();
-    if (!this.getConfiguredOcrPreferences(config).length || !config.nomeEnvio.trim()) {
-      this.logger.warning("Configure o nome de envio e pelo menos um bairro preferido antes de iniciar a IA.");
+    if (!config.nomeEnvio.trim()) {
+      this.logger.warning("Configure o nome de envio antes de iniciar a IA.");
       this.emitSnapshot();
       return false;
     }
@@ -2564,7 +2564,7 @@ export class BotService extends EventEmitter {
       this.pendingOcrReconnectDispatch = undefined;
       this.emitSnapshot();
       const preferences = this.getConfiguredOcrPreferences(config);
-      if (!preferences.length || !config.nomeEnvio.trim()) throw new Error("Configure o nome de envio e os bairros preferidos antes de analisar.");
+      if (!config.nomeEnvio.trim()) throw new Error("Configure o nome de envio antes de analisar.");
 
       // IDs of WhatsApp images are shared across clients. Never use those IDs
       // as a globally shared temp path: one client could delete another's input.
@@ -2610,14 +2610,32 @@ export class BotService extends EventEmitter {
       };
       const detected = decision.detection;
       if (decision.status !== "selected" || !detected) {
+        const manualOptions: OcrRouteOption[] = findManualRouteCandidatesFromOcr(ocr).slice(0, 12).map((candidate, index) => ({
+          id: `manual-image::${analysisId}::${candidate.code}`,
+          rank: index + 1,
+          rota: candidate.route || candidate.line,
+          gaiola: candidate.code,
+          bairro: candidate.bairro || "Destino não confirmado",
+          cidade: candidate.cidade,
+          distanciaKm: 0, pacotes: 0, paradas: 0,
+          passedFilters: false,
+          reasons: ["Rota detectada na imagem; exige confirmação manual antes do envio."],
+          score: candidate.confidence,
+          manualOnly: true,
+          observation: candidate.line
+        }));
         this.emit("image-analysis", { id: analysisId, messageId, result: "unreadable", ...analysisContext() });
         this.lastOcrInsight = undefined;
         this.ocrRouteSelection = {
-          status: "error", analysisId, options: [], source: ocr.source,
+          status: manualOptions.length ? "ready" : "error", analysisId, options: manualOptions, source: ocr.source,
           imagePreviewUrl,
           line: ocr.text.slice(0, 1200),
           timing: { ...timing, totalMs: comparedAt - analysisStartedAtMs },
-          processedAt: new Date().toISOString(), message: decision.reason
+          detectedRouteCount: manualOptions.length,
+          processedAt: new Date().toISOString(),
+          message: manualOptions.length
+            ? `${decision.reason} Detectei ${manualOptions.length} rota(s); selecione manualmente para enviar.`
+            : decision.reason
         };
         this.logger.warning(`[IA] Envio bloqueado: ${decision.reason}`);
         this.rememberCurrentOcrAnalysis();
@@ -2702,16 +2720,30 @@ export class BotService extends EventEmitter {
       throw new Error("Nenhuma análise de imagem aguardando confirmação.");
     }
 
+    const manualLimit = Math.max(1, Math.min(3, Number(this.configStore.load().ocrCageMessageLimit) || 3));
     const selected = optionIds
       .filter(Boolean)
-      .slice(0, MAX_OUTGOING_MESSAGES)
+      .slice(0, manualLimit)
       .map((id) => selection.options.find((option) => option.id === id))
       .filter(Boolean) as OcrRouteOption[];
     if (!selected.length) throw new Error("Selecione pelo menos uma rota.");
-    if (selected.some((option) => !option.passedFilters || option.romaneioMatch === false)) {
+    if (selected.some((option) => !option.manualOnly && (!option.passedFilters || option.romaneioMatch === false))) {
       throw new Error("A rota selecionada não respeita todos os filtros ou não foi confirmada no romaneio.");
     }
 
+    const first = selected[0];
+    this.lastOcrInsight = {
+      analysisId: selection.analysisId,
+      source: selection.source || "revisão manual",
+      text: selection.line,
+      line: first.observation || selection.line,
+      route: first.rota,
+      cidade: first.cidade,
+      bairro: first.bairro,
+      code: first.gaiola,
+      confidence: first.score,
+      processedAt: new Date().toISOString()
+    };
     this.applyOcrRouteSelection(selected, "manual");
     void this.dispatchPreparedOcrIfGroupOpen("manual");
     this.emitSnapshot();
@@ -4779,7 +4811,7 @@ export class BotService extends EventEmitter {
       },
       {
         id: "messages",
-        label: this.monitoringMode === "test" ? "Mensagens de teste prontas" : config.targetDispatchMode === "ocr" ? "Nome e bairros preferidos configurados" : "Mensagens do alvo prontas",
+        label: this.monitoringMode === "test" ? "Mensagens de teste prontas" : config.targetDispatchMode === "ocr" ? "Nome de envio configurado" : "Mensagens do alvo prontas",
         ok: this.hasReadyMessages(this.monitoringMode)
       },
       {
@@ -4803,7 +4835,7 @@ export class BotService extends EventEmitter {
   private hasReadyMessages(mode: MonitoringMode = this.monitoringMode) {
     const config = this.configStore.load();
     const codes = mode === "test" ? config.codigosMensagensTeste : config.codigosMensagensAlvo;
-    if (mode === "target" && config.targetDispatchMode === "ocr") return Boolean(config.nomeEnvio.trim() && this.getConfiguredOcrPreferences(config).length);
+    if (mode === "target" && config.targetDispatchMode === "ocr") return Boolean(config.nomeEnvio.trim());
     if ((codes || []).some((item) => item.trim())) return true;
     return false;
   }

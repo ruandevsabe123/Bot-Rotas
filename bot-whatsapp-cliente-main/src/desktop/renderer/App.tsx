@@ -2661,13 +2661,24 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   );
 }
 
-function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRouteSelectionState; onClose: () => void }) {
+function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = false }: {
+  selection?: OcrRouteSelectionState;
+  onClose: () => void;
+  onConfirm?: (optionIds: string[]) => Promise<void> | void;
+  busy?: boolean;
+}) {
+  const [manualIds, setManualIds] = useState<string[]>([]);
+  useEffect(() => setManualIds([]), [selection?.analysisId]);
   if (!selection || selection.status === "idle") return null;
   const analyzing = selection.status === "analyzing";
   const finished = !analyzing;
   const selectedOptions = selection.selectedOptionIds?.length
     ? selection.options.filter((option) => selection.selectedOptionIds?.includes(option.id))
     : [];
+  const manualOptions = selection.options.filter((option) => option.manualOnly);
+  const toggleManualOption = (id: string) => setManualIds((current) => current.includes(id)
+    ? current.filter((item) => item !== id)
+    : current.length < 3 ? [...current, id] : current);
   const formatAnalysisTime = (milliseconds?: number) => {
     if (milliseconds === undefined) return "--";
     if (milliseconds < 1000) return `${milliseconds} ms`;
@@ -2686,13 +2697,13 @@ function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRou
         </div>
         <div className="automatic-analysis-steps">
           <article className="analysis-step done"><CheckCircle2 size={19} /><span><strong>Imagem recebida</strong><small>O servidor recebeu a foto do grupo.</small></span></article>
-          <article className={analyzing ? "analysis-step active" : "analysis-step done"}>{analyzing ? <RefreshCw className="spin" size={19} /> : <CheckCircle2 size={19} />}<span><strong>Lendo bairros e gaiolas</strong><small>{analyzing ? "Conferindo a associação de cada bairro com sua gaiola na imagem." : `${selection.detectedRouteCount || selection.options.length} bairro(s) preferido(s) confirmado(s).`}</small></span></article>
-          <article className={analyzing ? "analysis-step" : "analysis-step done"}><Route size={19} /><span><strong>Conferindo as preferências</strong><small>{analyzing ? "Aguardando a leitura terminar." : selectedOptions.length ? "Preferência identificada e associação com a gaiola validada." : "Nenhuma escolha liberada para envio."}</small></span></article>
-          <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>Disparo automático</strong><small>{selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} mensagem(ns) preparada(s) ou enviada(s).` : analyzing ? "Aguardando uma preferência com leitura segura." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
+          <article className={analyzing ? "analysis-step active" : "analysis-step done"}>{analyzing ? <RefreshCw className="spin" size={19} /> : <CheckCircle2 size={19} />}<span><strong>Lendo bairros e gaiolas</strong><small>{analyzing ? "Conferindo a associação de cada bairro com sua gaiola na imagem." : manualOptions.length ? `${manualOptions.length} rota(s) detectada(s) para revisão.` : `${selection.detectedRouteCount || selection.options.length} bairro(s) preferido(s) confirmado(s).`}</small></span></article>
+          <article className={analyzing ? "analysis-step" : "analysis-step done"}><Route size={19} /><span><strong>Conferindo as preferências</strong><small>{analyzing ? "Aguardando a leitura terminar." : selectedOptions.length ? "Preferência identificada e associação com a gaiola validada." : manualOptions.length ? "Sem correspondência automática; escolha manual disponível." : "Nenhuma escolha liberada para envio."}</small></span></article>
+          <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>{manualOptions.length && selection.status !== "confirmed" ? "Confirmação manual" : "Disparo automático"}</strong><small>{selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} mensagem(ns) preparada(s) ou enviada(s).` : analyzing ? "Aguardando uma preferência com leitura segura." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
         </div>
         {selection.imagePreviewUrl ? (
           <figure className="automatic-analysis-preview">
-            <figcaption>Imagem completa recebida do WhatsApp e usada na anÃ¡lise</figcaption>
+            <figcaption>Imagem completa recebida do WhatsApp e usada na análise</figcaption>
             <img src={selection.imagePreviewUrl} alt="Imagem completa analisada pelo bot" />
           </figure>
         ) : null}
@@ -2706,6 +2717,21 @@ function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRou
           </div>
         ) : null}
         {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span>{option.cidade ? <small>{option.cidade}</small> : null}{option.observation ? <small>{option.observation}</small> : null}{option.romaneioMatch === true ? <small>{option.pacotes} pct · {option.paradas} paradas · {option.distanciaKm.toFixed(3)} km</small> : null}</article>)}</div> : null}
+        {!analyzing && manualOptions.length && !selectedOptions.length ? (
+          <div className="manual-route-review">
+            <div><strong>Rotas encontradas</strong><small>Marque até 3 rotas. Nada será enviado sem sua confirmação.</small></div>
+            <div className="automatic-analysis-routes">
+              {manualOptions.map((option) => (
+                <button key={option.id} type="button" className={manualIds.includes(option.id) ? "manual-route-option selected" : "manual-route-option"} onClick={() => toggleManualOption(option.id)}>
+                  <span className="manual-route-check">{manualIds.includes(option.id) ? "✓" : ""}</span>
+                  <strong>{option.gaiola}</strong><span>{option.bairro}</span>
+                  {option.cidade ? <small>{option.cidade}</small> : null}
+                  {option.observation ? <small>{option.observation}</small> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         {!analyzing && selection.message ? <p className={selection.status === "error" ? "inline-error" : "approval-message"}>{uiText(selection.message)}</p> : null}
         {!analyzing && selection.status === "error" && selection.line ? (
           <details className="automatic-analysis-diagnostic">
@@ -2713,7 +2739,10 @@ function AutomaticOcrAnalysisDialog({ selection, onClose }: { selection?: OcrRou
             <pre>{selection.line}</pre>
           </details>
         ) : null}
-        {finished ? <div className="review-actions"><button className="button primary" type="button" onClick={onClose}>Fechar análise</button></div> : null}
+        {finished ? <div className="review-actions">
+          {manualOptions.length && !selectedOptions.length && onConfirm ? <button className="button primary" disabled={busy || !manualIds.length} type="button" onClick={() => void onConfirm(manualIds)}>{busy ? "Enviando..." : `Enviar ${manualIds.length || ""} rota(s)`}</button> : null}
+          <button className="button" type="button" onClick={onClose}>Fechar análise</button>
+        </div> : null}
       </section>
     </div>
   );
@@ -2967,6 +2996,7 @@ function PanelApp() {
   useEffect(() => {
     const selection = snapshot.ocrRouteSelection;
     if (!automaticOcrAnalysisOpen || !selection || !["ready", "error"].includes(selection.status) || selection.preparedMessages?.length) return;
+    if (selection.options.some((option) => option.manualOnly)) return;
     const timer = window.setTimeout(() => setAutomaticOcrAnalysisOpen(false), 45_000);
     return () => window.clearTimeout(timer);
   }, [automaticOcrAnalysisOpen, snapshot.ocrRouteSelection?.analysisId, snapshot.ocrRouteSelection?.processedAt, snapshot.ocrRouteSelection?.status]);
@@ -3212,15 +3242,14 @@ function PanelApp() {
     const activeNeighborhoodPreferences = getEnabledNeighborhoodPreferences(neighborhoodPreferences);
     const hasNeighborhoods = activeNeighborhoodPreferences.length > 0;
 
-    if (!hasGroup || !hasName || !hasNeighborhoods) {
+    if (!hasGroup || !hasName) {
       setGroupEditor("image");
       setConfirmation({
         title: "Revise o bot imagem",
-        message: "Configure o grupo, o nome e seus bairros por ordem de preferência.",
+        message: "Configure o grupo e o nome de envio.",
         details: [
           hasGroup ? `Grupo: ${groupLabel}` : "Grupo alvo ainda não configurado.",
-          hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado.",
-          hasNeighborhoods ? `${activeNeighborhoodPreferences.length} preferência(s) ativa(s).` : "Ative pelo menos um bairro preferido."
+          hasName ? `Nome: ${snapshot.config.nomeEnvio}` : "Nome ainda não configurado."
         ],
         confirmLabel: "Entendi",
         onConfirm: () => undefined
@@ -3230,12 +3259,16 @@ function PanelApp() {
 
     setConfirmation({
       title: "Iniciar bot imagem",
-      message: `O bot vai procurar os bairros na ordem salva e preparar até ${Math.max(1, Math.min(3, snapshot.config.ocrCageMessageLimit || 3))} mensagens com leitura segura.`,
+      message: hasNeighborhoods
+        ? `O bot vai procurar os bairros na ordem salva e preparar até ${Math.max(1, Math.min(3, snapshot.config.ocrCageMessageLimit || 3))} mensagens com leitura segura.`
+        : "O bot vai detectar as rotas da imagem e pedir confirmação antes de enviar.",
       details: [
         `Grupo alvo: ${groupLabel}`,
         `Nome: ${snapshot.config.nomeEnvio}`,
-        ...activeNeighborhoodPreferences.map((route, index) => `${index + 1}ª preferência ativa: ${neighborhoodPreferenceLabel(route)}`),
-        "Bairro e gaiola precisam estar associados na mesma linha da imagem. Se houver dúvida nessa associação, o envio fica bloqueado."
+        ...(hasNeighborhoods
+          ? activeNeighborhoodPreferences.map((route, index) => `${index + 1}ª preferência ativa: ${neighborhoodPreferenceLabel(route)}`)
+          : ["Sem bairros ativos: as rotas detectadas aparecerão para escolha manual."]),
+        "O automático exige leitura segura. Em caso de dúvida, nada é enviado sem confirmação."
       ],
       confirmLabel: "Iniciar imagem",
       onConfirm: async () => {
@@ -3818,6 +3851,10 @@ function PanelApp() {
         <AutomaticOcrAnalysisDialog
           selection={snapshot.ocrRouteSelection}
           onClose={() => setAutomaticOcrAnalysisOpen(false)}
+          busy={busy}
+          onConfirm={async (optionIds) => {
+            await runAction(() => botApi.confirmOcrRoutes({ optionIds }));
+          }}
         />
       ) : null}
       {historyOcrSelection ? (

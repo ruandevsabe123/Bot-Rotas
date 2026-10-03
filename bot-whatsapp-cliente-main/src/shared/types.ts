@@ -206,6 +206,7 @@ export type OcrRouteOption = {
   reasons: string[];
   score: number;
   romaneioMatch?: boolean;
+  manualOnly?: boolean;
   observation?: string;
 };
 
