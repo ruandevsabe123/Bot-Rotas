@@ -1,7 +1,8 @@
 services:
   - type: web
     name: bot-whatsapp-painel
-    env: docker
+    runtime: docker
+    rootDir: bot-whatsapp-cliente-main
     plan: 2c-4g
     healthCheckPath: /api/ping
     envVars:
@@ -22,7 +23,7 @@ services:
       - key: PANEL_ADMIN_EMAILS
         sync: false
       - key: PANEL_SESSION_SECRET
-        sync: false
+        generateValue: true
       - key: KEEP_ALIVE_URL
         sync: false
       - key: KEEP_ALIVE_WHEN_MONITORING

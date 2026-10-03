@@ -30,6 +30,8 @@ const KEEP_ALIVE_INTERVAL_MS = 1000 * 60 * 10;
 const DAILY_SESSION_RESET_HOUR = Number(process.env.DAILY_SESSION_RESET_HOUR || 0);
 const DAILY_SESSION_RESET_MINUTE = Number(process.env.DAILY_SESSION_RESET_MINUTE || 0);
 const DAILY_SESSION_RESET_ENABLED = process.env.DAILY_SESSION_RESET_ENABLED === "true";
+const EAGER_CLIENT_WORKERS = process.env.BOT_EAGER_WORKERS === "true"
+  || (process.env.BOT_EAGER_WORKERS !== "false" && Boolean(process.env.RENDER));
 
 function ensureWritableDir(dir: string) {
   fs.mkdirSync(dir, { recursive: true });
@@ -485,6 +487,21 @@ function getBotForEmail(email: string) {
   bots.set(normalizedEmail, nextBot);
   scheduleConditionalPrioritySync();
   return nextBot;
+}
+
+async function preloadClientWorkers() {
+  if (!EAGER_CLIENT_WORKERS) return;
+  const emails = getClientEmails();
+  if (!emails.length) return;
+
+  console.log(`Pré-carregando ${emails.length} worker(s) de cliente para eliminar partida fria...`);
+  const results = await Promise.allSettled(emails.map(async (email) => {
+    const bot = getBotForEmail(email);
+    await bot.ready();
+    return email;
+  }));
+  const ready = results.filter((result) => result.status === "fulfilled").length;
+  console.log(`Workers prontos: ${ready}/${emails.length}.`);
 }
 
 function sendJson(response: http.ServerResponse, statusCode: number, data: unknown) {
@@ -1885,6 +1902,9 @@ server.listen(port, "0.0.0.0", () => {
   }
   startKeepAlive();
   startDailySessionReset();
+  void preloadClientWorkers().catch((error) => {
+    console.error(`Falha no pré-carregamento dos workers: ${error instanceof Error ? error.message : String(error)}`);
+  });
 });
 
 let shuttingDown = false;

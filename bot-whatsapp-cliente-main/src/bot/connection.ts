@@ -97,18 +97,20 @@ type MonitoringMode = "target" | "test";
 type OpeningSignal = NonNullable<RouteDispatchTimeline["openingSignal"]>;
 
 const MAX_RECONNECT_ATTEMPTS = 0;
+const HIGH_PERFORMANCE_PROFILE = process.env.BOT_PERFORMANCE_PROFILE === "high"
+  || (!process.env.BOT_PERFORMANCE_PROFILE && Boolean(process.env.RENDER));
 const RECONNECT_DELAY_MS = 3500;
 const MAX_RECONNECT_DELAY_MS = 30000;
 const HEALTH_CHECK_INTERVAL_MS = 25000;
 const DEFAULT_KEEP_ALIVE_INTERVAL_MS = 300000;
-const RACE_KEEP_ALIVE_INTERVAL_MS = 10000;
-const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = 4 * 60 * 1000;
-const CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS = 5 * 60 * 1000;
-const SENDER_KEY_KEEP_ALIVE_INTERVAL_MS = 5 * 60 * 1000;
-const SOCKET_RTT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
-const ACTIVE_CHAT_KEEP_ALIVE_INTERVAL_MS = 60 * 1000;
-const INTERNAL_WARM_READY_MAX_AGE_MS = 90 * 1000;
-const INITIAL_INTERNAL_WARM_WAIT_MS = 2200;
+const RACE_KEEP_ALIVE_INTERVAL_MS = HIGH_PERFORMANCE_PROFILE ? 5000 : 10000;
+const FULL_METADATA_KEEP_ALIVE_INTERVAL_MS = (HIGH_PERFORMANCE_PROFILE ? 2 : 4) * 60 * 1000;
+const CRYPTO_SESSION_KEEP_ALIVE_INTERVAL_MS = (HIGH_PERFORMANCE_PROFILE ? 1 : 5) * 60 * 1000;
+const SENDER_KEY_KEEP_ALIVE_INTERVAL_MS = (HIGH_PERFORMANCE_PROFILE ? 1 : 5) * 60 * 1000;
+const SOCKET_RTT_KEEP_ALIVE_INTERVAL_MS = (HIGH_PERFORMANCE_PROFILE ? 30 : 60) * 1000;
+const ACTIVE_CHAT_KEEP_ALIVE_INTERVAL_MS = (HIGH_PERFORMANCE_PROFILE ? 30 : 60) * 1000;
+const INTERNAL_WARM_READY_MAX_AGE_MS = (HIGH_PERFORMANCE_PROFILE ? 45 : 90) * 1000;
+const INITIAL_INTERNAL_WARM_WAIT_MS = HIGH_PERFORMANCE_PROFILE ? 5000 : 2200;
 const CRITICAL_KEEP_ALIVE_INTERVAL_MS = 5000;
 const SOCKET_KEEP_ALIVE_INTERVAL_MS = 10000;
 const SOCKET_CONNECT_TIMEOUT_MS = 15000;
@@ -328,6 +330,11 @@ export class BotService extends EventEmitter {
     ].filter(Boolean));
     this.autoClearInvalidSession = Boolean(options.autoClearInvalidSession);
     const config = this.configStore.load();
+    if (HIGH_PERFORMANCE_PROFILE && config.targetDispatchMode === "ocr") {
+      // No plano dedicado, carregue o modelo antes de o cliente abrir o painel.
+      // Assim a primeira imagem não paga o custo de iniciar processo e idioma.
+      warmupIsolatedOcrWorker();
+    }
     this.refreshRuntimeSettings(config);
     this.refreshSocketJidFilterCache(config);
     this.codigosEscolhidos = options.initialCodes?.length ? options.initialCodes : [];

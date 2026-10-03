@@ -29,7 +29,7 @@ test("timeout de pedido duplicado encerra todos os consumidores", async () => {
   };
   const first = assert.rejects(coordinator.request(request), /expirou/);
   const second = assert.rejects(coordinator.request(request), /expirou/);
-  // O coordenador usa timers unref; mantenha o processo vivo durante a espera.
+  // Confirme que os dois consumidores observam o mesmo timeout.
   await Promise.all([first, second, delay(35)]);
   assert.equal(coordinator.cycleByToken.size, 1);
 });
