@@ -201,7 +201,12 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   const normalizedTail = normalizeNeighborhoodIdentity(tail);
   const leadingCity = city ? findLeadingCityAlias(normalizedTail, city) : undefined;
   const cityQualifiedDistricts = city ? findCityQualifiedDistricts(tail, city) : [];
-  if (row.districtText !== undefined) {
+  if (cityQualifiedDistricts.includes(`${district} ${district}`)) {
+    // In compact captures CLUSTER ("Campos - Parque Aurora") and BAIRRO
+    // ("Parque Aurora") can be fused into one OCR line. Accept only when the
+    // complete configured neighborhood is repeated exactly after the city.
+    tail = preference.bairro;
+  } else if (row.districtText !== undefined) {
     tail = row.districtText;
     if (city && row.localityText && !isCompatibleCity(row.localityText, city)) return undefined;
   } else if (!city && row.trailingCellText !== undefined) {

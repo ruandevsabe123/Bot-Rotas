@@ -396,6 +396,28 @@ test("F-24 lido como F-2u continua automatico com AT e Parque Aurora exatos", ()
   ]).status, "selected");
 });
 
+test("cluster e bairro fundidos como Parque Aurora duplicado continuam automaticos", () => {
+  const source = consensus([
+    line("ROTA", 10, 20), line("AT", 10, 140), line("SPR", 10, 300),
+    line("CLUSTER", 10, 410), line("BAIRRO", 10, 600),
+    line("F-2u", 60, 20), line("AT20261002AJK75", 60, 140), line("116", 60, 300),
+    line("(Campos", 60, 410), line("Parque", 60, 490), line("Aurora", 60, 560),
+    line("Parque", 60, 630), line("Aurora", 60, 700)
+  ]);
+  const result = selectPreferredNeighborhoodFromOcr(source, [
+    { cidade: "Campos", bairro: "Parque Aurora" }
+  ]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "F-24");
+
+  const differentLastCell = consensus([
+    "F-2u AT20261002AJK75 116 Campos Parque Aurora Parque Rosario"
+  ]);
+  assert.notEqual(selectPreferredNeighborhoodFromOcr(differentLastCell, [
+    { cidade: "Campos", bairro: "Parque Aurora" }
+  ]).status, "selected");
+});
+
 test("linha com um código válido e outro ilegível continua ambígua", () => {
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
     "1-24 F-14 Campos dos Goytacazes Parque Rodoviário"
