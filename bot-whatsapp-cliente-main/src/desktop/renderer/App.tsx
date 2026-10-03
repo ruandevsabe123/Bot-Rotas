@@ -2668,12 +2668,20 @@ function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = fals
   busy?: boolean;
 }) {
   const [manualIds, setManualIds] = useState<string[]>([]);
+  const [showDispatchSuccess, setShowDispatchSuccess] = useState(false);
+  const closeRef = useRef(onClose);
+  useEffect(() => { closeRef.current = onClose; }, [onClose]);
   useEffect(() => setManualIds([]), [selection?.analysisId]);
   useEffect(() => {
     if (selection?.dispatchState !== "sent") return;
-    const timer = window.setTimeout(onClose, 4_000);
-    return () => window.clearTimeout(timer);
-  }, [selection?.analysisId, selection?.dispatchCompletedAt, selection?.dispatchState, onClose]);
+    setShowDispatchSuccess(true);
+    const successTimer = window.setTimeout(() => setShowDispatchSuccess(false), 4_000);
+    const analysisTimer = window.setTimeout(() => closeRef.current(), 24_000);
+    return () => {
+      window.clearTimeout(successTimer);
+      window.clearTimeout(analysisTimer);
+    };
+  }, [selection?.analysisId, selection?.dispatchCompletedAt, selection?.dispatchState]);
   if (!selection || selection.status === "idle") return null;
   const analyzing = selection.status === "analyzing";
   const finished = !analyzing;
@@ -2706,14 +2714,6 @@ function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = fals
           <article className={analyzing ? "analysis-step" : "analysis-step done"}><Route size={19} /><span><strong>Conferindo as preferências</strong><small>{analyzing ? "Aguardando a leitura terminar." : selectedOptions.length ? "Preferência identificada e associação com a gaiola validada." : manualOptions.length ? "Sem correspondência automática; escolha manual disponível." : "Nenhuma escolha liberada para envio."}</small></span></article>
           <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>{selection.dispatchState === "sent" ? "Envio concluído" : selection.dispatchState === "sending" ? "Enviando agora" : manualOptions.length && selection.status !== "confirmed" ? "Confirmação manual" : "Disparo automático"}</strong><small>{selection.dispatchState === "sent" ? selection.message : selection.dispatchState === "sending" ? "Aguardando a confirmação do WhatsApp." : selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} rota(s) pronta(s); aguardando o grupo abrir.` : analyzing ? "Aguardando uma preferência com leitura segura." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
         </div>
-        {selection.dispatchState === "sent" ? (
-          <section className="automatic-analysis-success" aria-label="Envio concluído">
-            <span className="automatic-analysis-success-icon"><CheckCircle2 size={28} /></span>
-            <div><strong>Envio confirmado pelo WhatsApp</strong><small>{selection.dispatchGroupName || "Grupo alvo"}</small></div>
-            <div className="automatic-analysis-success-messages">{(selection.preparedMessages || []).map((message) => <span key={message}>{message}</span>)}</div>
-            <small>Esta tela fechará automaticamente em 4 segundos.</small>
-          </section>
-        ) : null}
         {selection.imagePreviewUrl ? (
           <figure className="automatic-analysis-preview">
             <figcaption>Imagem completa recebida do WhatsApp e usada na análise</figcaption>
@@ -2757,6 +2757,16 @@ function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = fals
           <button className="button" type="button" onClick={onClose}>Fechar análise</button>
         </div> : null}
       </section>
+      {showDispatchSuccess ? (
+        <section className="dispatch-success-overlay" role="status" aria-live="assertive" aria-label="Envio concluído">
+          <span className="dispatch-success-overlay-icon"><CheckCircle2 size={46} /></span>
+          <p className="panel-label">Disparo concluído</p>
+          <h2>Rota enviada com sucesso!</h2>
+          <p>O WhatsApp confirmou o envio para <strong>{selection.dispatchGroupName || "o grupo alvo"}</strong>.</p>
+          <div className="dispatch-success-overlay-routes">{(selection.preparedMessages || []).map((message) => <span key={message}>{message}</span>)}</div>
+          <small>Voltando para os detalhes da análise...</small>
+        </section>
+      ) : null}
     </div>
   );
 }
