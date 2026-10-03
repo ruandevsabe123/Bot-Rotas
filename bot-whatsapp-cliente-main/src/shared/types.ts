@@ -221,6 +221,9 @@ export type OcrRouteSelectionState = {
   options: OcrRouteOption[];
   selectedOptionIds?: string[];
   preparedMessages?: string[];
+  dispatchState?: "waiting" | "sending" | "sent" | "failed";
+  dispatchGroupName?: string;
+  dispatchCompletedAt?: string;
   message?: string;
   detectedRouteCount?: number;
   preferredCity?: string;

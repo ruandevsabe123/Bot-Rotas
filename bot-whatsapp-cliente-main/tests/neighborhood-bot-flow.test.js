@@ -187,7 +187,34 @@ test("rota sem preferencia segura aparece para confirmacao manual e corrige F-2u
   assert.deepEqual(bot.pendingOcrMessages, []);
   assert.deepEqual(states.map((event) => event.state), ["processing", "unavailable"]);
 
-  bot.confirmOcrRouteSelection([bot.ocrRouteSelection.options[0].id]);
+  await bot.confirmOcrRouteSelection([bot.ocrRouteSelection.options[0].id]);
   assert.equal(bot.ocrRouteSelection.status, "confirmed");
   assert.deepEqual(bot.pendingOcrMessages, ["Cliente F-24"]);
+});
+
+test("grupo aberto troca a analise para sucesso somente apos confirmacao do envio", async (t) => {
+  const { bot } = createBot(t);
+  delete bot.dispatchPreparedOcrIfGroupOpen;
+  const analysisId = "client@test.com:success-image";
+  bot.groupState = "open";
+  bot.pendingOcrMessages = ["Cliente F-30"];
+  bot.preparedMessages = ["Cliente F-30"];
+  bot.lastOcrInsight = { analysisId, source: "fixture", code: "F-30", processedAt: new Date().toISOString() };
+  bot.ocrRouteSelection = {
+    status: "confirmed", analysisId, options: [], preparedMessages: ["Cliente F-30"], dispatchState: "waiting"
+  };
+  bot.routeStore.all = () => [{ ocr: { analysisId }, confirmedCount: 1 }];
+  const sendCycle = deferred();
+  bot.enviarMensagensRapidas = () => {
+    bot.activeSendCycle = sendCycle.promise;
+    return true;
+  };
+
+  assert.equal(await bot.dispatchPreparedOcrIfGroupOpen("manual"), true);
+  assert.equal(bot.ocrRouteSelection.dispatchState, "sending");
+  sendCycle.resolve();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(bot.ocrRouteSelection.dispatchState, "sent");
+  assert.match(bot.ocrRouteSelection.message, /Cliente F-30/);
+  assert.ok(bot.ocrRouteSelection.dispatchCompletedAt);
 });

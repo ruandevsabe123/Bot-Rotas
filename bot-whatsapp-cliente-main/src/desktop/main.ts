@@ -249,7 +249,7 @@ function registerIpc() {
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:confirmOcrRoutes", async (_event, payload: { optionIds: string[] }) => {
-    bot.confirmOcrRouteSelection(Array.isArray(payload.optionIds) ? payload.optionIds : []);
+    await bot.confirmOcrRouteSelection(Array.isArray(payload.optionIds) ? payload.optionIds : []);
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:submitRouteIncident", async (_event, payload: { routeId: string; valid: boolean; reason: string }) => {

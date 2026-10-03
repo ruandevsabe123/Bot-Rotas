@@ -2669,6 +2669,11 @@ function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = fals
 }) {
   const [manualIds, setManualIds] = useState<string[]>([]);
   useEffect(() => setManualIds([]), [selection?.analysisId]);
+  useEffect(() => {
+    if (selection?.dispatchState !== "sent") return;
+    const timer = window.setTimeout(onClose, 4_000);
+    return () => window.clearTimeout(timer);
+  }, [selection?.analysisId, selection?.dispatchCompletedAt, selection?.dispatchState, onClose]);
   if (!selection || selection.status === "idle") return null;
   const analyzing = selection.status === "analyzing";
   const finished = !analyzing;
@@ -2691,7 +2696,7 @@ function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = fals
         <div className="sheet-heading">
           <div>
             <p className="panel-label">Bot imagem automático</p>
-            <h2 id="automatic-analysis-title">{analyzing ? "Analisando a imagem" : selection.status === "confirmed" ? "Análise concluída" : "Imagem verificada"}</h2>
+            <h2 id="automatic-analysis-title">{analyzing ? "Analisando a imagem" : selection.dispatchState === "sent" ? "Rotas enviadas!" : selection.status === "confirmed" ? "Rota pronta" : "Imagem verificada"}</h2>
           </div>
           {finished ? <button className="icon-button" title="Fechar" type="button" onClick={onClose}><X size={20} /></button> : <span className="mini-badge">PROCESSANDO</span>}
         </div>
@@ -2699,8 +2704,16 @@ function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = fals
           <article className="analysis-step done"><CheckCircle2 size={19} /><span><strong>Imagem recebida</strong><small>O servidor recebeu a foto do grupo.</small></span></article>
           <article className={analyzing ? "analysis-step active" : "analysis-step done"}>{analyzing ? <RefreshCw className="spin" size={19} /> : <CheckCircle2 size={19} />}<span><strong>Lendo bairros e gaiolas</strong><small>{analyzing ? "Conferindo a associação de cada bairro com sua gaiola na imagem." : manualOptions.length ? `${manualOptions.length} rota(s) detectada(s) para revisão.` : `${selection.detectedRouteCount || selection.options.length} bairro(s) preferido(s) confirmado(s).`}</small></span></article>
           <article className={analyzing ? "analysis-step" : "analysis-step done"}><Route size={19} /><span><strong>Conferindo as preferências</strong><small>{analyzing ? "Aguardando a leitura terminar." : selectedOptions.length ? "Preferência identificada e associação com a gaiola validada." : manualOptions.length ? "Sem correspondência automática; escolha manual disponível." : "Nenhuma escolha liberada para envio."}</small></span></article>
-          <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>{manualOptions.length && selection.status !== "confirmed" ? "Confirmação manual" : "Disparo automático"}</strong><small>{selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} mensagem(ns) preparada(s) ou enviada(s).` : analyzing ? "Aguardando uma preferência com leitura segura." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
+          <article className={selection.status === "confirmed" ? "analysis-step done" : analyzing ? "analysis-step" : "analysis-step active"}><Send size={19} /><span><strong>{selection.dispatchState === "sent" ? "Envio concluído" : selection.dispatchState === "sending" ? "Enviando agora" : manualOptions.length && selection.status !== "confirmed" ? "Confirmação manual" : "Disparo automático"}</strong><small>{selection.dispatchState === "sent" ? selection.message : selection.dispatchState === "sending" ? "Aguardando a confirmação do WhatsApp." : selection.status === "confirmed" ? `${selection.preparedMessages?.length || 0} rota(s) pronta(s); aguardando o grupo abrir.` : analyzing ? "Aguardando uma preferência com leitura segura." : selection.message || "Nenhuma mensagem liberada."}</small></span></article>
         </div>
+        {selection.dispatchState === "sent" ? (
+          <section className="automatic-analysis-success" aria-label="Envio concluído">
+            <span className="automatic-analysis-success-icon"><CheckCircle2 size={28} /></span>
+            <div><strong>Envio confirmado pelo WhatsApp</strong><small>{selection.dispatchGroupName || "Grupo alvo"}</small></div>
+            <div className="automatic-analysis-success-messages">{(selection.preparedMessages || []).map((message) => <span key={message}>{message}</span>)}</div>
+            <small>Esta tela fechará automaticamente em 4 segundos.</small>
+          </section>
+        ) : null}
         {selection.imagePreviewUrl ? (
           <figure className="automatic-analysis-preview">
             <figcaption>Imagem completa recebida do WhatsApp e usada na análise</figcaption>

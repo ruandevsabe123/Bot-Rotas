@@ -2714,7 +2714,7 @@ export class BotService extends EventEmitter {
     }
   }
 
-  confirmOcrRouteSelection(optionIds: string[]) {
+  async confirmOcrRouteSelection(optionIds: string[]) {
     const selection = this.ocrRouteSelection;
     if (selection.status !== "ready" || !selection.options.length) {
       throw new Error("Nenhuma análise de imagem aguardando confirmação.");
@@ -2745,7 +2745,7 @@ export class BotService extends EventEmitter {
       processedAt: new Date().toISOString()
     };
     this.applyOcrRouteSelection(selected, "manual");
-    void this.dispatchPreparedOcrIfGroupOpen("manual");
+    await this.dispatchPreparedOcrIfGroupOpen("manual");
     this.emitSnapshot();
   }
 
@@ -2814,10 +2814,46 @@ export class BotService extends EventEmitter {
       return false;
     }
     this.grupoJaFechouDepoisDoInicio = false;
+    const dispatchedAnalysisId = this.lastOcrInsight?.analysisId;
+    const dispatchedMessages = [...this.pendingOcrMessages];
+    const dispatchCycle = this.activeSendCycle;
+    this.ocrRouteSelection = {
+      ...this.ocrRouteSelection,
+      dispatchState: "sending",
+      dispatchGroupName: activeGroup.name || this.configStore.load().grupoAlvoNome || "grupo alvo",
+      message: `Enviando agora: ${dispatchedMessages.join(" | ")}.`
+    };
     this.logger.info(trigger === "automatic"
       ? "[ROMANEIO] Grupo já estava aberto: disparo da melhor rota iniciado imediatamente após a imagem."
       : "[ROMANEIO] Grupo já estava aberto: disparo da rota confirmada iniciado imediatamente.");
     this.emitSnapshot();
+    void dispatchCycle?.then(() => {
+      if (dispatchedAnalysisId && this.ocrRouteSelection.analysisId !== dispatchedAnalysisId) return;
+      const route = dispatchedAnalysisId
+        ? this.routeStore.all().find((item) => item.ocr?.analysisId === dispatchedAnalysisId)
+        : undefined;
+      const sent = Boolean(route?.confirmedCount && route.confirmedCount > 0);
+      this.ocrRouteSelection = {
+        ...this.ocrRouteSelection,
+        dispatchState: sent ? "sent" : "failed",
+        dispatchCompletedAt: new Date().toISOString(),
+        message: sent
+          ? `${route!.confirmedCount} rota(s) enviada(s) com sucesso: ${dispatchedMessages.join(" | ")}.`
+          : "O ciclo terminou sem confirmação do WhatsApp. Confira o histórico antes de tentar novamente."
+      };
+      this.rememberCurrentOcrAnalysis();
+      this.emitSnapshot();
+    }).catch((error) => {
+      if (dispatchedAnalysisId && this.ocrRouteSelection.analysisId !== dispatchedAnalysisId) return;
+      this.ocrRouteSelection = {
+        ...this.ocrRouteSelection,
+        dispatchState: "failed",
+        dispatchCompletedAt: new Date().toISOString(),
+        message: `O envio não foi confirmado: ${this.getErrorMessage(error)}`
+      };
+      this.rememberCurrentOcrAnalysis();
+      this.emitSnapshot();
+    });
     return true;
   }
 
@@ -2843,6 +2879,7 @@ export class BotService extends EventEmitter {
     }
     this.ocrRouteSelection = {
       ...this.ocrRouteSelection,
+      dispatchState: "waiting",
       message: "Rota pronta. Aguardando o WhatsApp reconectar para enviar com segurança."
     };
     this.emitSnapshot();
@@ -2904,9 +2941,11 @@ export class BotService extends EventEmitter {
       status: "confirmed",
       selectedOptionIds: selected.map((option) => option.id),
       preparedMessages: messages,
+      dispatchState: "waiting",
+      dispatchGroupName: activeGroup.name || config.grupoAlvoNome || "grupo alvo",
       message: mode === "manual"
         ? "Rotas confirmadas. O bot enviará quando o grupo abrir."
-        : `Bairro ${selected[0].bairro}: gaiola ${selected[0].gaiola} preparada pela ordem de preferência.`
+        : `Rota pronta: ${messages.join(" | ")}. Aguardando o grupo abrir para enviar.`
     };
     this.rememberCurrentOcrAnalysis();
     this.logger.success(mode === "manual"
