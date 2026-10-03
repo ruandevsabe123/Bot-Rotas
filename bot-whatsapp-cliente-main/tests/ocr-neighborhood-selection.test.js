@@ -321,6 +321,61 @@ test("layout sem cabecalho usa a ultima coluna quando a cidade nao foi configura
   assert.equal(selectPreferredNeighborhoodFromOcr(longer, [{ cidade: "", bairro: "Centro" }]).status, "no-match");
 });
 
+test("adapta os novos layouts claros por estrutura sem depender de recorte fixo", () => {
+  const cases = [
+    {
+      text: "B-16 AT20261002AJHLT 89 SFI - ST/Gargaú",
+      preference: { cidade: "São Francisco de Itabapoana", bairro: "ST/Gargaú" },
+      code: "B-16"
+    },
+    {
+      text: "F-30 AT20261002AJJT4 35 Campos - Farol; Campos - Mussurepe; Campos - Novo Jockey; Campos - Penha; Campos - Santo Amaro de Campos",
+      preference: { cidade: "Campos dos Goytacazes", bairro: "Mussurepe" },
+      code: "F-30"
+    },
+    {
+      text: "D-28 AT20261002AJJZV 121 Campos - Ururaí",
+      preference: { cidade: "Campos dos Goytacazes", bairro: "Ururaí" },
+      code: "D-28"
+    }
+  ];
+
+  for (const item of cases) {
+    const result = selectPreferredNeighborhoodFromOcr(consensus([item.text]), [item.preference]);
+    assert.equal(result.status, "selected", item.text);
+    assert.equal(result.detection.code, item.code, item.text);
+  }
+});
+
+test("cabecalhos variaveis isolam CLUSTER e BAIRRO automaticamente", () => {
+  const withDistrict = consensus([
+    line("ROTA", 10, 20), line("AT", 10, 180), line("SPR", 10, 430),
+    line("CLUSTER", 10, 620), line("BAIRRO", 10, 1050),
+    line("F-24", 60, 20), line("AT20261002AJK75", 60, 180), line("116", 60, 430),
+    line("Campos - Parque Aurora", 60, 620), line("Parque Aurora", 60, 1050)
+  ]);
+  const selected = selectPreferredNeighborhoodFromOcr(withDistrict, [
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Aurora" }
+  ]);
+  assert.equal(selected.status, "selected");
+  assert.equal(selected.detection.code, "F-24");
+
+  const wrongDistrict = selectPreferredNeighborhoodFromOcr(withDistrict, [
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Rosário" }
+  ]);
+  assert.equal(wrongDistrict.status, "no-match");
+
+  const headerlessWithExtraNumber = consensus([
+    line("J-31", 60, 20), line("AT20261002AKD40", 60, 180), line("46", 60, 430), line("83", 60, 520),
+    line("Campos - Parque João Maria", 60, 620), line("Parque Rosário", 60, 1120)
+  ]);
+  const inferredLastColumn = selectPreferredNeighborhoodFromOcr(headerlessWithExtraNumber, [
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Rosário" }
+  ]);
+  assert.equal(inferredLastColumn.status, "selected");
+  assert.equal(inferredLastColumn.detection.code, "J-31");
+});
+
 test("linha com um código válido e outro ilegível continua ambígua", () => {
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
     "1-24 F-14 Campos dos Goytacazes Parque Rodoviário"

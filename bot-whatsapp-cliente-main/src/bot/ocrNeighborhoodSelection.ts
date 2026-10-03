@@ -152,6 +152,7 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   const district = normalizeNeighborhoodIdentity(preference.bairro);
   const normalizedTail = normalizeNeighborhoodIdentity(tail);
   const leadingCity = city ? findLeadingCityAlias(normalizedTail, city) : undefined;
+  const cityQualifiedDistricts = city ? findCityQualifiedDistricts(tail, city) : [];
   if (row.districtText !== undefined) {
     tail = row.districtText;
     if (city && row.localityText && !isCompatibleCity(row.localityText, city)) return undefined;
@@ -160,6 +161,20 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
     // not configure a city, compare only the physically isolated last cell;
     // this accepts "Centro" but never the suffix of "Novo Centro".
     tail = row.trailingCellText;
+  } else if (
+    city && row.trailingCellText !== undefined &&
+    normalizeNeighborhoodIdentity(row.trailingCellText) === district &&
+    cityQualifiedDistricts.length > 0
+  ) {
+    // Headerless exports can add/remove numeric columns while keeping a clear
+    // final BAIRRO cell. Accept it only when the configured city is also
+    // present as a complete identity elsewhere in the same physical row.
+    tail = row.trailingCellText;
+  } else if (cityQualifiedDistricts.includes(district)) {
+    // Some exports have no BAIRRO column and put one or more explicit
+    // "city - neighborhood" pairs in CLUSTER. Select only a complete pair;
+    // never use a substring from another city or a similar neighborhood.
+    tail = preference.bairro;
   } else if (city && leadingCity) {
     // The city must be complete and immediately precede the neighborhood data.
     // Retain real separators between multiple explicitly listed neighborhoods.
@@ -172,7 +187,11 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
     // exact neighborhood cell is safe; a suffix/substring is never enough.
     return undefined;
   }
-  const districts = tail.split(/[|;,/\n]+/).map(normalizeNeighborhoodIdentity).filter(Boolean);
+  // Keep the complete cell as a candidate because slash can be part of an
+  // official neighborhood name (for example ST/Gargaú), while still
+  // supporting old cells that use slash as a list separator.
+  const districts = [normalizeNeighborhoodIdentity(tail), ...tail.split(/[|;,/\n]+/).map(normalizeNeighborhoodIdentity)]
+    .filter(Boolean);
   if (!districts.includes(district)) return undefined;
 
   const relevant = new Set(`${city} ${district} ${code.replace("-", " ")}`.split(/\s+/).filter(Boolean));
@@ -212,7 +231,22 @@ function getCityAliases(value: string) {
   const aliases = new Set([city]);
   if (city === "campos dos goytacazes") aliases.add("campos");
   if (city === "campos") aliases.add("campos dos goytacazes");
+  if (city === "sao francisco de itabapoana") aliases.add("sfi");
+  if (city === "sfi") aliases.add("sao francisco de itabapoana");
+  if (city === "sao joao da barra") aliases.add("sjb");
+  if (city === "sjb") aliases.add("sao joao da barra");
   return aliases;
+}
+
+function findCityQualifiedDistricts(value: string, configuredCity: string) {
+  const aliases = [...getCityAliases(configuredCity)].sort((left, right) => right.length - left.length);
+  // Semicolon/pipe/newline separate destinations. Slash is deliberately kept:
+  // operational names such as "ST/Gargaú" use it inside the neighborhood.
+  return String(value || "").split(/[;|\n]+/).map((part) => normalizeNeighborhoodIdentity(part))
+    .flatMap((part) => {
+      const alias = aliases.find((candidate) => part.startsWith(`${candidate} `));
+      return alias ? [part.slice(alias.length).trim()] : [];
+    }).filter(Boolean);
 }
 
 function findLeadingCityAlias(value: string, configuredCity: string) {
