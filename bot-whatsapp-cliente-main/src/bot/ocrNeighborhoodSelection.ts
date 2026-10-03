@@ -158,6 +158,7 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   // 1/l/|/II into I or truncate a three-digit value.
   const codeMatches = [...row.text.matchAll(/(?:^|[\s|;])([A-Z])[-_\u2013\u2014:.\s]*(\d{1,2})(?=$|[\s|;,])/g)];
   const suspiciousCodes = [...row.text.matchAll(/(?:^|[\s|;])([1|]|II|l|i)\s*[-_\u2013\u2014:.]\s*(\d{1,3})(?=$|[\s|;,])/g)];
+  const misreadFourCodes = [...row.text.matchAll(/(?:^|[\s|;])([A-Z])[-_\u2013\u2014:.\s]*(\d)\s*[uU](?=$|[\s|;,])/g)];
   let code = codeMatches.length === 1 && suspiciousCodes.length === 0
     ? `${codeMatches[0][1].toUpperCase()}-${codeMatches[0][2]}` : "";
   // In the narrow route column Tesseract frequently reads I-24 as 1-24,
@@ -168,6 +169,13 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   const hasExactAt = /\bAT[A-Z0-9]{8,}\b/i.test(row.text);
   const malformedSingleI = row.text.match(/(?:^|[\s|;])(-{1,2}\s*(\d))(?=$|[\s|;,])/);
   let requiresThreeEvidence = false;
+  // In compressed screenshots the open top of the final digit 4 is often
+  // recognized as "u" (F-24 -> F-2u). Recover it only beside a complete AT;
+  // city/neighborhood matching and two independent OCR readings are still
+  // required before this code can be sent automatically.
+  if (!code && hasExactAt && misreadFourCodes.length === 1 && suspiciousCodes.length === 0) {
+    code = `${misreadFourCodes[0][1].toUpperCase()}-${misreadFourCodes[0][2]}4`;
+  }
   if (!code && hasExactAt && /^[1|li]$/i.test(suspiciousPrefix) && suspiciousCodes[0][2].length === 2) {
     code = `I-${suspiciousCodes[0][2]}`;
   }
@@ -178,11 +186,15 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
   const lastCode = codeMatches[codeMatches.length - 1];
   const recoveredCodeEnd = malformedSingleI?.index !== undefined
     ? malformedSingleI.index + malformedSingleI[0].length : undefined;
+  const misreadFourCode = misreadFourCodes.length === 1 ? misreadFourCodes[0] : undefined;
+  const misreadFourCodeEnd = misreadFourCode?.index !== undefined
+    ? misreadFourCode.index + misreadFourCode[0].length : undefined;
   let tail = lastCode ? row.text.slice(lastCode.index! + lastCode[0].length)
-    : recoveredCodeEnd !== undefined ? row.text.slice(recoveredCodeEnd) : row.text;
+    : misreadFourCodeEnd !== undefined ? row.text.slice(misreadFourCodeEnd)
+      : recoveredCodeEnd !== undefined ? row.text.slice(recoveredCodeEnd) : row.text;
   // Strip an unreadable cage only to record unsafe evidence for this preference.
   // It must never become the code used for a message.
-  if (!lastCode) tail = tail.replace(/^\s*[A-Za-z1|]{1,2}\s*[-_\u2013\u2014:.]?\s*\d{1,3}\b/, "");
+  if (!lastCode && misreadFourCodeEnd === undefined) tail = tail.replace(/^\s*[A-Za-z1|]{1,2}\s*[-_\u2013\u2014:.]?\s*\d{1,3}\b/, "");
   tail = stripMetadata(tail);
   const city = normalizeNeighborhoodIdentity(preference.cidade);
   const district = normalizeNeighborhoodIdentity(preference.bairro);

@@ -376,6 +376,26 @@ test("cabecalhos variaveis isolam CLUSTER e BAIRRO automaticamente", () => {
   assert.equal(inferredLastColumn.detection.code, "J-31");
 });
 
+test("F-24 lido como F-2u continua automatico com AT e Parque Aurora exatos", () => {
+  const source = consensus([
+    line("ROTA", 10, 20), line("AT", 10, 180), line("SPR", 10, 430),
+    line("CLUSTER", 10, 620), line("BAIRRO", 10, 1050),
+    line("F-2u", 60, 20), line("AT20261002AJK75", 60, 180), line("116", 60, 430),
+    line("Campos - Parque Aurora", 60, 620), line("Parque Aurora", 60, 1050)
+  ]);
+  const result = selectPreferredNeighborhoodFromOcr(source, [
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Aurora" }
+  ]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "F-24");
+  assert.equal(result.detection.evidenceCount, 2);
+
+  const withoutAt = consensus(["F-2u 116 Campos - Parque Aurora Parque Aurora"]);
+  assert.notEqual(selectPreferredNeighborhoodFromOcr(withoutAt, [
+    { cidade: "Campos dos Goytacazes", bairro: "Parque Aurora" }
+  ]).status, "selected");
+});
+
 test("linha com um código válido e outro ilegível continua ambígua", () => {
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
     "1-24 F-14 Campos dos Goytacazes Parque Rodoviário"
