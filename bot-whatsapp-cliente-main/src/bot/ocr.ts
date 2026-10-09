@@ -460,7 +460,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       // Keeping fewer pixels makes Tesseract materially faster on the long
       // tables used by the current provider without blurring the numeric cells.
       const ocrWidth = darkLayout
-        ? (width > 0 ? Math.min(1500, Math.max(1000, Math.round(width * 1.25))) : 1100)
+        ? (width > 0 ? Math.min(1350, Math.max(900, Math.round(width * 1.1))) : 1000)
         : completeWidth;
       const standardVariants = [
         { path: contrast, label: "bairros-tabela-completa-contraste", generated: true, psm: 6 },

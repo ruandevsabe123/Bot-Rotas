@@ -82,10 +82,10 @@ function getWorker() {
     stdio: ["ignore", "inherit", "inherit", "ipc"]
   });
   // OCR consome CPU intensamente. Em contenÃ§Ã£o, mantenha o socket do bot
-  // responsivo e deixe o kernel executar o Tesseract como tarefa de fundo.
+  // O isolamento protege o socket; prioridade normal evita limitar o Tesseract.
   if (worker.pid) {
     try {
-      os.setPriority(worker.pid, 10);
+      os.setPriority(worker.pid, 0);
     } catch {
       // Alguns ambientes nÃ£o permitem alterar nice; o isolamento ainda vale.
     }
