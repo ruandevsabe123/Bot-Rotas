@@ -70,7 +70,7 @@ test("IA envia todos os bairros encontrados na ordem de preferencia, sem romanei
   // The lower preference is the first physical row. Configuration order wins.
   mockReading(t, async (_imagePath, options) => {
     assert.equal(options.preferCageCrop, false);
-    assert.equal(options.fastFirst, false);
+    assert.equal(options.fastFirst, true);
     return reading(["B-2 Cidade Jardim Azul", "A-1 Cidade Centro"]);
   });
   bot.romaneioStore = { routes() { throw new Error("No romaneio should be read"); }, getSettings() { throw new Error("No ranking should be used"); } };

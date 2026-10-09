@@ -63,7 +63,8 @@ export function normalizeNeighborhoodIdentity(value: string) {
  */
 export function selectPreferredNeighborhoodFromOcr(
   ocr: RouteOcrResult,
-  preferences: MonitoredRoute[]
+  preferences: MonitoredRoute[],
+  maxStops = 0
 ): NeighborhoodSelection {
   const configured = preferences.map((preference, index) => ({
     cidade: String(preference.cidade || "").trim(),
@@ -148,7 +149,16 @@ export function selectPreferredNeighborhoodFromOcr(
     }
   }
   if (selections.length) {
-    const orderedSelections = [...selections].sort((left, right) => {
+    const normalizedMaxStops = Number.isFinite(Number(maxStops)) ? Math.max(0, Math.floor(Number(maxStops))) : 0;
+    const eligibleSelections = selections.filter((item) => !normalizedMaxStops || item.detection.paradas === undefined || item.detection.paradas <= normalizedMaxStops);
+    const excludedCount = selections.length - eligibleSelections.length;
+    if (!eligibleSelections.length) return {
+      status: "unsafe",
+      reason: `Todos os bairros encontrados ultrapassaram o limite geral de ${normalizedMaxStops} paradas. Nenhuma mensagem foi enviada.`,
+      detections,
+      selections: []
+    };
+    const orderedSelections = [...eligibleSelections].sort((left, right) => {
       const leftStops = left.detection.paradas;
       const rightStops = right.detection.paradas;
       if (leftStops !== undefined && rightStops !== undefined && leftStops !== rightStops) return leftStops - rightStops;
@@ -158,7 +168,7 @@ export function selectPreferredNeighborhoodFromOcr(
     });
     return {
       status: "selected", detection: orderedSelections[0].detection, preferenceIndex: orderedSelections[0].preferenceIndex,
-      reason: `${orderedSelections.length} bairro(s) confirmado(s), ordenados do menor para o maior número de paradas.`,
+      reason: `${orderedSelections.length} bairro(s) liberado(s), começando pelo menor número de paradas${normalizedMaxStops ? ` e respeitando o limite geral de ${normalizedMaxStops}` : ""}.${excludedCount ? ` ${excludedCount} rota(s) acima do limite foram descartadas.` : ""}`,
       detections, selections: orderedSelections
     };
   }

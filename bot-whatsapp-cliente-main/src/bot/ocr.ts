@@ -109,7 +109,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
     let readings = attempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
     let errors = attempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
 
-    if (options.fastFirst && options.preferCageCrop && fastReadingCount < selectedVariants.length && canUseFastOcrResult(readings)) {
+    if (options.fastFirst && fastReadingCount < selectedVariants.length && canUseFastOcrResult(readings)) {
       return combineOcrReadings(readings);
     }
 
@@ -120,7 +120,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
         const [attempt] = await runOcrVariants([variant]);
         if (attempt?.reading) readings = [...readings, attempt.reading];
         if (attempt?.error) errors = [...errors, attempt.error];
-        if (options.fastFirst && options.preferCageCrop && canUseFastOcrResult(readings)) break;
+        if (options.fastFirst && canUseFastOcrResult(readings)) break;
       }
     }
 

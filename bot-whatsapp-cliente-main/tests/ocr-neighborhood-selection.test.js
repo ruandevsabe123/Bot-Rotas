@@ -63,6 +63,31 @@ test("lê a primeira quantidade após o AT como paradas sem aplicar limites", ()
   assert.deepEqual(selected.selections.map((item) => item.detection.paradas), [18, 42]);
 });
 
+test("limite geral descarta somente rotas acima do máximo", () => {
+  const selected = selectPreferredNeighborhoodFromOcr(consensus([
+    "I-19 AT20261006APWGR 42 93 Campos Parque João Maria",
+    "G-17 AT20261006APHFA 18 92 Campos Goytacazes"
+  ]), [
+    { cidade: "Campos", bairro: "Parque João Maria" },
+    { cidade: "Campos", bairro: "Goytacazes" }
+  ], 30);
+  assert.equal(selected.status, "selected");
+  assert.deepEqual(selected.selections.map((item) => item.detection.code), ["G-17"]);
+  assert.match(selected.reason, /1 rota\(s\) acima do limite/);
+});
+
+test("sem leitura de paradas mantém a ordem de preferência e não bloqueia", () => {
+  const selected = selectPreferredNeighborhoodFromOcr(consensus([
+    "G-17 Campos Goytacazes",
+    "I-19 Campos Parque João Maria"
+  ]), [
+    { cidade: "Campos", bairro: "Parque João Maria" },
+    { cidade: "Campos", bairro: "Goytacazes" }
+  ], 30);
+  assert.equal(selected.status, "selected");
+  assert.deepEqual(selected.selections.map((item) => item.detection.code), ["I-19", "G-17"]);
+});
+
 test("não troca bairros parecidos, prefixos, palavras parciais ou cidades", () => {
   for (const text of [
     "F-14 Campos dos Goytacazes Parque Rosário",
