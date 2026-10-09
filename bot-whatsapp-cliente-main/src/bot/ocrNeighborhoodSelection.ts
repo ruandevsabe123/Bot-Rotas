@@ -295,9 +295,13 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
 }
 
 function extractStopsAfterAt(text: string) {
-  const match = String(text || "").match(/\bAT[A-Z0-9]{6,}\b\s*[|;,]?\s*(\d{1,3})\b/i);
-  if (!match) return undefined;
-  const value = Number(match[1]);
+  const afterAt = String(text || "").match(/\bAT[A-Z0-9]{6,}\b([\s\S]*)$/i)?.[1] || "";
+  // Layout with two numeric cells: AT | stops | packages. Layout with only
+  // one numeric cell: AT | packages. A package count must never be used as a
+  // stop limit or to rank the preferred neighborhoods.
+  const quantities = afterAt.match(/^\s*[|;,]?\s*(\d{1,3})\b\s*[|;,]?\s*(\d{1,3})\b/);
+  if (!quantities) return undefined;
+  const value = Number(quantities[1]);
   return Number.isInteger(value) && value > 0 && value <= 999 ? value : undefined;
 }
 

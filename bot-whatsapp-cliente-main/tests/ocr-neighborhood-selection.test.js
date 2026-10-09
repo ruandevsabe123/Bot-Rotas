@@ -33,7 +33,7 @@ function consensus(rows) {
 
 test("ordena bairros confirmados pela menor quantidade de paradas", () => {
   const result = selectPreferredNeighborhoodFromOcr(consensus([
-    "B-12 AT2026092600001 45 Campos dos Goytacazes Centro",
+    "B-12 AT2026092600001 45 109 Campos dos Goytacazes Centro",
     "F-14 AT2026092600002 77 Campos dos Goytacazes Parque Rodoviário"
   ]), preferred);
   assert.equal(result.status, "selected");
@@ -61,6 +61,20 @@ test("lê a primeira quantidade após o AT como paradas sem aplicar limites", ()
   assert.equal(selected.detection.code, "G-17");
   assert.equal(selected.detection.paradas, 18);
   assert.deepEqual(selected.selections.map((item) => item.detection.paradas), [18, 42]);
+});
+
+test("uma unica quantidade depois do AT e pacotes, nao paradas", () => {
+  const selected = selectPreferredNeighborhoodFromOcr(consensus([
+    "D-5 AT20261008ASZGE 109 SJB Grussai",
+    "F-32 AT20261008ASZKV 132 Campos Parque Caju"
+  ]), [
+    { bairro: "Grussai" },
+    { bairro: "Parque Caju" }
+  ], 50);
+  assert.equal(selected.status, "selected");
+  assert.equal(selected.detection.code, "D-5");
+  assert.deepEqual(selected.selections.map((item) => item.detection.paradas), [undefined, undefined]);
+  assert.doesNotMatch(selected.reason, /acima do limite/);
 });
 
 test("limite geral descarta somente rotas acima do máximo", () => {
