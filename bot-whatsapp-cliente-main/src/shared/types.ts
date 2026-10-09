@@ -469,9 +469,14 @@ export type RouteOcrInsight = {
   cidade?: string;
   bairro?: string;
   code?: string;
+  paradas?: number;
   confidence?: number;
   processedAt: string;
   imagePreviewUrl?: string;
+  analysisOptions?: OcrRouteOption[];
+  analysisTiming?: OcrRouteSelectionState["timing"];
+  analysisMessage?: string;
+  preparedMessages?: string[];
 };
 
 export type RomaneioPriority =

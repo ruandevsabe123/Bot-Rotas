@@ -48,6 +48,7 @@ export type DetectedRouteCode = {
 };
 
 let tesseractJsWorkerPromise: ReturnType<typeof createWorker> | undefined;
+let tesseractJsRecognitionQueue: Promise<void> = Promise.resolve();
 let nativeTesseractAvailable: boolean | undefined;
 
 export function normalizeOcrText(text: string) {
@@ -141,7 +142,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
 }
 
 function runOcrVariants(items: Awaited<ReturnType<typeof createPreprocessedImages>>) {
-  return mapWithConcurrency(items, 1, async (variant) => {
+  return mapWithConcurrency(items, 2, async (variant) => {
     try {
       return { reading: await readSingleRouteImageOcr(variant.path, variant.label, variant.psm) };
     } catch (error) {
@@ -366,29 +367,34 @@ function readRouteImageOcrWithBinary(imagePath: string, label: string, psm: numb
   });
 }
 
-async function readRouteImageOcrWithTesseractJs(imagePath: string, label: string, psm: number): Promise<RouteOcrResult> {
-  const cageOnly = label.startsWith("coluna-gaiola");
-  const worker = await getTesseractJsWorker(cageOnly);
-  await worker.setParameters({
-    tessedit_pageseg_mode: String(psm) as any
-  });
+function readRouteImageOcrWithTesseractJs(imagePath: string, label: string, psm: number): Promise<RouteOcrResult> {
+  const recognize = async (): Promise<RouteOcrResult> => {
+    const cageOnly = label.startsWith("coluna-gaiola");
+    const worker = await getTesseractJsWorker(cageOnly);
+    await worker.setParameters({
+      tessedit_pageseg_mode: String(psm) as any
+    });
 
-  const result = await worker.recognize(
-    imagePath,
-    {},
-    {
-      text: true,
-      blocks: true,
-      tsv: true
-    }
-  );
-  const tsvLines = parseTsvLines(result.data.tsv || "");
-  const blockLines = tsvLines.length ? tsvLines : extractBlockLines(result.data.blocks || []);
-  return {
-    text: blockLines.map((line) => line.text).join("\n") || result.data.text || "",
-    lines: blockLines,
-    source: `tesseract-js:${label}`
+    const result = await worker.recognize(
+      imagePath,
+      {},
+      {
+        text: true,
+        blocks: true,
+        tsv: true
+      }
+    );
+    const tsvLines = parseTsvLines(result.data.tsv || "");
+    const blockLines = tsvLines.length ? tsvLines : extractBlockLines(result.data.blocks || []);
+    return {
+      text: blockLines.map((line) => line.text).join("\n") || result.data.text || "",
+      lines: blockLines,
+      source: `tesseract-js:${label}`
+    };
   };
+  const pending = tesseractJsRecognitionQueue.then(recognize, recognize);
+  tesseractJsRecognitionQueue = pending.then(() => undefined, () => undefined);
+  return pending;
 }
 
 async function detectCageColumnCrop(imagePath: string, sharp: any, fallbackWidth: number, fallbackHeight: number) {

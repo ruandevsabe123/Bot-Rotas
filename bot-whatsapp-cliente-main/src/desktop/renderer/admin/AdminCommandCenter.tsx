@@ -487,12 +487,16 @@ function RouteSidePanel({
           </div>
         </section>
         {route.ocr ? (
-          <section className="adminx-detail-section">
-            <h3>Análise inteligente da imagem</h3>
+          <section className="adminx-detail-section adminx-analysis-replay">
+            <div className="adminx-replay-heading"><div><p className="panel-label">Replay do cliente</p><h3>Análise inteligente da imagem</h3></div><span className={`status-pill ${route.status === "sent" ? "tone-green" : "tone-yellow"}`}>{route.status === "sent" ? "Enviada" : route.status}</span></div>
             {route.ocr.imagePreviewUrl ? <img className="adminx-ocr-preview" src={route.ocr.imagePreviewUrl} alt="Prévia da imagem processada" /> : null}
+            {route.ocr.analysisMessage ? <p className="adminx-replay-message">{route.ocr.analysisMessage}</p> : null}
+            {route.ocr.analysisOptions?.length ? <div className="adminx-replay-routes">{route.ocr.analysisOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span><small>{option.paradas ? `${option.paradas} paradas` : "Paradas não identificadas"}</small></article>)}</div> : null}
+            {route.ocr.analysisTiming ? <div className="adminx-replay-timing"><span><small>Baixar</small><b>{formatMs(route.ocr.analysisTiming.downloadMs)}</b></span><span><small>Analisar</small><b>{formatMs(route.ocr.analysisTiming.ocrMs)}</b></span><span><small>Comparar</small><b>{formatMs(route.ocr.analysisTiming.comparisonMs)}</b></span><span><small>Total IA</small><b>{formatMs(route.ocr.analysisTiming.totalMs)}</b></span></div> : null}
             <dl className="adminx-kv">
               <dt>Rota</dt><dd>{route.ocr.route || route.ocr.bairro || "Não registrada"}</dd>
               <dt>Código</dt><dd>{route.ocr.code || "Não registrado"}</dd>
+              <dt>Paradas</dt><dd>{route.ocr.paradas || route.ocr.analysisOptions?.[0]?.paradas || "Não identificadas"}</dd>
               <dt>Motor</dt><dd>Análise visual local</dd>
               <dt>Confiança</dt><dd>{route.ocr.confidence ? `${route.ocr.confidence}%` : "Sem média"}</dd>
               <dt>Linha</dt><dd>{route.ocr.line || "Sem linha"}</dd>
@@ -500,6 +504,7 @@ function RouteSidePanel({
               <dt>Até iniciar o envio</dt><dd>{formatMs(Math.max(0, new Date(route.createdAt).getTime() - new Date(route.ocr.processedAt).getTime()))}</dd>
               <dt>Duração do envio</dt><dd>{formatMs(route.dispatchTimeline?.totalDurationMs)}</dd>
             </dl>
+            {route.ocr.preparedMessages?.length ? <><h4>Mensagens preparadas</h4><div className="adminx-chip-stack">{route.ocr.preparedMessages.map((message, index) => <span key={`${route.id}-ocr-message-${index}`}>{message}</span>)}</div></> : null}
             {route.ocr.text ? <pre className="adminx-ocr-text">{route.ocr.text}</pre> : null}
           </section>
         ) : null}

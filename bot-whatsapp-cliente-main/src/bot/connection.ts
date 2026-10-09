@@ -2669,7 +2669,10 @@ export class BotService extends EventEmitter {
       this.lastOcrInsight = {
         analysisId, source: ocr.source, text: ocr.text, line: detected.line,
         route: detected.route, cidade: option.cidade, bairro: option.bairro,
-        code: detected.code, confidence: detected.confidence, processedAt: new Date().toISOString()
+        code: detected.code, paradas: option.paradas, confidence: detected.confidence, processedAt: new Date().toISOString(),
+        imagePreviewUrl, analysisOptions: options, analysisTiming: { ...timing, totalMs: comparedAt - analysisStartedAtMs },
+        analysisMessage: decision.reason,
+        preparedMessages: options.map((item) => `${config.nomeEnvio} ${item.gaiola}`.trim())
       };
       this.emit("image-analysis", {
         id: analysisId, messageId, result: "detected", route: detected.route,
@@ -2745,8 +2748,14 @@ export class BotService extends EventEmitter {
       cidade: first.cidade,
       bairro: first.bairro,
       code: first.gaiola,
+      paradas: first.paradas,
       confidence: first.score,
-      processedAt: new Date().toISOString()
+      processedAt: new Date().toISOString(),
+      imagePreviewUrl: selection.imagePreviewUrl,
+      analysisOptions: selected,
+      analysisTiming: selection.timing,
+      analysisMessage: selection.message,
+      preparedMessages: selected.map((option) => `${this.configStore.load().nomeEnvio} ${option.gaiola}`.trim())
     };
     this.applyOcrRouteSelection(selected, "manual");
     await this.dispatchPreparedOcrIfGroupOpen("manual");

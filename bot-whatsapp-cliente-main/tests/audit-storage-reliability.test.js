@@ -79,6 +79,36 @@ test("entradas nulas em reacoes, timeline e logs nao descartam o historico valid
   assert.equal(new BotLogger(undefined, logPath).all()[0].message, "preservado");
 });
 
+test("historico preserva o replay completo da analise de imagem", (t) => {
+  const directory = temporaryDirectory(t);
+  const routePath = path.join(directory, "routes.json");
+  const imagePreviewUrl = "data:image/jpeg;base64,preview";
+  fs.writeFileSync(routePath, JSON.stringify([{
+    id: "image-replay",
+    ocr: {
+      analysisId: "analysis-1",
+      source: "tesseract-native",
+      text: "F-24 AT20261002AJK75 42 Parque Aurora",
+      code: "F-24",
+      bairro: "Parque Aurora",
+      paradas: 42,
+      processedAt: "2026-10-08T22:00:00.000Z",
+      imagePreviewUrl,
+      analysisOptions: [{ id: "F-24", gaiola: "F-24", bairro: "Parque Aurora", paradas: 42 }],
+      analysisTiming: { downloadMs: 180, ocrMs: 4100, comparisonMs: 3, dispatchMs: 15, totalMs: 4298 },
+      analysisMessage: "Rota encontrada e enviada.",
+      preparedMessages: ["ruan souza da silva F-24"]
+    }
+  }]));
+
+  const replay = new RouteStore(routePath).all()[0].ocr;
+  assert.equal(replay.imagePreviewUrl, imagePreviewUrl);
+  assert.equal(replay.paradas, 42);
+  assert.equal(replay.analysisOptions[0].gaiola, "F-24");
+  assert.equal(replay.analysisTiming.ocrMs, 4100);
+  assert.deepEqual(replay.preparedMessages, ["ruan souza da silva F-24"]);
+});
+
 test("trava global incompleta e recente nao pode ser roubada durante inicializacao", async (t) => {
   const directory = temporaryDirectory(t);
   const lockPath = path.join(directory, "ocr-global-0.lock");

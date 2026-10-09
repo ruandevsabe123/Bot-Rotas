@@ -7581,6 +7581,58 @@ body {
   animation: none !important;
 }
 
+.adminx-analysis-replay {
+  border-color: rgba(168, 85, 247, 0.34);
+  background: linear-gradient(155deg, rgba(28, 14, 42, 0.96), #0b0f14 58%);
+}
+
+.adminx-replay-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.adminx-replay-heading h3,
+.adminx-replay-heading p,
+.adminx-replay-message {
+  margin: 0;
+}
+
+.adminx-replay-message {
+  padding: 10px 12px;
+  border-left: 3px solid #a855f7;
+  color: #ddd6fe;
+  background: rgba(88, 28, 135, 0.2);
+}
+
+.adminx-replay-routes,
+.adminx-replay-timing {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.adminx-replay-routes article,
+.adminx-replay-timing span {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border: 1px solid rgba(168, 85, 247, 0.24);
+  background: rgba(7, 9, 12, 0.82);
+}
+
+.adminx-replay-routes strong,
+.adminx-replay-timing b {
+  color: #e9d5ff;
+}
+
+.adminx-replay-routes span,
+.adminx-replay-routes small,
+.adminx-replay-timing small {
+  color: #aab6c8;
+}
+
 @media (max-width: 720px) {
   .bot-particle-field {
     opacity: 0.58 !important;

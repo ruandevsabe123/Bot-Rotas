@@ -420,9 +420,14 @@ export class RouteStore {
             cidade: typeof input.ocr.cidade === "string" ? input.ocr.cidade : undefined,
             bairro: typeof input.ocr.bairro === "string" ? input.ocr.bairro : undefined,
             code: typeof input.ocr.code === "string" ? input.ocr.code : undefined,
+            paradas: Number.isFinite(Number(input.ocr.paradas)) ? Number(input.ocr.paradas) : undefined,
             confidence: Number.isFinite(Number(input.ocr.confidence)) ? Number(input.ocr.confidence) : undefined,
             processedAt: typeof input.ocr.processedAt === "string" ? input.ocr.processedAt : new Date().toISOString(),
-            imagePreviewUrl: typeof input.ocr.imagePreviewUrl === "string" ? input.ocr.imagePreviewUrl : undefined
+            imagePreviewUrl: typeof input.ocr.imagePreviewUrl === "string" ? input.ocr.imagePreviewUrl : undefined,
+            analysisOptions: Array.isArray(input.ocr.analysisOptions) ? input.ocr.analysisOptions : undefined,
+            analysisTiming: input.ocr.analysisTiming && typeof input.ocr.analysisTiming === "object" ? input.ocr.analysisTiming : undefined,
+            analysisMessage: typeof input.ocr.analysisMessage === "string" ? input.ocr.analysisMessage : undefined,
+            preparedMessages: Array.isArray(input.ocr.preparedMessages) ? input.ocr.preparedMessages.filter((item: unknown) => typeof item === "string") : undefined
           }
         : undefined,
       clientIncident: input.clientIncident && typeof input.clientIncident === "object"
