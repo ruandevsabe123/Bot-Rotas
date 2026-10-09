@@ -95,8 +95,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   const nextPreferences = normalizeMonitoredRoutes(monitoredRoutes);
   const activePreferences = getEnabledNeighborhoodPreferences(nextPreferences);
   const hasIncompletePreference = monitoredRoutes.some((route) => !route.bairro.trim());
-  const hasInvalidStops = monitoredRoutes.some((route) => route.paradasMin && route.paradasMax && route.paradasMin > route.paradasMax);
-  const hasMessageSettings = isImageTarget ? nextPreferences.length > 0 && !hasIncompletePreference && !hasInvalidStops : parseCodes(codes).length > 0;
+  const hasMessageSettings = isImageTarget ? nextPreferences.length > 0 && !hasIncompletePreference : parseCodes(codes).length > 0;
 
   useEffect(() => {
     setGroup(isTarget ? config.grupoAlvoNome || "" : config.grupoTesteNome || "");
@@ -139,7 +138,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     const nextRoutes = isImageTarget ? normalizeMonitoredRoutes(monitoredRoutes) : [];
     const nextCodes = isImageTarget ? nextRoutes.map((item) => item.bairro) : parseCodes(codes);
 
-    if (!value || !senderName.trim() || !nextCodes.length || (isImageTarget && (hasIncompletePreference || hasInvalidStops || (startAfterSave && !getEnabledNeighborhoodPreferences(nextRoutes).length)))) return;
+    if (!value || !senderName.trim() || !nextCodes.length || (isImageTarget && (hasIncompletePreference || (startAfterSave && !getEnabledNeighborhoodPreferences(nextRoutes).length)))) return;
     setCodes(nextCodes.join("\n"));
     onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes, isImageTarget ? "ocr" : "manual", ocrMessageLimit);
   }
@@ -219,8 +218,8 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
 
         {isImageTarget ? (
           <div className="ocr-primary-copy">
-            <strong>Bairros por ordem de preferência</strong>
-            <span>O bot procura todos os bairros na imagem e envia as gaiolas confirmadas na ordem configurada.</span>
+            <strong>Bairros monitorados</strong>
+            <span>O bot encontra os bairros da lista e envia primeiro a rota com menos paradas.</span>
           </div>
         ) : null}
 
@@ -251,7 +250,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
             <div className="ocr-settings-section ocr-preferences-section">
             <div className="ocr-settings-title">
               <strong>2. Bairros preferidos</strong>
-              <span>Pause um bairro sem apagá-lo e reative quando quiser.</span>
+              <span>Pause um bairro sem apagá-lo. Se houver empate nas paradas, esta ordem decide primeiro.</span>
             </div>
             <div className="ocr-preference-summary">
               <span><b>{activePreferences.length}</b> ativa(s)</span>
@@ -259,7 +258,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
             </div>
             <div className="ocr-route-heading">
               <span>Preferência</span>
-              <span>Bairro e filtro de paradas</span>
+              <span>Bairro</span>
             </div>
             {monitoredRoutes.map((route, index) => (
               <div className={`ocr-route-row ${route.enabled === false ? "is-paused" : ""}`} key={`ocr-route-${index}`}>
@@ -277,18 +276,6 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
                   }}
                   placeholder="Bairro: Parque Penha"
                 />
-                <div className="ocr-stop-filter">
-                  <label>Mín. paradas<input aria-label={`Mínimo de paradas da preferência ${index + 1}`} type="number" min={1} max={999} value={route.paradasMin || ""} disabled={busy} placeholder="Livre" onChange={(event) => {
-                    const nextRoutes = [...monitoredRoutes];
-                    nextRoutes[index] = { ...route, paradasMin: event.target.value ? Number(event.target.value) : undefined };
-                    setMonitoredRoutes(nextRoutes);
-                  }} /></label>
-                  <label>Máx. paradas<input aria-label={`Máximo de paradas da preferência ${index + 1}`} type="number" min={1} max={999} value={route.paradasMax || ""} disabled={busy} placeholder="Livre" onChange={(event) => {
-                    const nextRoutes = [...monitoredRoutes];
-                    nextRoutes[index] = { ...route, paradasMax: event.target.value ? Number(event.target.value) : undefined };
-                    setMonitoredRoutes(nextRoutes);
-                  }} /></label>
-                </div>
                 </div>
                 <button
                   aria-checked={route.enabled !== false}
@@ -328,7 +315,6 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </button>
               <small>{activePreferences.length} de {nextPreferences.length} bairro(s) participam da análise. Use as setas para ordenar as preferências ativas.</small>
               {hasIncompletePreference ? <small role="alert">Preencha o bairro antes de salvar.</small> : null}
-              {hasInvalidStops ? <small role="alert">O mínimo de paradas não pode ser maior que o máximo.</small> : null}
               {!activePreferences.length && nextPreferences.length ? <small role="alert">Todas as preferências estão pausadas. Você pode salvar, mas precisa ativar ao menos uma para iniciar o bot imagem.</small> : null}
             </div>
             </div>

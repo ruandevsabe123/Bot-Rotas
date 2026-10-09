@@ -11,8 +11,6 @@ export function normalizeNeighborhoodPreferences(routes: MonitoredRoute[]): Moni
     .map((route) => ({
       cidade: "",
       bairro: String(route?.bairro || "").trim().replace(/\s+/g, " "),
-      paradasMin: Number(route?.paradasMin) > 0 ? Math.floor(Number(route.paradasMin)) : undefined,
-      paradasMax: Number(route?.paradasMax) > 0 ? Math.floor(Number(route.paradasMax)) : undefined,
       enabled: route?.enabled !== false
     }))
     .filter((route) => {
@@ -42,8 +40,5 @@ export function moveNeighborhoodPreference(routes: MonitoredRoute[], fromIndex: 
 }
 
 export function neighborhoodPreferenceLabel(route: MonitoredRoute) {
-  const stops = route.paradasMin || route.paradasMax
-    ? ` · ${route.paradasMin || 1}–${route.paradasMax || "∞"} paradas`
-    : "";
-  return `${route.bairro}${stops}`;
+  return route.bairro;
 }

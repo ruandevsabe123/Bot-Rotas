@@ -31,16 +31,16 @@ function consensus(rows) {
   return { ...variants[0], variants };
 }
 
-test("escolhe somente o bairro na ordem de preferência, independente da ordem visual", () => {
+test("ordena bairros confirmados pela menor quantidade de paradas", () => {
   const result = selectPreferredNeighborhoodFromOcr(consensus([
-    "B-12 AT2026092600001 95 Campos dos Goytacazes Centro",
+    "B-12 AT2026092600001 45 Campos dos Goytacazes Centro",
     "F-14 AT2026092600002 77 Campos dos Goytacazes Parque Rodoviário"
   ]), preferred);
   assert.equal(result.status, "selected");
-  assert.equal(result.preferenceIndex, 0);
-  assert.equal(result.detection.code, "F-14");
+  assert.equal(result.preferenceIndex, 1);
+  assert.equal(result.detection.code, "B-12");
   assert.equal(result.detection.evidenceCount, 2);
-  assert.deepEqual(result.selections.map((item) => item.detection.code), ["F-14", "B-12"]);
+  assert.deepEqual(result.selections.map((item) => item.detection.code), ["B-12", "F-14"]);
 });
 
 test("passa à próxima preferência apenas quando a anterior está ausente", () => {
@@ -49,19 +49,18 @@ test("passa à próxima preferência apenas quando a anterior está ausente", ()
   assert.equal(result.preferenceIndex, 1);
 });
 
-test("lê a primeira quantidade após o AT como paradas e aplica o filtro do bairro", () => {
-  const image = consensus(["I-19 AT20261006APWGR 42 93 Campos - Parque João Maria Parque João Maria"]);
-  const selected = selectPreferredNeighborhoodFromOcr(image, [
-    { cidade: "Campos", bairro: "Parque João Maria", paradasMin: 40, paradasMax: 45 }
+test("lê a primeira quantidade após o AT como paradas sem aplicar limites", () => {
+  const selected = selectPreferredNeighborhoodFromOcr(consensus([
+    "I-19 AT20261006APWGR 42 93 Campos Parque João Maria",
+    "G-17 AT20261006APHFA 18 92 Campos Goytacazes"
+  ]), [
+    { cidade: "Campos", bairro: "Parque João Maria" },
+    { cidade: "Campos", bairro: "Goytacazes" }
   ]);
   assert.equal(selected.status, "selected");
-  assert.equal(selected.detection.paradas, 42);
-
-  const blocked = selectPreferredNeighborhoodFromOcr(image, [
-    { cidade: "Campos", bairro: "Parque João Maria", paradasMax: 40 }
-  ]);
-  assert.equal(blocked.status, "unsafe");
-  assert.match(blocked.reason, /42 paradas/);
+  assert.equal(selected.detection.code, "G-17");
+  assert.equal(selected.detection.paradas, 18);
+  assert.deepEqual(selected.selections.map((item) => item.detection.paradas), [18, 42]);
 });
 
 test("não troca bairros parecidos, prefixos, palavras parciais ou cidades", () => {

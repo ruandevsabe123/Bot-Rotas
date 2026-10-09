@@ -66,8 +66,6 @@ export type DispatchPriorityProfile = {
 export type MonitoredRoute = {
   cidade: string;
   bairro: string;
-  paradasMin?: number;
-  paradasMax?: number;
   /** Missing on older saved configurations means enabled. */
   enabled?: boolean;
 };

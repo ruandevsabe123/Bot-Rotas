@@ -4111,24 +4111,6 @@ body:has(.modal-backdrop) {
   overscroll-behavior: none;
 }
 
-.ocr-stop-filter {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-}
-
-.ocr-stop-filter label {
-  display: grid;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-.ocr-stop-filter input {
-  min-width: 0;
-}
-
 .confirmation-dialog,
 .sheet-dialog {
   display: grid;

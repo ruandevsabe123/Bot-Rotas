@@ -112,8 +112,6 @@ test("editor salva bairros visíveis e sua nova ordem, sem reutilizar códigos o
   const editor = renderEditor();
   assert.equal(editor.all((node) => node.type === "textarea").length, 0);
   editor.change(editor.find((node) => node.props["aria-label"] === "Bairro da preferência 1"), "Centro");
-  editor.change(editor.find((node) => node.props["aria-label"] === "Mínimo de paradas da preferência 1"), "20");
-  editor.change(editor.find((node) => node.props["aria-label"] === "Máximo de paradas da preferência 1"), "50");
   editor.change(editor.find((node) => node.props["aria-label"] === "Máximo de mensagens por imagem"), "2");
   editor.click(editor.find((node) => node.type === "button" && node.props.children === "Adicionar outro bairro"));
   editor.change(editor.find((node) => node.props["aria-label"] === "Bairro da preferência 2"), "Jardim Sul");
@@ -121,13 +119,13 @@ test("editor salva bairros visíveis e sua nova ordem, sem reutilizar códigos o
   editor.submit();
   const args = editor.saved[0];
   assert.deepEqual(JSON.parse(JSON.stringify(args[4])), ["Jardim Sul", "Centro"]);
-  assert.deepEqual(JSON.parse(JSON.stringify(args[8])), [{ cidade: "", bairro: "Jardim Sul", enabled: true }, { cidade: "", bairro: "Centro", paradasMin: 20, paradasMax: 50, enabled: true }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(args[8])), [{ cidade: "", bairro: "Jardim Sul", enabled: true }, { cidade: "", bairro: "Centro", enabled: true }]);
   assert.equal(args[9], "ocr");
   assert.equal(args[10], 2);
   assert.equal(editor.config.rotasMonitoradasDetalhadas[0].bairro, "Bairro antigo");
 });
 
-test("filtros de paradas começam livres e validam mínimo e máximo", () => {
+test("editor de bairros não exibe mais limites manuais de paradas", () => {
   const editor = renderEditor({
     config: {
       grupoAlvoJid: "test@g.us", grupoAlvoNome: "Grupo teste", nomeEnvio: "Cliente",
@@ -135,11 +133,7 @@ test("filtros de paradas começam livres e validam mínimo e máximo", () => {
       routePresets: [], testMessageCount: 15, testMessageIntervalMs: 0
     }
   });
-  assert.equal(editor.find((node) => node.props["aria-label"] === "Mínimo de paradas da preferência 1").props.value, "");
-  assert.equal(editor.find((node) => node.props["aria-label"] === "Máximo de paradas da preferência 1").props.value, "");
-  editor.change(editor.find((node) => node.props["aria-label"] === "Mínimo de paradas da preferência 1"), "60");
-  editor.change(editor.find((node) => node.props["aria-label"] === "Máximo de paradas da preferência 1"), "40");
-  assert.equal(editor.find((node) => node.type === "button" && node.props.type === "submit").props.disabled, true);
+  assert.equal(editor.all((node) => /paradas da preferência/.test(node.props["aria-label"] || "")).length, 0);
 });
 
 test("editor não inicia IA sem bairro ou com uma cidade sem bairro", () => {
@@ -150,7 +144,7 @@ test("editor não inicia IA sem bairro ou com uma cidade sem bairro", () => {
   assert.equal(editor.saved.length, 0);
 });
 
-test("editor pausa e reativa uma preferência sem apagar bairro, filtros ou ordem", () => {
+test("editor pausa e reativa uma preferência sem apagar bairro ou ordem", () => {
   const editor = renderEditor();
   editor.click(editor.find((node) => node.props["aria-label"] === "Pausar preferência 1"));
   assert.equal(editor.find((node) => node.props["aria-label"] === "Ativar preferência 1").props["aria-checked"], false);

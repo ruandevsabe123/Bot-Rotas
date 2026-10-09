@@ -1658,7 +1658,7 @@ export class BotService extends EventEmitter {
     if (settings.ocrManualRouteSelection !== undefined) {
       this.logger.info(config.ocrManualRouteSelection
         ? "Bot imagem configurado para aprovação manual de rotas."
-        : "Bot imagem configurado para enviar o primeiro bairro seguro na ordem de preferência.");
+        : "Bot imagem configurado para enviar primeiro o bairro seguro com menos paradas.");
     }
     this.emitSnapshot();
   }
@@ -1697,8 +1697,6 @@ export class BotService extends EventEmitter {
       .map((item) => ({
         cidade: "",
         bairro: String(item?.bairro || "").trim(),
-        paradasMin: Number(item?.paradasMin) > 0 ? Math.floor(Number(item.paradasMin)) : undefined,
-        paradasMax: Number(item?.paradasMax) > 0 ? Math.floor(Number(item.paradasMax)) : undefined,
         enabled: item?.enabled !== false
       }))
       .filter((item) => item.bairro);
@@ -1729,8 +1727,6 @@ export class BotService extends EventEmitter {
     const normalizedRoutes = routes
       .map((route) => ({
         cidade: "", bairro: String(route?.bairro || "").trim(),
-        paradasMin: Number(route?.paradasMin) > 0 ? Math.floor(Number(route.paradasMin)) : undefined,
-        paradasMax: Number(route?.paradasMax) > 0 ? Math.floor(Number(route.paradasMax)) : undefined,
         enabled: route?.enabled !== false
       }))
       .filter((route) => route.bairro);
@@ -2688,7 +2684,7 @@ export class BotService extends EventEmitter {
       this.applyOcrRouteSelection(options, "automatic");
       dispatchRaceReady = true;
       reportState("ready");
-      this.logger.success(`[IA] ${options.map((item) => `${item.bairro} corresponde à gaiola ${item.gaiola}`).join("; ")}. Seleção pela ordem de preferência.`);
+      this.logger.success(`[IA] ${options.map((item) => `${item.bairro} corresponde à gaiola ${item.gaiola}`).join("; ")}. Rotas ordenadas pela menor quantidade de paradas.`);
       const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
       if (!sentImmediately && isCurrent()) this.logger.info("[IA] Bairro e gaiola preparados; aguardando abertura do grupo ou recuperação da conexão.");
       this.emitSnapshot();

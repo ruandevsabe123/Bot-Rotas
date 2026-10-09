@@ -3194,7 +3194,7 @@ function PanelApp() {
     setConfirmation({
       title: startAfterSave ? (isImageMode ? "Salvar e iniciar imagem" : "Salvar e iniciar manual") : isImageMode ? "Salvar bot imagem" : "Salvar mensagens",
       message: `Grupo alvo: ${selectedGroupName}`,
-      details: isImageMode ? [...messages, `Serão enviadas até ${ocrCageMessageLimit} mensagens, seguindo a ordem de preferência.`] : messages,
+      details: isImageMode ? [...messages, `Serão enviadas até ${ocrCageMessageLimit} mensagens, começando pelas rotas com menos paradas.`] : messages,
       confirmLabel: startAfterSave ? "Salvar e iniciar" : "Salvar",
       onConfirm: async () => {
         await runAction(async () => {

@@ -162,8 +162,6 @@ export class ConfigStore {
             .map((item: any) => ({
               cidade: typeof item?.cidade === "string" ? item.cidade.trim() : "",
               bairro: typeof item?.bairro === "string" ? item.bairro.trim() : "",
-              paradasMin: this.optionalPositiveInteger(item?.paradasMin),
-              paradasMax: this.optionalPositiveInteger(item?.paradasMax),
               enabled: item?.enabled !== false
             }))
             .filter((item) => item.bairro)
@@ -177,8 +175,6 @@ export class ConfigStore {
                 ? preset.routes.map((item: any) => ({
                     cidade: "",
                     bairro: typeof item?.bairro === "string" ? item.bairro.trim() : "",
-                    paradasMin: this.optionalPositiveInteger(item?.paradasMin),
-                    paradasMax: this.optionalPositiveInteger(item?.paradasMax),
                     enabled: item?.enabled !== false
                   })).filter((item: any) => item.bairro)
                 : [],
@@ -200,8 +196,4 @@ export class ConfigStore {
     return Math.min(max, Math.max(min, Math.floor(numberValue)));
   }
 
-  private optionalPositiveInteger(value: unknown) {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) && parsed > 0 ? Math.min(999, Math.floor(parsed)) : undefined;
-  }
 }

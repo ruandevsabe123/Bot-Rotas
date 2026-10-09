@@ -68,8 +68,6 @@ export function selectPreferredNeighborhoodFromOcr(
   const configured = preferences.map((preference, index) => ({
     cidade: String(preference.cidade || "").trim(),
     bairro: String(preference.bairro || "").trim(),
-    paradasMin: Number(preference.paradasMin) > 0 ? Number(preference.paradasMin) : undefined,
-    paradasMax: Number(preference.paradasMax) > 0 ? Number(preference.paradasMax) : undefined,
     index,
     enabled: preference.enabled !== false
   })).filter((preference) => preference.enabled && normalizeNeighborhoodIdentity(preference.bairro));
@@ -121,10 +119,6 @@ export function selectPreferredNeighborhoodFromOcr(
       // still represented in `codes` and blocks the automatic send.
       const requiredEvidence = matching.some((match) => match.requiresThreeEvidence) ? 3 : 2;
       const stops = mostFrequentNumber(confirmed.map((match) => match.paradas).filter((value): value is number => value !== undefined));
-      const stopsRequired = preference.paradasMin !== undefined || preference.paradasMax !== undefined;
-      const stopsAllowed = stops !== undefined &&
-        (preference.paradasMin === undefined || stops >= preference.paradasMin) &&
-        (preference.paradasMax === undefined || stops <= preference.paradasMax);
       const detection: DetectedRouteCode = {
         route: preference.bairro,
         cidade: best.row.localityText,
@@ -135,7 +129,7 @@ export function selectPreferredNeighborhoodFromOcr(
         confidence: confirmed.length ? Math.round(Math.min(...confirmed.map((match) => match.confidence))) : best.confidence,
         evidenceCount: evidence.size,
         variantCount: variants.length,
-        safeForAutomatic: codes.length === 1 && evidence.size >= requiredEvidence && (!stopsRequired || stopsAllowed)
+        safeForAutomatic: codes.length === 1 && evidence.size >= requiredEvidence
       };
       return detection;
     });
@@ -147,20 +141,27 @@ export function selectPreferredNeighborhoodFromOcr(
         selections.push({ preferenceIndex: preference.index, detection });
       }
     } else if (!firstFailure) {
-      const filter = byCode[0];
-      const stopsRequired = preference.paradasMin !== undefined || preference.paradasMax !== undefined;
       firstFailure = { status: "unsafe", preferenceIndex: preference.index,
-        reason: stopsRequired && filter?.paradas === undefined ? `Encontrei ${preference.bairro}, mas não consegui confirmar a quantidade de paradas. Envio bloqueado.`
-          : stopsRequired && filter ? `${preference.bairro} tem ${filter.paradas} paradas e ficou fora do filtro configurado.`
-          : codes.length > 1 ? "O bairro prioritário aparece associado a gaiolas diferentes. Envio bloqueado."
+        reason: codes.length > 1 ? "O bairro prioritário aparece associado a gaiolas diferentes. Envio bloqueado."
           : incomplete ? "O bairro prioritário foi encontrado sem uma gaiola inequívoca na mesma linha. Envio bloqueado."
             : "O bairro prioritário não obteve duas leituras confiáveis da mesma gaiola. Envio bloqueado." };
     }
   }
-  if (selections.length) return {
-    status: "selected", detection: selections[0].detection, preferenceIndex: selections[0].preferenceIndex,
-    reason: `${selections.length} bairro(s) confirmado(s) para envio na ordem de preferência.`, detections, selections
-  };
+  if (selections.length) {
+    const orderedSelections = [...selections].sort((left, right) => {
+      const leftStops = left.detection.paradas;
+      const rightStops = right.detection.paradas;
+      if (leftStops !== undefined && rightStops !== undefined && leftStops !== rightStops) return leftStops - rightStops;
+      if (leftStops !== undefined) return -1;
+      if (rightStops !== undefined) return 1;
+      return left.preferenceIndex - right.preferenceIndex;
+    });
+    return {
+      status: "selected", detection: orderedSelections[0].detection, preferenceIndex: orderedSelections[0].preferenceIndex,
+      reason: `${orderedSelections.length} bairro(s) confirmado(s), ordenados do menor para o maior número de paradas.`,
+      detections, selections: orderedSelections
+    };
+  }
   return firstFailure ? { ...firstFailure, detections, selections }
     : { status: "no-match", reason: "Nenhuma linha corresponde exatamente aos bairros configurados.", detections, selections };
 }
