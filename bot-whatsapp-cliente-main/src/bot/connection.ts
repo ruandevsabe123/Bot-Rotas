@@ -2605,19 +2605,38 @@ export class BotService extends EventEmitter {
         this.logger.warning(`NÃ£o consegui gerar a prÃ©via da imagem: ${this.getErrorMessage(error)}`);
       }
       const downloadFinishedAtMs = Date.now();
-      const readings = [];
+      let readings = [];
       for (const imagePath of imagePaths) {
         if (!isCurrent()) return;
-        // Same complete-image profile for all clients; preferences are applied
-        // afterwards so the expensive reading can be shared by the OCR cache.
+        // Start with one higher-resolution structural reading. Most screenshots
+        // are tabular and do not benefit from making several OCR workers compete
+        // for CPU before we know that a second interpretation is necessary.
         readings.push(await readRouteImageOcrWithoutBlockingSocket(imagePath, {
-          maxReadings: 5, fastFirst: true, preferCageCrop: false
+          maxReadings: 1, fastFirst: true, preferCageCrop: false
         }));
       }
       if (!isCurrent()) return;
-      const ocr = combineRouteImageBatch(readings);
+      let ocr = combineRouteImageBatch(readings);
+      let decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops, config.ocrMaxPackages);
+      const selectedMetrics = decision.selections.map(({ detection }) => detection);
+      const mixedStops = selectedMetrics.some(({ paradas }) => paradas !== undefined)
+        && selectedMetrics.some(({ paradas }) => paradas === undefined);
+      const mixedPackages = selectedMetrics.some(({ pacotes }) => pacotes !== undefined)
+        && selectedMetrics.some(({ pacotes }) => pacotes === undefined);
+      const needsReinforcedReading = decision.status !== "selected" || !decision.detection || mixedStops || mixedPackages;
+      if (needsReinforcedReading) {
+        readings = [];
+        for (const imagePath of imagePaths) {
+          if (!isCurrent()) return;
+          readings.push(await readRouteImageOcrWithoutBlockingSocket(imagePath, {
+            maxReadings: 5, fastFirst: true, preferCageCrop: false
+          }));
+        }
+        if (!isCurrent()) return;
+        ocr = combineRouteImageBatch(readings);
+        decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops, config.ocrMaxPackages);
+      }
       const ocrFinishedAtMs = Date.now();
-      const decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops, config.ocrMaxPackages);
       const comparedAt = Date.now();
       const timing = {
         startedAt: analysisStartedAt,

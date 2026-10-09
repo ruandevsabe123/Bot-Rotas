@@ -122,6 +122,9 @@ export function selectPreferredNeighborhoodFromOcr(
       const requiredEvidence = matching.some((match) => match.requiresThreeEvidence) ? 3 : 2;
       const stops = mostFrequentNumber(confirmed.map((match) => match.paradas).filter((value): value is number => value !== undefined));
       const packages = mostFrequentNumber(confirmed.map((match) => match.pacotes).filter((value): value is number => value !== undefined));
+      const structuralSingleReading = confirmed.length === 1 && !best.requiresThreeEvidence && best.confidence >= 65 &&
+        (best.row.districtText !== undefined || best.row.trailingCellText !== undefined) &&
+        (stops !== undefined || packages !== undefined);
       const detection: DetectedRouteCode = {
         route: preference.bairro,
         cidade: best.row.localityText,
@@ -133,7 +136,7 @@ export function selectPreferredNeighborhoodFromOcr(
         confidence: confirmed.length ? Math.round(Math.min(...confirmed.map((match) => match.confidence))) : best.confidence,
         evidenceCount: evidence.size,
         variantCount: variants.length,
-        safeForAutomatic: codes.length === 1 && evidence.size >= requiredEvidence
+        safeForAutomatic: codes.length === 1 && (evidence.size >= requiredEvidence || structuralSingleReading)
       };
       return detection;
     });

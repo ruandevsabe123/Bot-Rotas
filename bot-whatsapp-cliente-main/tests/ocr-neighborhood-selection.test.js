@@ -470,6 +470,20 @@ test("recupera paradas pela geometria das colunas na linha J-13", () => {
   assert.equal(result.detection.paradas, 44);
 });
 
+test("uma leitura estrutural completa libera J-13 sem esperar tratamentos extras", () => {
+  const source = reading([
+    line("J-13", 60, 20), line("AT20261007ARASB", 60, 180),
+    line("44", 60, 430), line("98", 60, 520),
+    line("Campos - Caju", 60, 620), line("Parque Leopoldina", 60, 1050)
+  ]);
+  const result = selectPreferredNeighborhoodFromOcr(source, [{ bairro: "Parque Leopoldina" }]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "J-13");
+  assert.equal(result.detection.paradas, 44);
+  assert.equal(result.detection.pacotes, 98);
+  assert.equal(result.detection.evidenceCount, 1);
+});
+
 test("usa as colunas da tabela quando o AT da J-13 fica ilegivel", () => {
   const source = consensus([
     line("ROTA", 10, 20), line("AT", 10, 180), line("PARADAS", 10, 430), line("PACOTES", 10, 520),

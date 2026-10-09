@@ -447,7 +447,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       // WhatsApp often recompresses wide table screenshots until route letters
       // are only a few pixels wide. A 3x/Lanczos enlargement gives Tesseract
       // enough edge information to distinguish B from 8 without guessing.
-      const completeWidth = width > 0 ? Math.min(1500, Math.max(1000, Math.round(width * 1.3))) : 1200;
+      const completeWidth = width > 0 ? Math.min(1800, Math.max(1200, Math.round(width * 1.5))) : 1450;
       const base = path.join(os.tmpdir(), `ocr-neighborhood-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       const contrast = `${base}-contrast.png`;
       const soft = `${base}-soft.png`;
