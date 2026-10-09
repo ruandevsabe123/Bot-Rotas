@@ -128,7 +128,7 @@ const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
 const MAX_DISPATCH_PRIORITY_DELAY_MS = 120_000;
 const MAX_DISPATCH_PRIORITY_LEVEL = 5;
 const MAX_OUTGOING_MESSAGES = 2;
-const ROUTE_IMAGE_BATCH_QUIET_MS = 250;
+const ROUTE_IMAGE_BATCH_QUIET_MS = 75;
 const ROUTE_IMAGE_BATCH_MAX = 12;
 const WARMUP_MESSAGE_COUNT = 15;
 // Maior que o keep-alive crítico (5s), evitando reconstrução no exato evento de abertura.
@@ -2720,6 +2720,9 @@ export class BotService extends EventEmitter {
       this.applyOcrRouteSelection(options, "automatic");
       dispatchRaceReady = true;
       reportState("ready");
+      // Publish confirmation before group validation and dispatch. Later
+      // snapshots report sending and WhatsApp acknowledgement independently.
+      this.emitSnapshot();
       this.logger.success(`[IA] ${options.map((item) => `${item.bairro} corresponde à gaiola ${item.gaiola}`).join("; ")}. Rotas ordenadas pela menor quantidade de paradas.`);
       const sentImmediately = await this.dispatchPreparedOcrIfGroupOpen("automatic");
       if (!sentImmediately && isCurrent()) this.logger.info("[IA] Bairro e gaiola preparados; aguardando abertura do grupo ou recuperação da conexão.");
