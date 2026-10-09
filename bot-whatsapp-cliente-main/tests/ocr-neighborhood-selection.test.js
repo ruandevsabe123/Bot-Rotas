@@ -475,8 +475,9 @@ test("usa as colunas da tabela quando o AT da J-13 fica ilegivel", () => {
     line("ROTA", 10, 20), line("AT", 10, 180), line("PARADAS", 10, 430), line("PACOTES", 10, 520),
     line("CLUSTER", 10, 620), line("BAIRRO", 10, 1050),
     line("J-17", 60, 20), line("AT20261007ARQ30", 60, 180), line("56", 60, 430), line("90", 60, 520), line("Campos Aeroporto", 60, 620), line("Parque Aeroporto", 60, 1050),
-    line("J-13", 100, 20), line("AT20261007ARA?B", 100, 180), line("44", 100, 430), line("98", 100, 520), line("Campos Caju", 100, 620), line("Parque Leopoldina", 100, 1050),
-    line("J-12", 140, 20), line("AT20261007ARPLK", 140, 180), line("58", 140, 430), line("98", 140, 520), line("Campos Caju", 140, 620), line("Parque Caju", 140, 1050)
+    line("J-13", 100, 20), line("AT20261007ARA?B", 100, 180), line("uu", 100, 430), line("98", 100, 520), line("Campos Caju", 100, 620), line("Parque Leopoldina", 100, 1050),
+    line("J-12", 140, 20), line("AT20261007ARPLK", 140, 180), line("58", 140, 430), line("98", 140, 520), line("Campos Caju", 140, 620), line("Parque Caju", 140, 1050),
+    line("J-10", 180, 20), line("AT20261007ARPLJ", 180, 180), line("50", 180, 430), line("85", 180, 520), line("Campos Santa Cruz", 180, 620), line("Parque Corrientes", 180, 1050)
   ]);
   const result = selectPreferredNeighborhoodFromOcr(source, [
     { bairro: "Parque Leopoldina" },

@@ -445,7 +445,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       // WhatsApp often recompresses wide table screenshots until route letters
       // are only a few pixels wide. A 3x/Lanczos enlargement gives Tesseract
       // enough edge information to distinguish B from 8 without guessing.
-      const completeWidth = width > 0 ? Math.min(2200, Math.max(1500, width * 2)) : 1800;
+      const completeWidth = width > 0 ? Math.min(1800, Math.max(1200, Math.round(width * 1.5))) : 1450;
       const base = path.join(os.tmpdir(), `ocr-neighborhood-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       const contrast = `${base}-contrast.png`;
       const soft = `${base}-soft.png`;
@@ -471,9 +471,9 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       ]);
       const standardVariants = [
         { path: contrast, label: "bairros-tabela-completa-contraste", generated: true, psm: 6 },
+        { path: contrast, label: "bairros-tabela-completa-esparsa", generated: false, psm: 11 },
         { path: soft, label: "bairros-tabela-completa-suave", generated: true, psm: 6 },
         { path: binary, label: "bairros-tabela-completa-binaria", generated: true, psm: 6 },
-        { path: contrast, label: "bairros-tabela-completa-esparsa", generated: false, psm: 11 },
         { path: imagePath, label: "bairros-original", generated: false, psm: 11 }
       ];
       return darkLayout ? [

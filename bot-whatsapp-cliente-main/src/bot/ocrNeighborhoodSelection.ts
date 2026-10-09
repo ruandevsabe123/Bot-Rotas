@@ -497,7 +497,7 @@ function detectMetricColumns(groups: OcrLine["words"][]) {
   const tolerance = Math.max(12, typicalHeight * 1.8);
   const clusters: Array<{ center: number; count: number }> = [];
   for (const group of groups) {
-    const numericWords = dedupeNumericWords(group);
+    const numericWords = dedupeNumericWords(group, false);
     for (const word of numericWords) {
       const center = word.left + word.width / 2;
       const cluster = clusters.find((item) => Math.abs(item.center - center) <= tolerance);
@@ -521,11 +521,11 @@ function detectMetricColumns(groups: OcrLine["words"][]) {
 }
 
 function inferRowQuantities(words: OcrLine["words"], columns: Array<{ center: number; tolerance: number }>) {
-  const numericWords = dedupeNumericWords(words);
+  const numericWords = dedupeNumericWords(words, true);
   if (!numericWords.length || !columns.length) return {};
   const values = columns.map((column) => {
     const nearest = numericWords.map((word) => ({
-      value: validQuantity(word.text),
+      value: validMetricQuantity(word.text),
       distance: Math.abs(word.left + word.width / 2 - column.center)
     })).filter((item) => item.value !== undefined && item.distance <= column.tolerance)
       .sort((left, right) => left.distance - right.distance)[0];
@@ -536,15 +536,23 @@ function inferRowQuantities(words: OcrLine["words"], columns: Array<{ center: nu
     : { pacotes: values[0] };
 }
 
-function dedupeNumericWords(words: OcrLine["words"]) {
+function dedupeNumericWords(words: OcrLine["words"], allowMisreadFour: boolean) {
   const found: OcrLine["words"] = [];
   for (const word of [...words].sort((left, right) => left.left - right.left)) {
-    if (!/^\d{1,3}$/.test(word.text.trim())) continue;
+    const token = word.text.trim();
+    if (!(allowMisreadFour ? /^[0-9uU]{1,3}$/ : /^\d{1,3}$/).test(token)) continue;
     const center = word.left + word.width / 2;
     if (found.some((existing) => Math.abs(existing.left + existing.width / 2 - center) <= Math.max(4, word.width * 0.35))) continue;
     found.push(word);
   }
   return found;
+}
+
+function validMetricQuantity(value: string | number) {
+  // In these compressed screenshots the open top of digit 4 is repeatedly
+  // recognized as "u". Recover it only after table geometry has proven that
+  // the token sits inside PARADAS or PACOTES.
+  return validQuantity(String(value).replace(/[uU]/g, "4"));
 }
 
 function inferTrailingCellText(words: OcrLine["words"]) {
