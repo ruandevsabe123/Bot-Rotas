@@ -11,7 +11,7 @@ export type NeighborhoodSelection = {
 };
 
 type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string; trailingCellText?: string };
-type Match = { row: Row; code: string; confidence: number; variant: number; requiresThreeEvidence?: boolean };
+type Match = { row: Row; code: string; confidence: number; variant: number; paradas?: number; requiresThreeEvidence?: boolean };
 
 export function findManualRouteCandidatesFromOcr(ocr: RouteOcrResult): DetectedRouteCode[] {
   const variants = ocr.variants?.length ? ocr.variants : [ocr];
@@ -31,6 +31,7 @@ export function findManualRouteCandidatesFromOcr(ocr: RouteOcrResult): DetectedR
         route: bairro || row.text,
         cidade: String(row.localityText || "").trim() || undefined,
         bairro: bairro || undefined,
+        paradas: extractStopsAfterAt(row.text),
         code,
         line: row.text,
         confidence: Math.round(Math.max(0, Math.min(100, row.confidence))),
@@ -67,6 +68,8 @@ export function selectPreferredNeighborhoodFromOcr(
   const configured = preferences.map((preference, index) => ({
     cidade: String(preference.cidade || "").trim(),
     bairro: String(preference.bairro || "").trim(),
+    paradasMin: Number(preference.paradasMin) > 0 ? Number(preference.paradasMin) : undefined,
+    paradasMax: Number(preference.paradasMax) > 0 ? Number(preference.paradasMax) : undefined,
     index,
     enabled: preference.enabled !== false
   })).filter((preference) => preference.enabled && normalizeNeighborhoodIdentity(preference.bairro));
@@ -117,16 +120,22 @@ export function selectPreferredNeighborhoodFromOcr(
       // of two independent treatments. A second valid, conflicting cage is
       // still represented in `codes` and blocks the automatic send.
       const requiredEvidence = matching.some((match) => match.requiresThreeEvidence) ? 3 : 2;
+      const stops = mostFrequentNumber(confirmed.map((match) => match.paradas).filter((value): value is number => value !== undefined));
+      const stopsRequired = preference.paradasMin !== undefined || preference.paradasMax !== undefined;
+      const stopsAllowed = stops !== undefined &&
+        (preference.paradasMin === undefined || stops >= preference.paradasMin) &&
+        (preference.paradasMax === undefined || stops <= preference.paradasMax);
       const detection: DetectedRouteCode = {
-        route: preference.cidade ? `${preference.cidade} | ${preference.bairro}` : preference.bairro,
-        cidade: preference.cidade,
+        route: preference.bairro,
+        cidade: best.row.localityText,
         bairro: preference.bairro,
+        paradas: stops,
         code,
         line: best.row.text,
         confidence: confirmed.length ? Math.round(Math.min(...confirmed.map((match) => match.confidence))) : best.confidence,
         evidenceCount: evidence.size,
         variantCount: variants.length,
-        safeForAutomatic: codes.length === 1 && evidence.size >= requiredEvidence
+        safeForAutomatic: codes.length === 1 && evidence.size >= requiredEvidence && (!stopsRequired || stopsAllowed)
       };
       return detection;
     });
@@ -138,8 +147,12 @@ export function selectPreferredNeighborhoodFromOcr(
         selections.push({ preferenceIndex: preference.index, detection });
       }
     } else if (!firstFailure) {
+      const filter = byCode[0];
+      const stopsRequired = preference.paradasMin !== undefined || preference.paradasMax !== undefined;
       firstFailure = { status: "unsafe", preferenceIndex: preference.index,
-        reason: codes.length > 1 ? "O bairro prioritário aparece associado a gaiolas diferentes. Envio bloqueado."
+        reason: stopsRequired && filter?.paradas === undefined ? `Encontrei ${preference.bairro}, mas não consegui confirmar a quantidade de paradas. Envio bloqueado.`
+          : stopsRequired && filter ? `${preference.bairro} tem ${filter.paradas} paradas e ficou fora do filtro configurado.`
+          : codes.length > 1 ? "O bairro prioritário aparece associado a gaiolas diferentes. Envio bloqueado."
           : incomplete ? "O bairro prioritário foi encontrado sem uma gaiola inequívoca na mesma linha. Envio bloqueado."
             : "O bairro prioritário não obteve duas leituras confiáveis da mesma gaiola. Envio bloqueado." };
     }
@@ -149,7 +162,7 @@ export function selectPreferredNeighborhoodFromOcr(
     reason: `${selections.length} bairro(s) confirmado(s) para envio na ordem de preferência.`, detections, selections
   };
   return firstFailure ? { ...firstFailure, detections, selections }
-    : { status: "no-match", reason: "Nenhuma linha corresponde exatamente à cidade e ao bairro configurados.", detections, selections };
+    : { status: "no-match", reason: "Nenhuma linha corresponde exatamente aos bairros configurados.", detections, selections };
 }
 
 function matchPreference(row: Row, preference: MonitoredRoute) {
@@ -208,12 +221,17 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
     tail = preference.bairro;
   } else if (row.districtText !== undefined) {
     tail = row.districtText;
-    if (city && row.localityText && !isCompatibleCity(row.localityText, city)) return undefined;
   } else if (!city && row.trailingCellText !== undefined) {
     // Headerless exports still preserve column geometry. When the client did
     // not configure a city, compare only the physically isolated last cell;
     // this accepts "Centro" but never the suffix of "Novo Centro".
-    tail = row.trailingCellText;
+    const trailingDistrict = normalizeNeighborhoodIdentity(row.trailingCellText);
+    const fullTail = normalizeNeighborhoodIdentity(tail);
+    const prefix = fullTail.endsWith(` ${district}`)
+      ? fullTail.slice(0, -district.length).trim().split(/\s+/).pop()
+      : undefined;
+    tail = trailingDistrict === district || (prefix && prefix !== "novo" && prefix !== "nova")
+      ? preference.bairro : row.trailingCellText;
   } else if (
     city && row.trailingCellText !== undefined &&
     normalizeNeighborhoodIdentity(row.trailingCellText) === district &&
@@ -234,6 +252,10 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
     const tokens = leadingCity.split(" ").length;
     tail = removeLeadingPlaceTokens(tail, tokens);
   } else if (city && hasExplicitCityDistrictPair(tail, city, district)) {
+    tail = preference.bairro;
+  } else if (!city && normalizedTail.endsWith(` ${district}`)) {
+    const prefix = normalizedTail.slice(0, -district.length).trim().split(/\s+/).pop();
+    if (prefix === "novo" || prefix === "nova") return undefined;
     tail = preference.bairro;
   } else if (normalizeNeighborhoodIdentity(tail) !== district) {
     // Some screenshots omit the city/cluster column. In that case only an
@@ -258,7 +280,21 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
     return normalizeNeighborhoodIdentity(word.text).split(" ").some((token) => relevant.has(token));
   }).map((word) => word.confidence);
   const confidence = Math.round(Math.min(row.confidence, ...(wordConfidence.length ? wordConfidence : [row.confidence])));
-  return { code, confidence, requiresThreeEvidence };
+  return { code, confidence, paradas: extractStopsAfterAt(row.text), requiresThreeEvidence };
+}
+
+function extractStopsAfterAt(text: string) {
+  const match = String(text || "").match(/\bAT[A-Z0-9]{6,}\b\s*[|;,]?\s*(\d{1,3})\b/i);
+  if (!match) return undefined;
+  const value = Number(match[1]);
+  return Number.isInteger(value) && value > 0 && value <= 999 ? value : undefined;
+}
+
+function mostFrequentNumber(values: number[]) {
+  if (!values.length) return undefined;
+  const counts = new Map<number, number>();
+  for (const value of values) counts.set(value, (counts.get(value) || 0) + 1);
+  return [...counts.entries()].sort((left, right) => right[1] - left[1] || left[0] - right[0])[0][0];
 }
 
 function hasExplicitCityDistrictPair(value: string, configuredCity: string, configuredDistrict: string) {

@@ -10,7 +10,7 @@ const {
   normalizeNeighborhoodPreferences
 } = require("../dist/desktop/renderer/neighborhoodPreferences");
 
-test("preferências preservam ordem e bairros homônimos em cidades diferentes", () => {
+test("preferências ignoram cidade, preservam ordem e removem bairros duplicados", () => {
   const first = { cidade: " São Paulo ", bairro: " Vila   São José " };
   const routes = normalizeNeighborhoodPreferences([
     first,
@@ -19,16 +19,15 @@ test("preferências preservam ordem e bairros homônimos em cidades diferentes",
     { cidade: "", bairro: "Centro" },
     { cidade: "São Paulo", bairro: "" }
   ]);
-  assert.deepEqual(routes, [
-    { cidade: "São Paulo", bairro: "Vila São José", enabled: true },
-    { cidade: "Guarulhos", bairro: "Vila São José", enabled: true },
+  assert.deepEqual(JSON.parse(JSON.stringify(routes)), [
+    { cidade: "", bairro: "Vila São José", enabled: true },
     { cidade: "", bairro: "Centro", enabled: true }
   ]);
   assert.equal(first.cidade, " São Paulo ");
-  assert.deepEqual(moveNeighborhoodPreference(routes, 2, 0), [routes[2], routes[0], routes[1]]);
+  assert.deepEqual(moveNeighborhoodPreference(routes, 1, 0), [routes[1], routes[0]]);
   assert.equal(moveNeighborhoodPreference(routes, -1, 0), routes);
   assert.deepEqual(getNeighborhoodPreferences({ rotasMonitoradas: ["Antigo"], rotasMonitoradasDetalhadas: routes }), routes);
-  assert.deepEqual(getNeighborhoodPreferences({ rotasMonitoradas: ["Centro"], rotasMonitoradasDetalhadas: [] }), [{ cidade: "", bairro: "Centro", enabled: true }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(getNeighborhoodPreferences({ rotasMonitoradas: ["Centro"], rotasMonitoradasDetalhadas: [] }))), [{ cidade: "", bairro: "Centro", enabled: true }]);
 });
 
 // Exercise the component's real inputs and handlers without a browser dependency.
@@ -113,8 +112,8 @@ test("editor salva bairros visíveis e sua nova ordem, sem reutilizar códigos o
   const editor = renderEditor();
   assert.equal(editor.all((node) => node.type === "textarea").length, 0);
   editor.change(editor.find((node) => node.props["aria-label"] === "Bairro da preferência 1"), "Centro");
-  editor.change(editor.find((node) => node.props["aria-label"] === "Cidade da preferência 1 (opcional)"), "Cidade B");
-  editor.change(editor.find((node) => node.props["aria-label"] === "Cidade padrão dos bairros"), "Campos dos Goytacazes");
+  editor.change(editor.find((node) => node.props["aria-label"] === "Mínimo de paradas da preferência 1"), "20");
+  editor.change(editor.find((node) => node.props["aria-label"] === "Máximo de paradas da preferência 1"), "50");
   editor.change(editor.find((node) => node.props["aria-label"] === "Máximo de mensagens por imagem"), "2");
   editor.click(editor.find((node) => node.type === "button" && node.props.children === "Adicionar outro bairro"));
   editor.change(editor.find((node) => node.props["aria-label"] === "Bairro da preferência 2"), "Jardim Sul");
@@ -122,13 +121,13 @@ test("editor salva bairros visíveis e sua nova ordem, sem reutilizar códigos o
   editor.submit();
   const args = editor.saved[0];
   assert.deepEqual(JSON.parse(JSON.stringify(args[4])), ["Jardim Sul", "Centro"]);
-  assert.deepEqual(JSON.parse(JSON.stringify(args[8])), [{ cidade: "Campos dos Goytacazes", bairro: "Jardim Sul", enabled: true }, { cidade: "Cidade B", bairro: "Centro", enabled: true }]);
+  assert.deepEqual(JSON.parse(JSON.stringify(args[8])), [{ cidade: "", bairro: "Jardim Sul", enabled: true }, { cidade: "", bairro: "Centro", paradasMin: 20, paradasMax: 50, enabled: true }]);
   assert.equal(args[9], "ocr");
   assert.equal(args[10], 2);
   assert.equal(editor.config.rotasMonitoradasDetalhadas[0].bairro, "Bairro antigo");
 });
 
-test("cidade padrão começa em Campos e preenche somente bairros sem cidade", () => {
+test("filtros de paradas começam livres e validam mínimo e máximo", () => {
   const editor = renderEditor({
     config: {
       grupoAlvoJid: "test@g.us", grupoAlvoNome: "Grupo teste", nomeEnvio: "Cliente",
@@ -136,10 +135,11 @@ test("cidade padrão começa em Campos e preenche somente bairros sem cidade", (
       routePresets: [], testMessageCount: 15, testMessageIntervalMs: 0
     }
   });
-  const city = editor.find((node) => node.props["aria-label"] === "Cidade padrão dos bairros");
-  assert.equal(city.props.value, "Campos dos Goytacazes");
-  editor.click(editor.find((node) => node.type === "button" && node.props.children === "Aplicar onde está vazio"));
-  assert.equal(editor.find((node) => node.props["aria-label"] === "Cidade da preferência 1 (opcional)").props.value, "Campos dos Goytacazes");
+  assert.equal(editor.find((node) => node.props["aria-label"] === "Mínimo de paradas da preferência 1").props.value, "");
+  assert.equal(editor.find((node) => node.props["aria-label"] === "Máximo de paradas da preferência 1").props.value, "");
+  editor.change(editor.find((node) => node.props["aria-label"] === "Mínimo de paradas da preferência 1"), "60");
+  editor.change(editor.find((node) => node.props["aria-label"] === "Máximo de paradas da preferência 1"), "40");
+  assert.equal(editor.find((node) => node.type === "button" && node.props.type === "submit").props.disabled, true);
 });
 
 test("editor não inicia IA sem bairro ou com uma cidade sem bairro", () => {
@@ -150,13 +150,13 @@ test("editor não inicia IA sem bairro ou com uma cidade sem bairro", () => {
   assert.equal(editor.saved.length, 0);
 });
 
-test("editor pausa e reativa uma preferência sem apagar bairro, cidade ou ordem", () => {
+test("editor pausa e reativa uma preferência sem apagar bairro, filtros ou ordem", () => {
   const editor = renderEditor();
   editor.click(editor.find((node) => node.props["aria-label"] === "Pausar preferência 1"));
   assert.equal(editor.find((node) => node.props["aria-label"] === "Ativar preferência 1").props["aria-checked"], false);
   editor.submit();
   assert.deepEqual(JSON.parse(JSON.stringify(editor.saved[0][8])), [
-    { cidade: "Cidade A", bairro: "Bairro antigo", enabled: false }
+    { cidade: "", bairro: "Bairro antigo", enabled: false }
   ]);
   editor.click(editor.find((node) => node.props["aria-label"] === "Ativar preferência 1"));
   assert.equal(editor.find((node) => node.props["aria-label"] === "Pausar preferência 1").props["aria-checked"], true);

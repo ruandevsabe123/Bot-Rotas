@@ -63,10 +63,8 @@ function parseCodes(value: string) {
     .filter(Boolean);
 }
 
-const DEFAULT_OCR_CITY = "Campos dos Goytacazes";
-
-function createEmptyRoute(city = ""): MonitoredRoute {
-  return { cidade: city.trim(), bairro: "", enabled: true };
+function createEmptyRoute(): MonitoredRoute {
+  return { cidade: "", bairro: "", enabled: true };
 }
 
 export function GroupMessageCard({ kind, targetMode = "manual", config, groups, busy, onRefresh, onSave, onSaveManual, onWarmup }: Props) {
@@ -75,7 +73,6 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   const [senderName, setSenderName] = useState("");
   const [codes, setCodes] = useState("");
   const [monitoredRoutes, setMonitoredRoutes] = useState<MonitoredRoute[]>([createEmptyRoute()]);
-  const [defaultCity, setDefaultCity] = useState(DEFAULT_OCR_CITY);
   const [ocrMessageLimit, setOcrMessageLimit] = useState(3);
   const [manualCodes, setManualCodes] = useState("");
   const [manualOpen, setManualOpen] = useState(false);
@@ -97,8 +94,9 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   const savedPreferencesKey = JSON.stringify(getNeighborhoodPreferences(config));
   const nextPreferences = normalizeMonitoredRoutes(monitoredRoutes);
   const activePreferences = getEnabledNeighborhoodPreferences(nextPreferences);
-  const hasIncompletePreference = monitoredRoutes.some((route) => route.cidade.trim() && !route.bairro.trim());
-  const hasMessageSettings = isImageTarget ? nextPreferences.length > 0 && !hasIncompletePreference : parseCodes(codes).length > 0;
+  const hasIncompletePreference = monitoredRoutes.some((route) => !route.bairro.trim());
+  const hasInvalidStops = monitoredRoutes.some((route) => route.paradasMin && route.paradasMax && route.paradasMin > route.paradasMax);
+  const hasMessageSettings = isImageTarget ? nextPreferences.length > 0 && !hasIncompletePreference && !hasInvalidStops : parseCodes(codes).length > 0;
 
   useEffect(() => {
     setGroup(isTarget ? config.grupoAlvoNome || "" : config.grupoTesteNome || "");
@@ -107,8 +105,6 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     setCodes(savedCodesKey);
     const savedPreferences = getNeighborhoodPreferences(config);
     setMonitoredRoutes(savedPreferences.length ? savedPreferences.map((route) => ({ ...route })) : [createEmptyRoute()]);
-    const savedCities = [...new Set(savedPreferences.map((route) => route.cidade.trim()).filter(Boolean))];
-    setDefaultCity(savedCities.length === 1 ? savedCities[0] : DEFAULT_OCR_CITY);
     setOcrMessageLimit(Math.max(1, Math.min(3, Number(config.ocrCageMessageLimit) || 3)));
     setManualCodes((config.codigosMensagensAlvo || []).join("\n"));
     setMessageCount(config.testMessageCount || 15);
@@ -143,7 +139,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
     const nextRoutes = isImageTarget ? normalizeMonitoredRoutes(monitoredRoutes) : [];
     const nextCodes = isImageTarget ? nextRoutes.map((item) => item.bairro) : parseCodes(codes);
 
-    if (!value || !senderName.trim() || !nextCodes.length || (isImageTarget && (hasIncompletePreference || (startAfterSave && !getEnabledNeighborhoodPreferences(nextRoutes).length)))) return;
+    if (!value || !senderName.trim() || !nextCodes.length || (isImageTarget && (hasIncompletePreference || hasInvalidStops || (startAfterSave && !getEnabledNeighborhoodPreferences(nextRoutes).length)))) return;
     setCodes(nextCodes.join("\n"));
     onSave(value, chosenGroup?.id, chosenGroup?.name, senderName.trim(), nextCodes, messageCount, intervalMs, startAfterSave, nextRoutes, isImageTarget ? "ocr" : "manual", ocrMessageLimit);
   }
@@ -233,7 +229,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
             <div className="ocr-settings-section">
               <div className="ocr-settings-title">
                 <strong>1. Regras de envio</strong>
-                <span>Escolha o limite de mensagens e a cidade usada nos novos bairros.</span>
+                <span>Escolha quantas rotas podem ser enviadas por imagem.</span>
               </div>
             <div className="settings-grid compact-settings">
               <label>
@@ -251,29 +247,6 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </label>
               <small>Se a imagem tiver menos bairros confirmados, o bot envia somente os encontrados.</small>
             </div>
-            <div className="settings-grid compact-settings">
-              <label>
-                Cidade padrão dos bairros
-                <input
-                  aria-label="Cidade padrão dos bairros"
-                  value={defaultCity}
-                  maxLength={200}
-                  disabled={busy}
-                  onChange={(event) => setDefaultCity(event.target.value)}
-                  placeholder={DEFAULT_OCR_CITY}
-                />
-              </label>
-              <button
-                className="button secondary"
-                disabled={busy || !defaultCity.trim() || !monitoredRoutes.some((route) => !route.cidade.trim())}
-                type="button"
-                onClick={() => setMonitoredRoutes(monitoredRoutes.map((route) => route.cidade.trim()
-                  ? route : { ...route, cidade: defaultCity.trim() }))}
-              >
-                Aplicar onde está vazio
-              </button>
-            </div>
-            <small>Novos bairros usam esta cidade. Você pode trocar a cidade individualmente quando a rota for de outro município.</small>
             </div>
             <div className="ocr-settings-section ocr-preferences-section">
             <div className="ocr-settings-title">
@@ -286,7 +259,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
             </div>
             <div className="ocr-route-heading">
               <span>Preferência</span>
-              <span>Bairro e cidade</span>
+              <span>Bairro e filtro de paradas</span>
             </div>
             {monitoredRoutes.map((route, index) => (
               <div className={`ocr-route-row ${route.enabled === false ? "is-paused" : ""}`} key={`ocr-route-${index}`}>
@@ -304,18 +277,18 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
                   }}
                   placeholder="Bairro: Parque Penha"
                 />
-                <input
-                  aria-label={`Cidade da preferência ${index + 1} (opcional)`}
-                  value={route.cidade}
-                  maxLength={200}
-                  disabled={busy}
-                  onChange={(event) => {
+                <div className="ocr-stop-filter">
+                  <label>Mín. paradas<input aria-label={`Mínimo de paradas da preferência ${index + 1}`} type="number" min={1} max={999} value={route.paradasMin || ""} disabled={busy} placeholder="Livre" onChange={(event) => {
                     const nextRoutes = [...monitoredRoutes];
-                    nextRoutes[index] = { ...route, cidade: event.target.value };
+                    nextRoutes[index] = { ...route, paradasMin: event.target.value ? Number(event.target.value) : undefined };
                     setMonitoredRoutes(nextRoutes);
-                  }}
-                  placeholder="Cidade (opcional)"
-                />
+                  }} /></label>
+                  <label>Máx. paradas<input aria-label={`Máximo de paradas da preferência ${index + 1}`} type="number" min={1} max={999} value={route.paradasMax || ""} disabled={busy} placeholder="Livre" onChange={(event) => {
+                    const nextRoutes = [...monitoredRoutes];
+                    nextRoutes[index] = { ...route, paradasMax: event.target.value ? Number(event.target.value) : undefined };
+                    setMonitoredRoutes(nextRoutes);
+                  }} /></label>
+                </div>
                 </div>
                 <button
                   aria-checked={route.enabled !== false}
@@ -350,11 +323,12 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </div>
             ))}
             <div className="ocr-route-actions">
-              <button className="button secondary" disabled={busy} type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute(defaultCity)])}>
+              <button className="button secondary" disabled={busy} type="button" onClick={() => setMonitoredRoutes([...monitoredRoutes, createEmptyRoute()])}>
                 Adicionar outro bairro
               </button>
               <small>{activePreferences.length} de {nextPreferences.length} bairro(s) participam da análise. Use as setas para ordenar as preferências ativas.</small>
-              {hasIncompletePreference ? <small role="alert">Preencha o bairro da linha que contém somente a cidade.</small> : null}
+              {hasIncompletePreference ? <small role="alert">Preencha o bairro antes de salvar.</small> : null}
+              {hasInvalidStops ? <small role="alert">O mínimo de paradas não pode ser maior que o máximo.</small> : null}
               {!activePreferences.length && nextPreferences.length ? <small role="alert">Todas as preferências estão pausadas. Você pode salvar, mas precisa ativar ao menos uma para iniciar o bot imagem.</small> : null}
             </div>
             </div>

@@ -1695,8 +1695,10 @@ export class BotService extends EventEmitter {
     const monitoredRoutes = (routes || codes).map((item) => item.trim()).filter(Boolean);
     const detailedRoutes = (monitoredRouteDetails || [])
       .map((item) => ({
-        cidade: String(item?.cidade || "").trim(),
+        cidade: "",
         bairro: String(item?.bairro || "").trim(),
+        paradasMin: Number(item?.paradasMin) > 0 ? Math.floor(Number(item.paradasMin)) : undefined,
+        paradasMax: Number(item?.paradasMax) > 0 ? Math.floor(Number(item.paradasMax)) : undefined,
         enabled: item?.enabled !== false
       }))
       .filter((item) => item.bairro);
@@ -1725,7 +1727,12 @@ export class BotService extends EventEmitter {
   saveRoutePreset(name: string, routes: MonitoredRoute[]) {
     const presetName = name.trim();
     const normalizedRoutes = routes
-      .map((route) => ({ cidade: String(route?.cidade || "").trim(), bairro: String(route?.bairro || "").trim(), enabled: route?.enabled !== false }))
+      .map((route) => ({
+        cidade: "", bairro: String(route?.bairro || "").trim(),
+        paradasMin: Number(route?.paradasMin) > 0 ? Math.floor(Number(route.paradasMin)) : undefined,
+        paradasMax: Number(route?.paradasMax) > 0 ? Math.floor(Number(route.paradasMax)) : undefined,
+        enabled: route?.enabled !== false
+      }))
       .filter((route) => route.bairro);
     if (!presetName) throw new Error("Digite um nome para a configuração.");
     if (!normalizedRoutes.length) throw new Error("Adicione pelo menos um bairro antes de salvar a configuração.");
@@ -2617,7 +2624,7 @@ export class BotService extends EventEmitter {
           gaiola: candidate.code,
           bairro: candidate.bairro || "Destino não confirmado",
           cidade: candidate.cidade,
-          distanciaKm: 0, pacotes: 0, paradas: 0,
+          distanciaKm: 0, pacotes: 0, paradas: candidate.paradas || 0,
           passedFilters: false,
           reasons: ["Rota detectada na imagem; exige confirmação manual antes do envio."],
           score: candidate.confidence,
@@ -2652,10 +2659,10 @@ export class BotService extends EventEmitter {
         return {
           id: `neighborhood::${analysisId}::${preferenceIndex}::${detection.code}`,
           rank: rank + 1, rota: detection.route, gaiola: detection.code,
-          bairro: preference.bairro, cidade: preference.cidade || detection.cidade,
-          distanciaKm: 0, pacotes: 0, paradas: 0,
+          bairro: preference.bairro, cidade: detection.cidade,
+          distanciaKm: 0, pacotes: 0, paradas: detection.paradas || 0,
           passedFilters: true,
-          reasons: [`Preferência ${preferenceIndex + 1}: ${preference.bairro}`, "Bairro e gaiola conferidos na mesma linha em leituras concordantes."],
+          reasons: [`Preferência ${preferenceIndex + 1}: ${preference.bairro}`, "Bairro e gaiola conferidos na mesma linha em leituras concordantes.", detection.paradas ? `${detection.paradas} paradas identificadas após o AT.` : ""].filter(Boolean),
           score: detection.confidence,
           observation: "Selecionado diretamente da imagem, sem romaneio."
         };
@@ -2676,7 +2683,7 @@ export class BotService extends EventEmitter {
         imagePreviewUrl,
         detected: { rota: detected.route, bairro: option.bairro, gaiola: detected.code },
         processedAt: new Date().toISOString(), options, detectedRouteCount: options.length,
-        message: `${options.length} bairro(s) confirmado(s): ${options.map((item) => `${item.bairro}, gaiola ${item.gaiola}`).join("; ")}.`
+        message: `${options.length} bairro(s) confirmado(s): ${options.map((item) => `${item.bairro}, gaiola ${item.gaiola}${item.paradas ? `, ${item.paradas} paradas` : ""}`).join("; ")}.`
       };
       this.applyOcrRouteSelection(options, "automatic");
       dispatchRaceReady = true;
@@ -4881,17 +4888,17 @@ export class BotService extends EventEmitter {
 
   private getConfiguredOcrPreferences(config = this.configStore.load()) {
     const savedDetailed = config.rotasMonitoradasDetalhadas.filter((item) => item.bairro.trim());
-    if (savedDetailed.length) return savedDetailed.filter((item) => item.enabled !== false);
+    if (savedDetailed.length) return savedDetailed.filter((item) => item.enabled !== false).map((item) => ({ ...item, cidade: "" }));
     return config.rotasMonitoradas.map((query) => {
       const parts = query.split("/").map((part) => part.trim());
-      return parts.length === 2 ? { cidade: parts[0], bairro: parts[1] } : { cidade: "", bairro: query.trim() };
+      return { cidade: "", bairro: parts.length === 2 ? parts[1] : query.trim() };
     }).filter((item) => item.bairro);
   }
 
   private describeConfiguredOcrRoutes(config = this.configStore.load()) {
     const detailed = (config.rotasMonitoradasDetalhadas || [])
       .filter((item) => item.bairro?.trim())
-      .map((item) => item.cidade?.trim() ? `${item.cidade} / ${item.bairro}` : item.bairro);
+      .map((item) => item.bairro);
     if (detailed.length) return detailed.join(" | ");
     return (config.rotasMonitoradas || []).join(" | ") || "nenhuma rota configurada";
   }

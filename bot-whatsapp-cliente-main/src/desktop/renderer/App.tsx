@@ -2759,7 +2759,7 @@ function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = fals
             <span className="total"><small>Tempo total registrado</small><strong>{formatAnalysisTime(selection.timing.totalMs)}</strong></span>
           </div>
         ) : null}
-        {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span>{option.cidade ? <small>{option.cidade}</small> : null}{option.observation ? <small>{option.observation}</small> : null}{option.romaneioMatch === true ? <small>{option.pacotes} pct · {option.paradas} paradas · {option.distanciaKm.toFixed(3)} km</small> : null}</article>)}</div> : null}
+        {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span>{option.paradas ? <small>{option.paradas} paradas identificadas</small> : null}{option.cidade ? <small>{option.cidade}</small> : null}{option.observation ? <small>{option.observation}</small> : null}{option.romaneioMatch === true ? <small>{option.pacotes} pct · {option.distanciaKm.toFixed(3)} km</small> : null}</article>)}</div> : null}
         {!analyzing && manualOptions.length && !selectedOptions.length ? (
           <div className="manual-route-review">
             <div><strong>Rotas encontradas</strong><small>Marque até 3 rotas. Nada será enviado sem sua confirmação.</small></div>

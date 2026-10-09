@@ -37,6 +37,7 @@ export type DetectedRouteCode = {
   route: string;
   cidade?: string;
   bairro?: string;
+  paradas?: number;
   code: string;
   plannedAt?: string;
   line: string;
@@ -442,22 +443,37 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       const contrast = `${base}-contrast.png`;
       const soft = `${base}-soft.png`;
       const binary = `${base}-binary.png`;
-      generatedPaths.push(contrast, soft, binary);
+      const inverted = `${base}-dark-inverted.png`;
+      const invertedBinary = `${base}-dark-inverted-binary.png`;
+      const fullStats = await sharp(imagePath).rotate().grayscale().stats();
+      const darkLayout = isDarkRouteImage(Number(fullStats.channels?.[0]?.mean));
+      generatedPaths.push(contrast, soft, binary, ...(darkLayout ? [inverted, invertedBinary] : []));
       await Promise.all([
         sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
           .sharpen({ sigma: 0.9, m1: 0.8, m2: 1.8 }).png().toFile(contrast),
         sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
           .linear(1.12, -8).sharpen({ sigma: 0.45 }).png().toFile(soft),
         sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
-          .threshold(165).png().toFile(binary)
+          .threshold(165).png().toFile(binary),
+        ...(darkLayout ? [
+          sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().negate().normalize()
+            .linear(1.08, -4).sharpen({ sigma: 0.75 }).png().toFile(inverted),
+          sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().negate().normalize()
+            .threshold(150).png().toFile(invertedBinary)
+        ] : [])
       ]);
-      return [
+      const standardVariants = [
         { path: contrast, label: "bairros-tabela-completa-contraste", generated: true, psm: 6 },
         { path: soft, label: "bairros-tabela-completa-suave", generated: true, psm: 6 },
         { path: binary, label: "bairros-tabela-completa-binaria", generated: true, psm: 6 },
         { path: contrast, label: "bairros-tabela-completa-esparsa", generated: false, psm: 11 },
         { path: imagePath, label: "bairros-original", generated: false, psm: 11 }
       ];
+      return darkLayout ? [
+        { path: inverted, label: "bairros-tabela-escura-invertida", generated: true, psm: 6 },
+        { path: invertedBinary, label: "bairros-tabela-escura-binaria", generated: true, psm: 6 },
+        ...standardVariants
+      ] : standardVariants;
     }
     const resizeWidth = width > 0 ? Math.min(3200, Math.max(1800, width * 2)) : 2200;
     const baseName = path.join(os.tmpdir(), `ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);

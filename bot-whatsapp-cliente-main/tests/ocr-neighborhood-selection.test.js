@@ -49,6 +49,21 @@ test("passa à próxima preferência apenas quando a anterior está ausente", ()
   assert.equal(result.preferenceIndex, 1);
 });
 
+test("lê a primeira quantidade após o AT como paradas e aplica o filtro do bairro", () => {
+  const image = consensus(["I-19 AT20261006APWGR 42 93 Campos - Parque João Maria Parque João Maria"]);
+  const selected = selectPreferredNeighborhoodFromOcr(image, [
+    { cidade: "Campos", bairro: "Parque João Maria", paradasMin: 40, paradasMax: 45 }
+  ]);
+  assert.equal(selected.status, "selected");
+  assert.equal(selected.detection.paradas, 42);
+
+  const blocked = selectPreferredNeighborhoodFromOcr(image, [
+    { cidade: "Campos", bairro: "Parque João Maria", paradasMax: 40 }
+  ]);
+  assert.equal(blocked.status, "unsafe");
+  assert.match(blocked.reason, /42 paradas/);
+});
+
 test("não troca bairros parecidos, prefixos, palavras parciais ou cidades", () => {
   for (const text of [
     "F-14 Campos dos Goytacazes Parque Rosário",
@@ -234,10 +249,10 @@ test("cidade opcional usa a coluna BAIRRO, sem confundir sufixo de bairro maior"
     line("F-14", 60, 20), line("Cidade", 60, 250), line("Novo Centro", 60, 700)
   ]);
   assert.equal(selectPreferredNeighborhoodFromOcr(longer, [{ cidade: "", bairro: "Centro" }]).status, "no-match");
-  assert.equal(selectPreferredNeighborhoodFromOcr(consensus(["F-14 Cidade Centro"]), [{ cidade: "", bairro: "Centro" }]).status, "no-match");
+  assert.equal(selectPreferredNeighborhoodFromOcr(consensus(["F-14 Cidade Centro"]), [{ cidade: "", bairro: "Centro" }]).status, "selected");
 });
 
-test("layout novo valida CLUSTER quando existe e aceita bairro exato quando cidade foi omitida", () => {
+test("layout novo usa somente BAIRRO mesmo quando CLUSTER pertence a outra cidade", () => {
   const headers = [line("ROTA", 10, 20), line("AT", 10, 220), line("CLUSTER", 10, 520), line("BAIRRO", 10, 850)];
   const campos = consensus([
     ...headers,
@@ -249,7 +264,7 @@ test("layout novo valida CLUSTER quando existe e aceita bairro exato quando cida
     ...headers,
     line("G-32", 60, 20), line("AT2026092600002", 60, 220), line("Italva", 60, 520), line("Centro", 60, 850)
   ]);
-  assert.equal(selectPreferredNeighborhoodFromOcr(outraCidade, preferred).status, "no-match");
+  assert.equal(selectPreferredNeighborhoodFromOcr(outraCidade, preferred).status, "selected");
 
   assert.equal(selectPreferredNeighborhoodFromOcr(consensus([
     "J-21 AT2026092600003 78 Parque Rodoviário"
