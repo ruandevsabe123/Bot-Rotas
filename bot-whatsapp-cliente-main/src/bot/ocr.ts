@@ -74,7 +74,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
       const cageVariants = await createPreprocessedImages(imagePath, true, "cage");
       variants.push(...cageVariants);
       const maxReadings = Math.max(1, options.maxReadings || 6);
-      const firstVariants = cageVariants.slice(0, Math.min(3, maxReadings));
+      const firstVariants = cageVariants.slice(0, Math.min(2, maxReadings));
       const firstAttempts = await runOcrVariants(firstVariants);
       const firstReadings = firstAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
       const firstErrors = firstAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
@@ -106,7 +106,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
     variants.push(...await createPreprocessedImages(imagePath, options.preferCageCrop, "all"));
     const maxReadings = Math.max(1, Math.min(variants.length, options.maxReadings || variants.length));
     const selectedVariants = variants.slice(0, maxReadings);
-    const fastReadingCount = options.fastFirst ? Math.min(3, selectedVariants.length) : selectedVariants.length;
+    const fastReadingCount = options.fastFirst ? Math.min(2, selectedVariants.length) : selectedVariants.length;
     const attempts = await runOcrVariants(selectedVariants.slice(0, fastReadingCount));
     let readings = attempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : []);
     let errors = attempts.flatMap((attempt) => attempt.error ? [attempt.error] : []);
@@ -445,7 +445,7 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       // WhatsApp often recompresses wide table screenshots until route letters
       // are only a few pixels wide. A 3x/Lanczos enlargement gives Tesseract
       // enough edge information to distinguish B from 8 without guessing.
-      const completeWidth = width > 0 ? Math.min(3600, Math.max(2400, width * 3)) : 2800;
+      const completeWidth = width > 0 ? Math.min(2200, Math.max(1500, width * 2)) : 1800;
       const base = path.join(os.tmpdir(), `ocr-neighborhood-${Date.now()}-${Math.random().toString(36).slice(2)}`);
       const contrast = `${base}-contrast.png`;
       const soft = `${base}-soft.png`;
@@ -456,16 +456,16 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       const darkLayout = isDarkRouteImage(Number(fullStats.channels?.[0]?.mean));
       generatedPaths.push(contrast, soft, binary, ...(darkLayout ? [inverted, invertedBinary] : []));
       await Promise.all([
-        sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
+        sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().normalize()
           .sharpen({ sigma: 0.9, m1: 0.8, m2: 1.8 }).png().toFile(contrast),
-        sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
+        sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().normalize()
           .linear(1.12, -8).sharpen({ sigma: 0.45 }).png().toFile(soft),
-        sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().normalize()
+        sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().normalize()
           .threshold(165).png().toFile(binary),
         ...(darkLayout ? [
-          sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().negate().normalize()
+          sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().negate().normalize()
             .linear(1.08, -4).sharpen({ sigma: 0.75 }).png().toFile(inverted),
-          sharp(imagePath).rotate().resize({ width: completeWidth }).grayscale().negate().normalize()
+          sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().negate().normalize()
             .threshold(150).png().toFile(invertedBinary)
         ] : [])
       ]);

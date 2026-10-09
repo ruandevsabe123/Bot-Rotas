@@ -128,7 +128,7 @@ const MANUAL_ROUTE_SELECTION_STAGGER_MS = 0;
 const MAX_DISPATCH_PRIORITY_DELAY_MS = 120_000;
 const MAX_DISPATCH_PRIORITY_LEVEL = 5;
 const MAX_OUTGOING_MESSAGES = 2;
-const ROUTE_IMAGE_BATCH_QUIET_MS = 900;
+const ROUTE_IMAGE_BATCH_QUIET_MS = 250;
 const ROUTE_IMAGE_BATCH_MAX = 12;
 const WARMUP_MESSAGE_COUNT = 15;
 // Maior que o keep-alive crítico (5s), evitando reconstrução no exato evento de abertura.
@@ -2471,6 +2471,18 @@ export class BotService extends EventEmitter {
 
     this.processingImageIds.add(messageId);
     this.pendingRouteImageBatch.push({ msg, groupJid, messageId });
+    // Give immediate visual feedback while the short batching window and
+    // media download are still pending. The definitive analysis state reuses
+    // this id for the usual single-image flow.
+    this.ocrRouteSelection = {
+      status: "analyzing",
+      options: [],
+      analysisId: `${this.clientEmail}:${messageId}`,
+      processedAt: new Date().toISOString(),
+      estimatedDurationSeconds: this.estimateOcrAnalysisSeconds(),
+      message: "Imagem recebida. Preparando a leitura agora..."
+    };
+    this.emitSnapshot();
     if (this.routeImageBatchTimer) clearTimeout(this.routeImageBatchTimer);
     const flush = () => {
       this.routeImageBatchTimer = undefined;
