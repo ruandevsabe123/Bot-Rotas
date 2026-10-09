@@ -153,6 +153,13 @@ test("caminho rápido exige duas leituras independentes iguais", () => {
   ]), false);
 });
 
+test("tabela grande encerra em duas leituras apesar de ruido em rotas irrelevantes", () => {
+  assert.equal(canUseFastOcrResult([
+    plainReading("J-13\nL-1\nJ-12\nJ-10\nI-18\nH-19\nG-4", "contraste"),
+    plainReading("J-13\nL-1\nJ-12\nJ-1\nI-18\nH-18\nG-4", "esparsa")
+  ]), true);
+});
+
 test("encerra cedo quando três leituras encontram as mesmas gaiolas com consenso", () => {
   assert.equal(canUseFastOcrResult([
     plainReading("F-14 Cabo Frio\nH-20 Centro", "a"),

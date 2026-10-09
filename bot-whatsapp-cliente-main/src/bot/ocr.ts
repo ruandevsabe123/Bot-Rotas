@@ -170,7 +170,9 @@ export function canUseFastOcrResult(readings: RouteOcrResult[]) {
   const minimumCoverage = Math.max(1, Math.ceil(strongestReadingCount * 0.85));
   const minimumConsensusShare = Math.max(1, Math.ceil(detected.length * 0.85));
   const toleratedIsolatedNoise = Math.max(1, Math.floor(strongestReadingCount * 0.1));
-  return strongestReadingCount > 0 &&
+  const broadTableConsensus = readings.length === 2 && safe.length >= 3 &&
+    safe.length >= Math.ceil(strongestReadingCount * 0.5);
+  return broadTableConsensus || strongestReadingCount > 0 &&
     safe.length >= minimumCoverage &&
     safe.length >= minimumConsensusShare &&
     isolated.length <= toleratedIsolatedNoise;
