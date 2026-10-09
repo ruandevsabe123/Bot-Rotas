@@ -58,6 +58,7 @@ export type BotConfig = {
   ocrCageMessageLimit: number;
   // Zero desativa; quando positivo vale para todos os bairros monitorados.
   ocrMaxStops: number;
+  ocrMaxPackages: number;
 };
 
 export type DispatchPriorityProfile = {
@@ -470,6 +471,7 @@ export type RouteOcrInsight = {
   bairro?: string;
   code?: string;
   paradas?: number;
+  pacotes?: number;
   confidence?: number;
   processedAt: string;
   imagePreviewUrl?: string;
@@ -676,6 +678,7 @@ export type SaveTargetMessageSettingsPayload = {
   targetDispatchMode?: "manual" | "ocr";
   ocrCageMessageLimit?: number;
   ocrMaxStops?: number;
+  ocrMaxPackages?: number;
 };
 
 export type GeneralSettingsPayload = {
@@ -689,6 +692,7 @@ export type GeneralSettingsPayload = {
   ocrDesiredCages?: string[];
   ocrCageMessageLimit?: number;
   ocrMaxStops?: number;
+  ocrMaxPackages?: number;
 };
 
 export type DesktopApi = {

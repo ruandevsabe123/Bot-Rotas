@@ -421,6 +421,7 @@ export class RouteStore {
             bairro: typeof input.ocr.bairro === "string" ? input.ocr.bairro : undefined,
             code: typeof input.ocr.code === "string" ? input.ocr.code : undefined,
             paradas: Number.isFinite(Number(input.ocr.paradas)) ? Number(input.ocr.paradas) : undefined,
+            pacotes: Number.isFinite(Number(input.ocr.pacotes)) ? Number(input.ocr.pacotes) : undefined,
             confidence: Number.isFinite(Number(input.ocr.confidence)) ? Number(input.ocr.confidence) : undefined,
             processedAt: typeof input.ocr.processedAt === "string" ? input.ocr.processedAt : new Date().toISOString(),
             imagePreviewUrl: typeof input.ocr.imagePreviewUrl === "string" ? input.ocr.imagePreviewUrl : undefined,

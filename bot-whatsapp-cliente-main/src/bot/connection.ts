@@ -1688,7 +1688,7 @@ export class BotService extends EventEmitter {
     this.logger.success("Mensagens do grupo alvo atualizadas.");
   }
 
-  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: MonitoredRoute[], targetDispatchMode?: BotConfig["targetDispatchMode"], ocrCageMessageLimit?: number, ocrMaxStops?: number) {
+  setMessageSettings(senderName: string, codes: string[], routes?: string[], monitoredRouteDetails?: MonitoredRoute[], targetDispatchMode?: BotConfig["targetDispatchMode"], ocrCageMessageLimit?: number, ocrMaxStops?: number, ocrMaxPackages?: number) {
     if (typeof senderName !== "string" || !Array.isArray(codes) || codes.some((item) => typeof item !== "string")) throw new Error("Nome e códigos de mensagem inválidos.");
     // Update target (alvo) message settings. Do NOT reset warmup completion.
     this.codigosEscolhidos = codes.map((item) => item.trim().toUpperCase()).filter(Boolean);
@@ -1707,6 +1707,7 @@ export class BotService extends EventEmitter {
       rotasMonitoradasDetalhadas: detailedRoutes,
       ...(ocrCageMessageLimit !== undefined ? { ocrCageMessageLimit } : {}),
       ...(ocrMaxStops !== undefined ? { ocrMaxStops } : {}),
+      ...(ocrMaxPackages !== undefined ? { ocrMaxPackages } : {}),
       ...(targetDispatchMode ? { targetDispatchMode } : {})
     });
     this.cancelPendingRouteImageBatch();
@@ -2604,7 +2605,7 @@ export class BotService extends EventEmitter {
       if (!isCurrent()) return;
       const ocr = combineRouteImageBatch(readings);
       const ocrFinishedAtMs = Date.now();
-      const decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops);
+      const decision = selectPreferredNeighborhoodFromOcr(ocr, preferences, config.ocrMaxStops, config.ocrMaxPackages);
       const comparedAt = Date.now();
       const timing = {
         startedAt: analysisStartedAt,
@@ -2621,7 +2622,7 @@ export class BotService extends EventEmitter {
           gaiola: candidate.code,
           bairro: candidate.bairro || "Destino não confirmado",
           cidade: candidate.cidade,
-          distanciaKm: 0, pacotes: 0, paradas: candidate.paradas || 0,
+          distanciaKm: 0, pacotes: candidate.pacotes || 0, paradas: candidate.paradas || 0,
           passedFilters: false,
           reasons: ["Rota detectada na imagem; exige confirmação manual antes do envio."],
           score: candidate.confidence,
@@ -2657,9 +2658,9 @@ export class BotService extends EventEmitter {
           id: `neighborhood::${analysisId}::${preferenceIndex}::${detection.code}`,
           rank: rank + 1, rota: detection.route, gaiola: detection.code,
           bairro: preference.bairro, cidade: detection.cidade,
-          distanciaKm: 0, pacotes: 0, paradas: detection.paradas || 0,
+          distanciaKm: 0, pacotes: detection.pacotes || 0, paradas: detection.paradas || 0,
           passedFilters: true,
-          reasons: [`Preferência ${preferenceIndex + 1}: ${preference.bairro}`, "Bairro e gaiola conferidos na mesma linha em leituras concordantes.", detection.paradas ? `${detection.paradas} paradas identificadas após o AT.` : ""].filter(Boolean),
+          reasons: [`Preferência ${preferenceIndex + 1}: ${preference.bairro}`, "Bairro e gaiola conferidos na mesma linha em leituras concordantes.", detection.paradas ? `${detection.paradas} paradas identificadas após o AT.` : "", detection.pacotes ? `${detection.pacotes} pacotes identificados.` : ""].filter(Boolean),
           score: detection.confidence,
           observation: "Selecionado diretamente da imagem, sem romaneio."
         };
@@ -2669,7 +2670,7 @@ export class BotService extends EventEmitter {
       this.lastOcrInsight = {
         analysisId, source: ocr.source, text: ocr.text, line: detected.line,
         route: detected.route, cidade: option.cidade, bairro: option.bairro,
-        code: detected.code, paradas: option.paradas, confidence: detected.confidence, processedAt: new Date().toISOString(),
+        code: detected.code, paradas: option.paradas, pacotes: option.pacotes, confidence: detected.confidence, processedAt: new Date().toISOString(),
         imagePreviewUrl, analysisOptions: options, analysisTiming: { ...timing, totalMs: comparedAt - analysisStartedAtMs },
         analysisMessage: decision.reason,
         preparedMessages: options.map((item) => `${config.nomeEnvio} ${item.gaiola}`.trim())
@@ -2683,7 +2684,7 @@ export class BotService extends EventEmitter {
         imagePreviewUrl,
         detected: { rota: detected.route, bairro: option.bairro, gaiola: detected.code },
         processedAt: new Date().toISOString(), options, detectedRouteCount: options.length,
-        message: `${options.length} bairro(s) confirmado(s): ${options.map((item) => `${item.bairro}, gaiola ${item.gaiola}${item.paradas ? `, ${item.paradas} paradas` : ""}`).join("; ")}. ${decision.reason}`
+        message: `${options.length} bairro(s) confirmado(s): ${options.map((item) => `${item.bairro}, gaiola ${item.gaiola}${item.paradas ? `, ${item.paradas} paradas` : ""}${item.pacotes ? `, ${item.pacotes} pacotes` : ""}`).join("; ")}. ${decision.reason}`
       };
       this.applyOcrRouteSelection(options, "automatic");
       dispatchRaceReady = true;
@@ -2749,6 +2750,7 @@ export class BotService extends EventEmitter {
       bairro: first.bairro,
       code: first.gaiola,
       paradas: first.paradas,
+      pacotes: first.pacotes,
       confidence: first.score,
       processedAt: new Date().toISOString(),
       imagePreviewUrl: selection.imagePreviewUrl,

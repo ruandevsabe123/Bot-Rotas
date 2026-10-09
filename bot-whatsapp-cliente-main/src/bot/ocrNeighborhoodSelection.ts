@@ -11,7 +11,7 @@ export type NeighborhoodSelection = {
 };
 
 type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string; trailingCellText?: string };
-type Match = { row: Row; code: string; confidence: number; variant: number; paradas?: number; requiresThreeEvidence?: boolean };
+type Match = { row: Row; code: string; confidence: number; variant: number; paradas?: number; pacotes?: number; requiresThreeEvidence?: boolean };
 
 export function findManualRouteCandidatesFromOcr(ocr: RouteOcrResult): DetectedRouteCode[] {
   const variants = ocr.variants?.length ? ocr.variants : [ocr];
@@ -31,7 +31,7 @@ export function findManualRouteCandidatesFromOcr(ocr: RouteOcrResult): DetectedR
         route: bairro || row.text,
         cidade: String(row.localityText || "").trim() || undefined,
         bairro: bairro || undefined,
-        paradas: extractStopsAfterAt(row),
+        ...extractQuantitiesAfterAt(row),
         code,
         line: row.text,
         confidence: Math.round(Math.max(0, Math.min(100, row.confidence))),
@@ -64,7 +64,8 @@ export function normalizeNeighborhoodIdentity(value: string) {
 export function selectPreferredNeighborhoodFromOcr(
   ocr: RouteOcrResult,
   preferences: MonitoredRoute[],
-  maxStops = 0
+  maxStops = 0,
+  maxPackages = 0
 ): NeighborhoodSelection {
   const configured = preferences.map((preference, index) => ({
     cidade: String(preference.cidade || "").trim(),
@@ -120,11 +121,13 @@ export function selectPreferredNeighborhoodFromOcr(
       // still represented in `codes` and blocks the automatic send.
       const requiredEvidence = matching.some((match) => match.requiresThreeEvidence) ? 3 : 2;
       const stops = mostFrequentNumber(confirmed.map((match) => match.paradas).filter((value): value is number => value !== undefined));
+      const packages = mostFrequentNumber(confirmed.map((match) => match.pacotes).filter((value): value is number => value !== undefined));
       const detection: DetectedRouteCode = {
         route: preference.bairro,
         cidade: best.row.localityText,
         bairro: preference.bairro,
         paradas: stops,
+        pacotes: packages,
         code,
         line: best.row.text,
         confidence: confirmed.length ? Math.round(Math.min(...confirmed.map((match) => match.confidence))) : best.confidence,
@@ -150,11 +153,14 @@ export function selectPreferredNeighborhoodFromOcr(
   }
   if (selections.length) {
     const normalizedMaxStops = Number.isFinite(Number(maxStops)) ? Math.max(0, Math.floor(Number(maxStops))) : 0;
-    const eligibleSelections = selections.filter((item) => !normalizedMaxStops || item.detection.paradas === undefined || item.detection.paradas <= normalizedMaxStops);
+    const normalizedMaxPackages = Number.isFinite(Number(maxPackages)) ? Math.max(0, Math.floor(Number(maxPackages))) : 0;
+    const eligibleSelections = selections.filter((item) =>
+      (!normalizedMaxStops || item.detection.paradas === undefined || item.detection.paradas <= normalizedMaxStops) &&
+      (!normalizedMaxPackages || item.detection.pacotes === undefined || item.detection.pacotes <= normalizedMaxPackages));
     const excludedCount = selections.length - eligibleSelections.length;
     if (!eligibleSelections.length) return {
       status: "unsafe",
-      reason: `Todos os bairros encontrados ultrapassaram o limite geral de ${normalizedMaxStops} paradas. Nenhuma mensagem foi enviada.`,
+      reason: `Todos os bairros encontrados ultrapassaram ${formatLimits(normalizedMaxStops, normalizedMaxPackages)}. Nenhuma mensagem foi enviada.`,
       detections,
       selections: []
     };
@@ -168,7 +174,7 @@ export function selectPreferredNeighborhoodFromOcr(
     });
     return {
       status: "selected", detection: orderedSelections[0].detection, preferenceIndex: orderedSelections[0].preferenceIndex,
-      reason: `${orderedSelections.length} bairro(s) liberado(s), começando pelo menor número de paradas${normalizedMaxStops ? ` e respeitando o limite geral de ${normalizedMaxStops}` : ""}.${excludedCount ? ` ${excludedCount} rota(s) acima do limite foram descartadas.` : ""}`,
+      reason: `${orderedSelections.length} bairro(s) liberado(s), começando pelo menor número de paradas${normalizedMaxStops || normalizedMaxPackages ? ` e respeitando ${formatLimits(normalizedMaxStops, normalizedMaxPackages)}` : ""}.${excludedCount ? ` ${excludedCount} rota(s) acima do limite foram descartadas; a próxima preferência elegível foi usada.` : ""}`,
       detections, selections: orderedSelections
     };
   }
@@ -291,25 +297,25 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
     return normalizeNeighborhoodIdentity(word.text).split(" ").some((token) => relevant.has(token));
   }).map((word) => word.confidence);
   const confidence = Math.round(Math.min(row.confidence, ...(wordConfidence.length ? wordConfidence : [row.confidence])));
-  return { code, confidence, paradas: extractStopsAfterAt(row), requiresThreeEvidence };
+  return { code, confidence, ...extractQuantitiesAfterAt(row), requiresThreeEvidence };
 }
 
-function extractStopsAfterAt(row: Row | string) {
+function extractQuantitiesAfterAt(row: Row | string) {
   const text = typeof row === "string" ? row : row.text;
   const words = typeof row === "string" ? [] : row.words;
-  const fromGeometry = extractStopsFromWords(words);
-  if (fromGeometry !== undefined) return fromGeometry;
+  const fromGeometry = extractQuantitiesFromWords(words);
+  if (fromGeometry) return fromGeometry;
   const afterAt = String(text || "").match(/\bAT\s*[A-Z0-9]{6,}\b([\s\S]*)$/i)?.[1] || "";
   // Layout with two numeric cells: AT | stops | packages. Layout with only
   // one numeric cell: AT | packages. A package count must never be used as a
   // stop limit or to rank the preferred neighborhoods.
   const quantities = afterAt.match(/^\s*[|;,]?\s*(\d{1,3})\b\s*[|;,]?\s*(\d{1,3})\b/);
-  if (!quantities) return undefined;
-  const value = Number(quantities[1]);
-  return Number.isInteger(value) && value > 0 && value <= 999 ? value : undefined;
+  if (quantities) return { paradas: validQuantity(quantities[1]), pacotes: validQuantity(quantities[2]) };
+  const packagesOnly = afterAt.match(/^\s*[|;,]?\s*(\d{1,3})\b/);
+  return packagesOnly ? { pacotes: validQuantity(packagesOnly[1]) } : {};
 }
 
-function extractStopsFromWords(words: OcrLine["words"]) {
+function extractQuantitiesFromWords(words: OcrLine["words"]) {
   if (!words?.length) return undefined;
   const sorted = [...words].sort((left, right) => left.left - right.left);
   let atIndex = sorted.findIndex((word) => /^AT[A-Z0-9]{6,}$/i.test(word.text.replace(/[^A-Z0-9]/gi, "")));
@@ -328,8 +334,18 @@ function extractStopsFromWords(words: OcrLine["words"]) {
     quantities.push(Number(token));
     if (quantities.length === 2) break;
   }
-  const value = quantities.length >= 2 ? quantities[0] : undefined;
-  return value && value <= 999 ? value : undefined;
+  if (quantities.length >= 2) return { paradas: validQuantity(quantities[0]), pacotes: validQuantity(quantities[1]) };
+  return quantities.length === 1 ? { pacotes: validQuantity(quantities[0]) } : {};
+}
+
+function validQuantity(value: string | number) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 && parsed <= 999 ? parsed : undefined;
+}
+
+function formatLimits(maxStops: number, maxPackages: number) {
+  const limits = [maxStops ? `${maxStops} paradas` : "", maxPackages ? `${maxPackages} pacotes` : ""].filter(Boolean);
+  return `o limite geral de ${limits.join(" ou ")}`;
 }
 
 function mostFrequentNumber(values: number[]) {

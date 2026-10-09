@@ -190,7 +190,8 @@ const emptySnapshot: BotSnapshot = {
     ocrSelectionMode: "neighborhoods",
     ocrDesiredCages: [],
     ocrCageMessageLimit: 3,
-    ocrMaxStops: 0
+    ocrMaxStops: 0,
+    ocrMaxPackages: 0
   },
   groups: [],
   readinessChecks: [],
@@ -2760,7 +2761,7 @@ function AutomaticOcrAnalysisDialog({ selection, onClose, onConfirm, busy = fals
             <span className="total"><small>Tempo total registrado</small><strong>{formatAnalysisTime(selection.timing.totalMs)}</strong></span>
           </div>
         ) : null}
-        {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span>{option.paradas ? <small>{option.paradas} paradas identificadas</small> : null}{option.cidade ? <small>{option.cidade}</small> : null}{option.observation ? <small>{option.observation}</small> : null}{option.romaneioMatch === true ? <small>{option.pacotes} pct · {option.distanciaKm.toFixed(3)} km</small> : null}</article>)}</div> : null}
+        {!analyzing && selectedOptions.length ? <div className="automatic-analysis-routes">{selectedOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span>{option.paradas ? <small>{option.paradas} paradas identificadas</small> : null}{option.pacotes ? <small>{option.pacotes} pacotes identificados</small> : null}{option.cidade ? <small>{option.cidade}</small> : null}{option.observation ? <small>{option.observation}</small> : null}{option.romaneioMatch === true ? <small>{option.pacotes} pct · {option.distanciaKm.toFixed(3)} km</small> : null}</article>)}</div> : null}
         {!analyzing && manualOptions.length && !selectedOptions.length ? (
           <div className="manual-route-review">
             <div><strong>Rotas encontradas</strong><small>Marque até 3 rotas. Nada será enviado sem sua confirmação.</small></div>
@@ -3180,7 +3181,7 @@ function PanelApp() {
     return /OCR|IA|imagem|foto|romaneio|rota\(s\)|rotas encontradas|Ranking de rotas|Cliente confirmou|gaiola/i.test(message);
   }
 
-  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual", ocrCageMessageLimit = 3, ocrMaxStops = 0) {
+  function confirmSaveTarget(group: string, groupId: string | undefined, groupName: string | undefined, senderName: string, codes: string[], _messageCount?: number, _intervalMs?: number, startAfterSave = false, monitoredRoutes?: MonitoredRoute[], targetDispatchMode: "manual" | "ocr" = "manual", ocrCageMessageLimit = 3, ocrMaxStops = 0, ocrMaxPackages = 0) {
     const selectedGroupName = groupName || group;
     const isImageMode = targetDispatchMode === "ocr";
     const preferences = isImageMode ? normalizeNeighborhoodPreferences(monitoredRoutes || codes.map((bairro) => ({ cidade: "", bairro }))) : [];
@@ -3195,7 +3196,7 @@ function PanelApp() {
     setConfirmation({
       title: startAfterSave ? (isImageMode ? "Salvar e iniciar imagem" : "Salvar e iniciar manual") : isImageMode ? "Salvar bot imagem" : "Salvar mensagens",
       message: `Grupo alvo: ${selectedGroupName}`,
-      details: isImageMode ? [...messages, `Serão enviadas até ${ocrCageMessageLimit} mensagens, começando pelas rotas com menos paradas.`, ocrMaxStops ? `Limite geral: ${ocrMaxStops} paradas.` : "Sem limite geral de paradas."] : messages,
+      details: isImageMode ? [...messages, `Serão enviadas até ${ocrCageMessageLimit} mensagens, começando pelas rotas com menos paradas.`, ocrMaxStops ? `Limite geral: ${ocrMaxStops} paradas.` : "Sem limite geral de paradas.", ocrMaxPackages ? `Limite geral: ${ocrMaxPackages} pacotes.` : "Sem limite geral de pacotes."] : messages,
       confirmLabel: startAfterSave ? "Salvar e iniciar" : "Salvar",
       onConfirm: async () => {
         await runAction(async () => {
@@ -3207,7 +3208,8 @@ function PanelApp() {
             monitoredRoutes: isImageMode ? preferences : snapshot.config.rotasMonitoradasDetalhadas || [],
             targetDispatchMode,
             ocrCageMessageLimit,
-            ocrMaxStops
+            ocrMaxStops,
+            ocrMaxPackages
           });
           setGroupEditor(undefined);
           return startAfterSave ? (isImageMode ? botApi.startImageMonitoring() : botApi.startMonitoring()) : botApi.getSnapshot();

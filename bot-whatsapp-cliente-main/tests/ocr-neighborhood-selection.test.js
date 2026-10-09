@@ -74,7 +74,34 @@ test("uma unica quantidade depois do AT e pacotes, nao paradas", () => {
   assert.equal(selected.status, "selected");
   assert.equal(selected.detection.code, "D-5");
   assert.deepEqual(selected.selections.map((item) => item.detection.paradas), [undefined, undefined]);
+  assert.deepEqual(selected.selections.map((item) => item.detection.pacotes), [109, 132]);
   assert.doesNotMatch(selected.reason, /acima do limite/);
+});
+
+test("limite de pacotes descarta a rota e usa a proxima preferencia elegivel", () => {
+  const selected = selectPreferredNeighborhoodFromOcr(consensus([
+    "J-13 AT20261007ARASB 44 98 Campos Caju Parque Leopoldina",
+    "J-12 AT20261007ARPLK 58 82 Campos Caju Parque Caju"
+  ]), [
+    { bairro: "Parque Leopoldina" },
+    { bairro: "Parque Caju" }
+  ], 0, 90);
+  assert.equal(selected.status, "selected");
+  assert.equal(selected.detection.code, "J-12");
+  assert.equal(selected.detection.pacotes, 82);
+  assert.match(selected.reason, /próxima preferência elegível/);
+});
+
+test("sem paradas legiveis respeita o ranking e ainda aplica limite de pacotes", () => {
+  const selected = selectPreferredNeighborhoodFromOcr(consensus([
+    "D-5 AT20261008ASZGE 109 SJB Grussai",
+    "F-32 AT20261008ASZKV 88 Campos Parque Caju"
+  ]), [
+    { bairro: "Grussai" },
+    { bairro: "Parque Caju" }
+  ], 0, 100);
+  assert.equal(selected.status, "selected");
+  assert.equal(selected.detection.code, "F-32");
 });
 
 test("limite geral descarta somente rotas acima do máximo", () => {
@@ -428,6 +455,7 @@ test("cabecalhos variaveis isolam CLUSTER e BAIRRO automaticamente", () => {
   assert.equal(inferredLastColumn.status, "selected");
   assert.equal(inferredLastColumn.detection.code, "J-31");
   assert.equal(inferredLastColumn.detection.paradas, 46);
+  assert.equal(inferredLastColumn.detection.pacotes, 83);
 });
 
 test("recupera paradas pela geometria das colunas na linha J-13", () => {

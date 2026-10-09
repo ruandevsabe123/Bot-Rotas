@@ -1123,7 +1123,8 @@ async function handleAction(bot: BotProcessProxy, action: string, body: any) {
         Array.isArray(body.monitoredRoutes) ? body.monitoredRoutes : undefined,
         body.targetDispatchMode === "ocr" ? "ocr" : body.targetDispatchMode === "manual" ? "manual" : undefined,
         body.ocrCageMessageLimit,
-        body.ocrMaxStops
+        body.ocrMaxStops,
+        body.ocrMaxPackages
       );
       break;
     case "save-warmup-message-settings":

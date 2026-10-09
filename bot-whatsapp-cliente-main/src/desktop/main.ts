@@ -214,7 +214,7 @@ function registerIpc() {
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveTargetMessageSettings", async (_event, payload: SaveTargetMessageSettingsPayload) => {
-    bot.setMessageSettings(payload.senderName, payload.codes, payload.routes, payload.monitoredRoutes, payload.targetDispatchMode, payload.ocrCageMessageLimit, payload.ocrMaxStops);
+    bot.setMessageSettings(payload.senderName, payload.codes, payload.routes, payload.monitoredRoutes, payload.targetDispatchMode, payload.ocrCageMessageLimit, payload.ocrMaxStops, payload.ocrMaxPackages);
     return bot.getSnapshot();
   });
   ipcMain.handle("bot:saveRoutePreset", async (_event, payload: { name: string; routes: { cidade: string; bairro: string }[] }) => {
@@ -241,7 +241,8 @@ function registerIpc() {
       (payload as SaveTargetMessageSettingsPayload).monitoredRoutes,
       (payload as SaveTargetMessageSettingsPayload).targetDispatchMode,
       (payload as SaveTargetMessageSettingsPayload).ocrCageMessageLimit,
-      (payload as SaveTargetMessageSettingsPayload).ocrMaxStops
+      (payload as SaveTargetMessageSettingsPayload).ocrMaxStops,
+      (payload as SaveTargetMessageSettingsPayload).ocrMaxPackages
     );
     return bot.getSnapshot();
   });

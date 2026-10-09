@@ -491,12 +491,13 @@ function RouteSidePanel({
             <div className="adminx-replay-heading"><div><p className="panel-label">Replay do cliente</p><h3>Análise inteligente da imagem</h3></div><span className={`status-pill ${route.status === "sent" ? "tone-green" : "tone-yellow"}`}>{route.status === "sent" ? "Enviada" : route.status}</span></div>
             {route.ocr.imagePreviewUrl ? <img className="adminx-ocr-preview" src={route.ocr.imagePreviewUrl} alt="Prévia da imagem processada" /> : null}
             {route.ocr.analysisMessage ? <p className="adminx-replay-message">{route.ocr.analysisMessage}</p> : null}
-            {route.ocr.analysisOptions?.length ? <div className="adminx-replay-routes">{route.ocr.analysisOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span><small>{option.paradas ? `${option.paradas} paradas` : "Paradas não identificadas"}</small></article>)}</div> : null}
+            {route.ocr.analysisOptions?.length ? <div className="adminx-replay-routes">{route.ocr.analysisOptions.map((option) => <article key={option.id}><strong>{option.gaiola}</strong><span>{option.bairro}</span><small>{option.paradas ? `${option.paradas} paradas` : "Paradas não identificadas"}</small><small>{option.pacotes ? `${option.pacotes} pacotes` : "Pacotes não identificados"}</small></article>)}</div> : null}
             {route.ocr.analysisTiming ? <div className="adminx-replay-timing"><span><small>Baixar</small><b>{formatMs(route.ocr.analysisTiming.downloadMs)}</b></span><span><small>Analisar</small><b>{formatMs(route.ocr.analysisTiming.ocrMs)}</b></span><span><small>Comparar</small><b>{formatMs(route.ocr.analysisTiming.comparisonMs)}</b></span><span><small>Total IA</small><b>{formatMs(route.ocr.analysisTiming.totalMs)}</b></span></div> : null}
             <dl className="adminx-kv">
               <dt>Rota</dt><dd>{route.ocr.route || route.ocr.bairro || "Não registrada"}</dd>
               <dt>Código</dt><dd>{route.ocr.code || "Não registrado"}</dd>
               <dt>Paradas</dt><dd>{route.ocr.paradas || route.ocr.analysisOptions?.[0]?.paradas || "Não identificadas"}</dd>
+              <dt>Pacotes</dt><dd>{route.ocr.pacotes || route.ocr.analysisOptions?.[0]?.pacotes || "Não identificados"}</dd>
               <dt>Motor</dt><dd>Análise visual local</dd>
               <dt>Confiança</dt><dd>{route.ocr.confidence ? `${route.ocr.confidence}%` : "Sem média"}</dd>
               <dt>Linha</dt><dd>{route.ocr.line || "Sem linha"}</dd>
