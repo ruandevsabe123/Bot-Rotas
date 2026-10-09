@@ -93,7 +93,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
       let errors = [...firstErrors, ...extraCageAttempts.flatMap((attempt) => attempt.error ? [attempt.error] : [])];
       const fullReadingLimit = remainingLimit - extraCageVariants.length;
       if (fullReadingLimit > 0) {
-        const fullVariants = await createPreprocessedImages(imagePath, false, "full");
+        const fullVariants = await createPreprocessedImages(imagePath, false, "full", fullReadingLimit);
         variants.push(...fullVariants);
         const fullAttempts = await runOcrVariants(fullVariants.slice(0, fullReadingLimit));
         readings = [...readings, ...fullAttempts.flatMap((attempt) => attempt.reading ? [attempt.reading] : [])];
@@ -103,7 +103,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
       return combineOcrReadings(readings);
     }
 
-    variants.push(...await createPreprocessedImages(imagePath, options.preferCageCrop, "all"));
+    variants.push(...await createPreprocessedImages(imagePath, options.preferCageCrop, "all", options.maxReadings));
     const maxReadings = Math.max(1, Math.min(variants.length, options.maxReadings || variants.length));
     const selectedVariants = variants.slice(0, maxReadings);
     const fastReadingCount = options.fastFirst ? Math.min(2, selectedVariants.length) : selectedVariants.length;
@@ -435,7 +435,7 @@ async function detectRouteImageLayoutPreset(imagePath: string, sharp: any, meanL
   }
 }
 
-async function createPreprocessedImages(imagePath: string, preferCageCrop = false, mode: "all" | "cage" | "full" = "all") {
+async function createPreprocessedImages(imagePath: string, preferCageCrop = false, mode: "all" | "cage" | "full" = "all", maxVariants?: number) {
   const generatedPaths: string[] = [];
   try {
     const { default: sharp } = await import("sharp");
@@ -456,21 +456,12 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
       const invertedBinary = `${base}-dark-inverted-binary.png`;
       const fullStats = await sharp(imagePath).rotate().grayscale().stats();
       const darkLayout = isDarkRouteImage(Number(fullStats.channels?.[0]?.mean));
-      generatedPaths.push(contrast, soft, binary, ...(darkLayout ? [inverted, invertedBinary] : []));
-      await Promise.all([
-        sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().normalize()
-          .sharpen({ sigma: 0.9, m1: 0.8, m2: 1.8 }).png().toFile(contrast),
-        sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().normalize()
-          .linear(1.12, -8).sharpen({ sigma: 0.45 }).png().toFile(soft),
-        sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().normalize()
-          .threshold(165).png().toFile(binary),
-        ...(darkLayout ? [
-          sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().negate().normalize()
-            .linear(1.08, -4).sharpen({ sigma: 0.75 }).png().toFile(inverted),
-          sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: completeWidth }).grayscale().negate().normalize()
-            .threshold(150).png().toFile(invertedBinary)
-        ] : [])
-      ]);
+      // Dark screenshots already have strong edge contrast after inversion.
+      // Keeping fewer pixels makes Tesseract materially faster on the long
+      // tables used by the current provider without blurring the numeric cells.
+      const ocrWidth = darkLayout
+        ? (width > 0 ? Math.min(1500, Math.max(1000, Math.round(width * 1.25))) : 1100)
+        : completeWidth;
       const standardVariants = [
         { path: contrast, label: "bairros-tabela-completa-contraste", generated: true, psm: 6 },
         { path: contrast, label: "bairros-tabela-completa-esparsa", generated: false, psm: 11 },
@@ -478,11 +469,28 @@ async function createPreprocessedImages(imagePath: string, preferCageCrop = fals
         { path: binary, label: "bairros-tabela-completa-binaria", generated: true, psm: 6 },
         { path: imagePath, label: "bairros-original", generated: false, psm: 11 }
       ];
-      return darkLayout ? [
+      const orderedVariants = darkLayout ? [
         { path: inverted, label: "bairros-tabela-escura-invertida", generated: true, psm: 6 },
         { path: invertedBinary, label: "bairros-tabela-escura-binaria", generated: true, psm: 6 },
         ...standardVariants
       ] : standardVariants;
+      const selectedVariants = orderedVariants.slice(0, Math.max(1, maxVariants || orderedVariants.length));
+      const selectedPaths = new Set(selectedVariants.filter((variant) => variant.generated).map((variant) => variant.path));
+      generatedPaths.push(...selectedPaths);
+      const jobs = new Map<string, () => Promise<unknown>>([
+        [contrast, () => sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: ocrWidth }).grayscale().normalize()
+          .sharpen({ sigma: 0.9, m1: 0.8, m2: 1.8 }).png().toFile(contrast)],
+        [soft, () => sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: ocrWidth }).grayscale().normalize()
+          .linear(1.12, -8).sharpen({ sigma: 0.45 }).png().toFile(soft)],
+        [binary, () => sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: ocrWidth }).grayscale().normalize()
+          .threshold(165).png().toFile(binary)],
+        [inverted, () => sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: ocrWidth }).grayscale().negate().normalize()
+          .linear(1.08, -4).sharpen({ sigma: 0.75 }).png().toFile(inverted)],
+        [invertedBinary, () => sharp(imagePath).rotate().trim({ threshold: 10 }).resize({ width: ocrWidth }).grayscale().negate().normalize()
+          .threshold(150).png().toFile(invertedBinary)]
+      ]);
+      await Promise.all([...selectedPaths].map((selectedPath) => jobs.get(selectedPath)!()));
+      return selectedVariants;
     }
     const resizeWidth = width > 0 ? Math.min(3200, Math.max(1800, width * 2)) : 2200;
     const baseName = path.join(os.tmpdir(), `ocr-${Date.now()}-${Math.random().toString(36).slice(2)}`);
