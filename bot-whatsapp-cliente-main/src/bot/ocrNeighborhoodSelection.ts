@@ -31,7 +31,7 @@ export function findManualRouteCandidatesFromOcr(ocr: RouteOcrResult): DetectedR
         route: bairro || row.text,
         cidade: String(row.localityText || "").trim() || undefined,
         bairro: bairro || undefined,
-        paradas: extractStopsAfterAt(row.text),
+        paradas: extractStopsAfterAt(row),
         code,
         line: row.text,
         confidence: Math.round(Math.max(0, Math.min(100, row.confidence))),
@@ -291,11 +291,15 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
     return normalizeNeighborhoodIdentity(word.text).split(" ").some((token) => relevant.has(token));
   }).map((word) => word.confidence);
   const confidence = Math.round(Math.min(row.confidence, ...(wordConfidence.length ? wordConfidence : [row.confidence])));
-  return { code, confidence, paradas: extractStopsAfterAt(row.text), requiresThreeEvidence };
+  return { code, confidence, paradas: extractStopsAfterAt(row), requiresThreeEvidence };
 }
 
-function extractStopsAfterAt(text: string) {
-  const afterAt = String(text || "").match(/\bAT[A-Z0-9]{6,}\b([\s\S]*)$/i)?.[1] || "";
+function extractStopsAfterAt(row: Row | string) {
+  const text = typeof row === "string" ? row : row.text;
+  const words = typeof row === "string" ? [] : row.words;
+  const fromGeometry = extractStopsFromWords(words);
+  if (fromGeometry !== undefined) return fromGeometry;
+  const afterAt = String(text || "").match(/\bAT\s*[A-Z0-9]{6,}\b([\s\S]*)$/i)?.[1] || "";
   // Layout with two numeric cells: AT | stops | packages. Layout with only
   // one numeric cell: AT | packages. A package count must never be used as a
   // stop limit or to rank the preferred neighborhoods.
@@ -303,6 +307,29 @@ function extractStopsAfterAt(text: string) {
   if (!quantities) return undefined;
   const value = Number(quantities[1]);
   return Number.isInteger(value) && value > 0 && value <= 999 ? value : undefined;
+}
+
+function extractStopsFromWords(words: OcrLine["words"]) {
+  if (!words?.length) return undefined;
+  const sorted = [...words].sort((left, right) => left.left - right.left);
+  let atIndex = sorted.findIndex((word) => /^AT[A-Z0-9]{6,}$/i.test(word.text.replace(/[^A-Z0-9]/gi, "")));
+  let quantitiesStart = atIndex + 1;
+  if (atIndex < 0) {
+    atIndex = sorted.findIndex((word, index) => /^AT$/i.test(word.text.trim()) &&
+      /^[A-Z0-9]{6,}$/i.test(String(sorted[index + 1]?.text || "").replace(/[^A-Z0-9]/gi, "")));
+    quantitiesStart = atIndex + 2;
+  }
+  if (atIndex < 0) return undefined;
+  const quantities: number[] = [];
+  for (const word of sorted.slice(quantitiesStart)) {
+    const token = word.text.trim().replace(/^[|;,]+|[|;,]+$/g, "");
+    if (!token) continue;
+    if (!/^\d{1,3}$/.test(token)) break;
+    quantities.push(Number(token));
+    if (quantities.length === 2) break;
+  }
+  const value = quantities.length >= 2 ? quantities[0] : undefined;
+  return value && value <= 999 ? value : undefined;
 }
 
 function mostFrequentNumber(values: number[]) {

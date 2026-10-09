@@ -427,6 +427,19 @@ test("cabecalhos variaveis isolam CLUSTER e BAIRRO automaticamente", () => {
   ]);
   assert.equal(inferredLastColumn.status, "selected");
   assert.equal(inferredLastColumn.detection.code, "J-31");
+  assert.equal(inferredLastColumn.detection.paradas, 46);
+});
+
+test("recupera paradas pela geometria das colunas na linha J-13", () => {
+  const source = consensus([
+    line("J-13", 60, 20), line("AT20261007ARASB", 60, 180),
+    line("44", 60, 430), line("98", 60, 520),
+    line("Campos - Caju", 60, 620), line("Parque Leopoldina", 60, 1050)
+  ]);
+  const result = selectPreferredNeighborhoodFromOcr(source, [{ bairro: "Parque Leopoldina" }]);
+  assert.equal(result.status, "selected");
+  assert.equal(result.detection.code, "J-13");
+  assert.equal(result.detection.paradas, 44);
 });
 
 test("F-24 lido como F-2u continua automatico com AT e Parque Aurora exatos", () => {
