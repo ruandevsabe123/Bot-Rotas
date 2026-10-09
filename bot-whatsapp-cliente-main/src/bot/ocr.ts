@@ -143,7 +143,7 @@ export async function readRouteImageOcr(imagePath: string, options: { maxReading
 }
 
 function runOcrVariants(items: Awaited<ReturnType<typeof createPreprocessedImages>>) {
-  return mapWithConcurrency(items, 2, async (variant) => {
+  return mapWithConcurrency(items, 3, async (variant) => {
     try {
       return { reading: await readSingleRouteImageOcr(variant.path, variant.label, variant.psm) };
     } catch (error) {

@@ -470,6 +470,26 @@ test("recupera paradas pela geometria das colunas na linha J-13", () => {
   assert.equal(result.detection.paradas, 44);
 });
 
+test("usa as colunas da tabela quando o AT da J-13 fica ilegivel", () => {
+  const source = consensus([
+    line("ROTA", 10, 20), line("AT", 10, 180), line("PARADAS", 10, 430), line("PACOTES", 10, 520),
+    line("CLUSTER", 10, 620), line("BAIRRO", 10, 1050),
+    line("J-17", 60, 20), line("AT20261007ARQ30", 60, 180), line("56", 60, 430), line("90", 60, 520), line("Campos Aeroporto", 60, 620), line("Parque Aeroporto", 60, 1050),
+    line("J-13", 100, 20), line("AT20261007ARA?B", 100, 180), line("44", 100, 430), line("98", 100, 520), line("Campos Caju", 100, 620), line("Parque Leopoldina", 100, 1050),
+    line("J-12", 140, 20), line("AT20261007ARPLK", 140, 180), line("58", 140, 430), line("98", 140, 520), line("Campos Caju", 140, 620), line("Parque Caju", 140, 1050)
+  ]);
+  const result = selectPreferredNeighborhoodFromOcr(source, [
+    { bairro: "Parque Leopoldina" },
+    { bairro: "Parque Caju" }
+  ]);
+  assert.equal(result.status, "selected");
+  const byCode = new Map(result.selections.map((item) => [item.detection.code, item.detection]));
+  assert.equal(byCode.get("J-13").paradas, 44);
+  assert.equal(byCode.get("J-13").pacotes, 98);
+  assert.equal(byCode.get("J-12").paradas, 58);
+  assert.equal(byCode.get("J-12").pacotes, 98);
+});
+
 test("F-24 lido como F-2u continua automatico com AT e Parque Aurora exatos", () => {
   const source = consensus([
     line("ROTA", 10, 20), line("AT", 10, 180), line("SPR", 10, 430),

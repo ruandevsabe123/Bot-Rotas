@@ -10,7 +10,7 @@ export type NeighborhoodSelection = {
   selections: { detection: DetectedRouteCode; preferenceIndex: number }[];
 };
 
-type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string; trailingCellText?: string };
+type Row = { text: string; words: OcrLine["words"]; confidence: number; districtText?: string; localityText?: string; trailingCellText?: string; paradas?: number; pacotes?: number };
 type Match = { row: Row; code: string; confidence: number; variant: number; paradas?: number; pacotes?: number; requiresThreeEvidence?: boolean };
 
 export function findManualRouteCandidatesFromOcr(ocr: RouteOcrResult): DetectedRouteCode[] {
@@ -301,6 +301,9 @@ function matchPreference(row: Row, preference: MonitoredRoute) {
 }
 
 function extractQuantitiesAfterAt(row: Row | string) {
+  if (typeof row !== "string" && (row.paradas !== undefined || row.pacotes !== undefined)) {
+    return { paradas: row.paradas, pacotes: row.pacotes };
+  }
   const text = typeof row === "string" ? row : row.text;
   const words = typeof row === "string" ? [] : row.words;
   const fromGeometry = extractQuantitiesFromWords(words);
@@ -470,8 +473,10 @@ function readRows(reading: RouteOcrResult): Row[] {
     ? (beforeLocalityHeader.left + beforeLocalityHeader.width + localityHeader.left) / 2 : undefined;
   const localityEnd = localityHeader && districtHeader && localityHeader.left < districtHeader.left
     ? (localityHeader.left + localityHeader.width + districtHeader.left) / 2 : undefined;
+  const metricColumns = detectMetricColumns(groups);
   return groups.map((words) => {
     const sorted = [...words].sort((left, right) => left.left - right.left);
+    const quantities = inferRowQuantities(sorted, metricColumns);
     return { text: sorted.map((word) => word.text).join(" "), words: sorted,
       districtText: districtStart !== undefined && sorted[0].top > districtHeader!.top + districtHeader!.height
         ? sorted.filter((word) => word.left + word.width / 2 >= districtStart).map((word) => word.text).join(" ") : undefined,
@@ -481,8 +486,65 @@ function readRows(reading: RouteOcrResult): Row[] {
           return center >= localityStart && (localityEnd === undefined || center < localityEnd);
         }).map((word) => word.text).join(" ") : undefined,
       trailingCellText: districtStart === undefined ? inferTrailingCellText(sorted) : undefined,
+      ...quantities,
       confidence: sorted.reduce((total, word) => total + word.confidence, 0) / sorted.length };
   });
+}
+
+function detectMetricColumns(groups: OcrLine["words"][]) {
+  const heights = groups.flat().map((word) => word.height).filter((height) => height > 0).sort((a, b) => a - b);
+  const typicalHeight = heights[Math.floor(heights.length / 2)] || 12;
+  const tolerance = Math.max(12, typicalHeight * 1.8);
+  const clusters: Array<{ center: number; count: number }> = [];
+  for (const group of groups) {
+    const numericWords = dedupeNumericWords(group);
+    for (const word of numericWords) {
+      const center = word.left + word.width / 2;
+      const cluster = clusters.find((item) => Math.abs(item.center - center) <= tolerance);
+      if (cluster) {
+        cluster.center = ((cluster.center * cluster.count) + center) / (cluster.count + 1);
+        cluster.count += 1;
+      } else clusters.push({ center, count: 1 });
+    }
+  }
+  // Require a real table pattern across at least three rows. Short/free-text
+  // OCR lines can place numbers at similar x positions by coincidence and
+  // must continue through the AT-based parser instead.
+  const columns = clusters.filter((cluster) => cluster.count >= 3)
+    .sort((left, right) => right.count - left.count)
+    .slice(0, 2)
+    .sort((left, right) => left.center - right.center)
+    .map((cluster) => ({ ...cluster, tolerance: tolerance * 1.6 }));
+  // Geometry is only needed for the two-column PARADAS/PACOTES layout. A
+  // single column remains handled by the textual AT parser as packages.
+  return columns.length === 2 ? columns : [];
+}
+
+function inferRowQuantities(words: OcrLine["words"], columns: Array<{ center: number; tolerance: number }>) {
+  const numericWords = dedupeNumericWords(words);
+  if (!numericWords.length || !columns.length) return {};
+  const values = columns.map((column) => {
+    const nearest = numericWords.map((word) => ({
+      value: validQuantity(word.text),
+      distance: Math.abs(word.left + word.width / 2 - column.center)
+    })).filter((item) => item.value !== undefined && item.distance <= column.tolerance)
+      .sort((left, right) => left.distance - right.distance)[0];
+    return nearest?.value;
+  });
+  return columns.length >= 2
+    ? { paradas: values[0], pacotes: values[1] }
+    : { pacotes: values[0] };
+}
+
+function dedupeNumericWords(words: OcrLine["words"]) {
+  const found: OcrLine["words"] = [];
+  for (const word of [...words].sort((left, right) => left.left - right.left)) {
+    if (!/^\d{1,3}$/.test(word.text.trim())) continue;
+    const center = word.left + word.width / 2;
+    if (found.some((existing) => Math.abs(existing.left + existing.width / 2 - center) <= Math.max(4, word.width * 0.35))) continue;
+    found.push(word);
+  }
+  return found;
 }
 
 function inferTrailingCellText(words: OcrLine["words"]) {
