@@ -6,6 +6,7 @@ test("filtros mensais do admin respeitam virada de ano", () => {
   const now = new Date(2026, 0, 15, 12, 0, 0);
   assert.deepEqual(getAdminDatePreset("current-month", now), { startDate: "2026-01-01", endDate: "2026-01-15" });
   assert.deepEqual(getAdminDatePreset("previous-month", now), { startDate: "2025-12-01", endDate: "2025-12-31" });
+  assert.deepEqual(getAdminDatePreset("last-30-days", now), { startDate: "2025-12-17", endDate: "2026-01-15" });
   assert.deepEqual(getAdminDatePreset("all", now), { startDate: "", endDate: "" });
 });
 

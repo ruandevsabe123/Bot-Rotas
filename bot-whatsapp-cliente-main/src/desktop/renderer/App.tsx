@@ -1517,6 +1517,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [actionToast, setActionToast] = useState("");
   const [reportStartDate, setReportStartDate] = useState(getCurrentMonthStartInput);
   const [reportEndDate, setReportEndDate] = useState(() => toDateInputValue(new Date()));
+  const [reportDatePreset, setReportDatePreset] = useState<"current-month" | "previous-month" | "last-30-days" | "custom" | "all">("current-month");
   const [historyDatePreset, setHistoryDatePreset] = useState<"current-month" | "previous-month" | "last-30-days" | "custom" | "all">("current-month");
   const [historyStartDate, setHistoryStartDate] = useState(getCurrentMonthStartInput);
   const [historyEndDate, setHistoryEndDate] = useState(() => toDateInputValue(new Date()));
@@ -1526,6 +1527,13 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     setHistoryDatePreset(preset);
     setHistoryStartDate(range.startDate);
     setHistoryEndDate(range.endDate);
+  }
+
+  function applyReportDatePreset(preset: "current-month" | "previous-month" | "last-30-days" | "all") {
+    const range = getAdminDatePreset(preset);
+    setReportDatePreset(preset);
+    setReportStartDate(range.startDate);
+    setReportEndDate(range.endDate);
   }
 
   useEdgeSwipeBack(() => {
@@ -1903,7 +1911,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     }
   }, [activeAdminTab, notificationsOpen, filteredPendingRoutes.length, alerts.length, onlineClients]);
 
-  const reportPeriodLabel = formatReportDateRange(reportStartDate, reportEndDate);
+  const reportPeriodLabel = reportDatePreset === "all" ? "Todo o histÃ³rico" : formatReportDateRange(reportStartDate, reportEndDate);
   const monthlyReport = useMemo(() => {
     const { startMs, endMs } = parseDateRange(reportStartDate, reportEndDate);
     return clientOptions.map((user) => {
@@ -2342,16 +2350,23 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
               <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("validated"); setActiveAdminTab("history"); }}>Abrir validadas</button>
             </div>
             <div className="report-date-filter">
+              <div className="report-date-presets" role="group" aria-label="PerÃ­odo do relatÃ³rio">
+                <button className={reportDatePreset === "current-month" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("current-month")}>Este mÃªs</button>
+                <button className={reportDatePreset === "previous-month" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("previous-month")}>MÃªs passado</button>
+                <button className={reportDatePreset === "last-30-days" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("last-30-days")}>30 dias</button>
+                <button className={reportDatePreset === "all" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("all")}>Tudo</button>
+              </div>
               <label>
                 <CalendarDays size={18} />
                 <span>Data inicial</span>
-                <input type="date" value={reportStartDate} onChange={(event) => setReportStartDate(event.target.value)} />
+                <input type="date" value={reportStartDate} onChange={(event) => { setReportDatePreset("custom"); setReportStartDate(event.target.value); }} />
               </label>
               <label>
                 <CalendarDays size={18} />
                 <span>Data final</span>
-                <input type="date" value={reportEndDate} onChange={(event) => setReportEndDate(event.target.value)} />
+                <input type="date" value={reportEndDate} onChange={(event) => { setReportDatePreset("custom"); setReportEndDate(event.target.value); }} />
               </label>
+              <span className="admin-date-summary">{reportDatePreset === "all" ? "Todo o relatÃ³rio preservado" : reportPeriodLabel}</span>
             </div>
             <div className="report-list">
               {monthlyReport.length ? monthlyReport.map((item) => (
