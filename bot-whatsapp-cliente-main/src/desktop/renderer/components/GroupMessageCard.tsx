@@ -302,7 +302,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
                 {route.conditionMetric ? (
                   <div className="preference-condition">
                     <select
-                      aria-label={`Tipo da condiÃ§Ã£o da preferÃªncia ${index + 1}`}
+                      aria-label={`Tipo da condição da preferência ${index + 1}`}
                       disabled={busy}
                       value={route.conditionMetric}
                       onChange={(event) => {
@@ -315,9 +315,9 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
                       <option value="packages">Pacotes</option>
                     </select>
                     <input
-                      aria-label={`MÃ¡ximo da condiÃ§Ã£o da preferÃªncia ${index + 1}`}
+                      aria-label={`Máximo da condição da preferência ${index + 1}`}
                       type="number" min={1} max={999} disabled={busy}
-                      value={route.conditionMax || ""} placeholder="MÃ¡ximo"
+                      value={route.conditionMax || ""} placeholder="Máximo"
                       onChange={(event) => {
                         const nextRoutes = [...monitoredRoutes];
                         nextRoutes[index] = { ...route, conditionMax: event.target.value ? Number(event.target.value) : 0 };
@@ -329,14 +329,14 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
                       const nextRoutes = [...monitoredRoutes];
                       nextRoutes[index] = withoutCondition;
                       setMonitoredRoutes(nextRoutes);
-                    }}>Remover condiÃ§Ã£o</button>
+                    }}>Remover condição</button>
                   </div>
                 ) : (
                   <button className="link-button add-condition-button" disabled={busy} type="button" onClick={() => {
                     const nextRoutes = [...monitoredRoutes];
                     nextRoutes[index] = { ...route, conditionMetric: "stops", conditionMax: 0 };
                     setMonitoredRoutes(nextRoutes);
-                  }}>+ Adicionar condiÃ§Ã£o de paradas ou pacotes</button>
+                  }}>+ Adicionar condição de paradas ou pacotes</button>
                 )}
                 </div>
                 <button
@@ -377,7 +377,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </button>
               <small>{activePreferences.length} de {nextPreferences.length} bairro(s) participam da análise. Use as setas para ordenar as preferências ativas.</small>
               {hasIncompletePreference ? <small role="alert">Preencha o bairro antes de salvar.</small> : null}
-              {hasIncompleteCondition ? <small role="alert">Informe um mÃ¡ximo maior que zero para cada condiÃ§Ã£o adicionada.</small> : null}
+              {hasIncompleteCondition ? <small role="alert">Informe um máximo maior que zero para cada condição adicionada.</small> : null}
               {!activePreferences.length && nextPreferences.length ? <small role="alert">Todas as preferências estão pausadas. Você pode salvar, mas precisa ativar ao menos uma para iniciar o bot imagem.</small> : null}
             </div>
             </div>

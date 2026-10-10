@@ -44,5 +44,5 @@ export function moveNeighborhoodPreference(routes: MonitoredRoute[], fromIndex: 
 
 export function neighborhoodPreferenceLabel(route: MonitoredRoute) {
   if (!route.conditionMetric || !(Number(route.conditionMax) > 0)) return route.bairro;
-  return `${route.bairro} — atÃ© ${route.conditionMax} ${route.conditionMetric === "packages" ? "pacotes" : "paradas"}`;
+  return `${route.bairro} — até ${route.conditionMax} ${route.conditionMetric === "packages" ? "pacotes" : "paradas"}`;
 }

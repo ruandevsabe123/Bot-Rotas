@@ -1911,7 +1911,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
     }
   }, [activeAdminTab, notificationsOpen, filteredPendingRoutes.length, alerts.length, onlineClients]);
 
-  const reportPeriodLabel = reportDatePreset === "all" ? "Todo o histÃ³rico" : formatReportDateRange(reportStartDate, reportEndDate);
+  const reportPeriodLabel = reportDatePreset === "all" ? "Todo o histórico" : formatReportDateRange(reportStartDate, reportEndDate);
   const monthlyReport = useMemo(() => {
     const { startMs, endMs } = parseDateRange(reportStartDate, reportEndDate);
     return clientOptions.map((user) => {
@@ -2350,9 +2350,9 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
               <button className="button" type="button" onClick={() => { setClientFilter("all"); setRouteStatusFilter("validated"); setActiveAdminTab("history"); }}>Abrir validadas</button>
             </div>
             <div className="report-date-filter">
-              <div className="report-date-presets" role="group" aria-label="PerÃ­odo do relatÃ³rio">
-                <button className={reportDatePreset === "current-month" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("current-month")}>Este mÃªs</button>
-                <button className={reportDatePreset === "previous-month" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("previous-month")}>MÃªs passado</button>
+              <div className="report-date-presets" role="group" aria-label="Período do relatório">
+                <button className={reportDatePreset === "current-month" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("current-month")}>Este mês</button>
+                <button className={reportDatePreset === "previous-month" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("previous-month")}>Mês passado</button>
                 <button className={reportDatePreset === "last-30-days" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("last-30-days")}>30 dias</button>
                 <button className={reportDatePreset === "all" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("all")}>Tudo</button>
               </div>
@@ -2366,7 +2366,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                 <span>Data final</span>
                 <input type="date" value={reportEndDate} onChange={(event) => { setReportDatePreset("custom"); setReportEndDate(event.target.value); }} />
               </label>
-              <span className="admin-date-summary">{reportDatePreset === "all" ? "Todo o relatÃ³rio preservado" : reportPeriodLabel}</span>
+              <span className="admin-date-summary">{reportDatePreset === "all" ? "Todo o relatório preservado" : reportPeriodLabel}</span>
             </div>
             <div className="report-list">
               {monthlyReport.length ? monthlyReport.map((item) => (
