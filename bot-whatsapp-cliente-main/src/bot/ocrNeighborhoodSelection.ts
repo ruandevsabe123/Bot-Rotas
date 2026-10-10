@@ -71,7 +71,9 @@ export function selectPreferredNeighborhoodFromOcr(
     cidade: String(preference.cidade || "").trim(),
     bairro: String(preference.bairro || "").trim(),
     index,
-    enabled: preference.enabled !== false
+    enabled: preference.enabled !== false,
+    conditionMetric: preference.conditionMetric,
+    conditionMax: Math.max(0, Math.floor(Number(preference.conditionMax) || 0))
   })).filter((preference) => preference.enabled && normalizeNeighborhoodIdentity(preference.bairro));
   if (!configured.length) return { status: "unconfigured", reason: "Nenhum bairro preferido configurado.", detections: [], selections: [] };
 
@@ -157,13 +159,22 @@ export function selectPreferredNeighborhoodFromOcr(
   if (selections.length) {
     const normalizedMaxStops = Number.isFinite(Number(maxStops)) ? Math.max(0, Math.floor(Number(maxStops))) : 0;
     const normalizedMaxPackages = Number.isFinite(Number(maxPackages)) ? Math.max(0, Math.floor(Number(maxPackages))) : 0;
+    const exceedsIndividualCondition = (item: NeighborhoodSelection["selections"][number]) => {
+      const preference = configured.find((candidate) => candidate.index === item.preferenceIndex);
+      if (!preference?.conditionMax) return false;
+      const value = preference.conditionMetric === "packages" ? item.detection.pacotes : item.detection.paradas;
+      return value !== undefined && value > preference.conditionMax;
+    };
     const eligibleSelections = selections.filter((item) =>
       (!normalizedMaxStops || item.detection.paradas === undefined || item.detection.paradas <= normalizedMaxStops) &&
-      (!normalizedMaxPackages || item.detection.pacotes === undefined || item.detection.pacotes <= normalizedMaxPackages));
+      (!normalizedMaxPackages || item.detection.pacotes === undefined || item.detection.pacotes <= normalizedMaxPackages) &&
+      !exceedsIndividualCondition(item));
     const excludedCount = selections.length - eligibleSelections.length;
     if (!eligibleSelections.length) return {
       status: "unsafe",
-      reason: `Todos os bairros encontrados ultrapassaram ${formatLimits(normalizedMaxStops, normalizedMaxPackages)}. Nenhuma mensagem foi enviada.`,
+      reason: normalizedMaxStops || normalizedMaxPackages
+        ? `Todos os bairros encontrados ultrapassaram ${formatLimits(normalizedMaxStops, normalizedMaxPackages)}. Nenhuma mensagem foi enviada.`
+        : "Todos os bairros encontrados ultrapassaram suas condiÃ§Ãµes individuais. Nenhuma mensagem foi enviada.",
       detections,
       selections: []
     };

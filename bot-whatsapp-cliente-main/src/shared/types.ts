@@ -71,6 +71,9 @@ export type MonitoredRoute = {
   bairro: string;
   /** Missing on older saved configurations means enabled. */
   enabled?: boolean;
+  /** Optional maximum applied only to this neighborhood. */
+  conditionMetric?: "stops" | "packages";
+  conditionMax?: number;
 };
 
 export type RoutePreset = {

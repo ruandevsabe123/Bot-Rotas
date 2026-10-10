@@ -1697,7 +1697,11 @@ export class BotService extends EventEmitter {
       .map((item) => ({
         cidade: "",
         bairro: String(item?.bairro || "").trim(),
-        enabled: item?.enabled !== false
+        enabled: item?.enabled !== false,
+        ...(item?.conditionMetric === "stops" || item?.conditionMetric === "packages" ? {
+          conditionMetric: item.conditionMetric,
+          conditionMax: Math.max(0, Math.min(999, Math.floor(Number(item.conditionMax) || 0)))
+        } : {})
       }))
       .filter((item) => item.bairro);
     this.configStore.save({
@@ -1729,7 +1733,11 @@ export class BotService extends EventEmitter {
     const normalizedRoutes = routes
       .map((route) => ({
         cidade: "", bairro: String(route?.bairro || "").trim(),
-        enabled: route?.enabled !== false
+        enabled: route?.enabled !== false,
+        ...(route?.conditionMetric === "stops" || route?.conditionMetric === "packages" ? {
+          conditionMetric: route.conditionMetric,
+          conditionMax: Math.max(0, Math.min(999, Math.floor(Number(route.conditionMax) || 0)))
+        } : {})
       }))
       .filter((route) => route.bairro);
     if (!presetName) throw new Error("Digite um nome para a configuração.");

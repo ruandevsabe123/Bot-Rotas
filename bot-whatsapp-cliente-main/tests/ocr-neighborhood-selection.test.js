@@ -117,6 +117,39 @@ test("limite geral descarta somente rotas acima do máximo", () => {
   assert.match(selected.reason, /1 rota\(s\) acima do limite/);
 });
 
+test("condicao de paradas descarta somente o bairro configurado", () => {
+  const selected = selectPreferredNeighborhoodFromOcr(consensus([
+    "J-13 AT20261007ARASB 58 98 Campos Parque Leopoldina",
+    "J-12 AT20261007ARPLK 70 98 Campos Parque Caju"
+  ]), [
+    { bairro: "Parque Leopoldina", conditionMetric: "stops", conditionMax: 50 },
+    { bairro: "Parque Caju" }
+  ]);
+  assert.equal(selected.status, "selected");
+  assert.equal(selected.detection.code, "J-12");
+  assert.deepEqual(selected.selections.map((item) => item.detection.code), ["J-12"]);
+});
+
+test("condicao individual de pacotes nao afeta os demais bairros", () => {
+  const selected = selectPreferredNeighborhoodFromOcr(consensus([
+    "I-21 AT20261006APWGS 23 92 Campos Parque Rosario",
+    "G-29 AT20261006APWEW 31 77 Campos Parque Caju"
+  ]), [
+    { bairro: "Parque Rosario", conditionMetric: "packages", conditionMax: 90 },
+    { bairro: "Parque Caju" }
+  ]);
+  assert.equal(selected.status, "selected");
+  assert.equal(selected.detection.code, "G-29");
+});
+
+test("quantidade ilegivel nao bloqueia uma condicao individual", () => {
+  const selected = selectPreferredNeighborhoodFromOcr(consensus([
+    "I-21 AT20261006APWGS Campos Parque Rosario"
+  ]), [{ bairro: "Parque Rosario", conditionMetric: "stops", conditionMax: 20 }]);
+  assert.equal(selected.status, "selected");
+  assert.equal(selected.detection.code, "I-21");
+});
+
 test("sem leitura de paradas mantém a ordem de preferência e não bloqueia", () => {
   const selected = selectPreferredNeighborhoodFromOcr(consensus([
     "G-17 Campos Goytacazes",

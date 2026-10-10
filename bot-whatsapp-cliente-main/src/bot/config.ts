@@ -166,7 +166,11 @@ export class ConfigStore {
             .map((item: any) => ({
               cidade: typeof item?.cidade === "string" ? item.cidade.trim() : "",
               bairro: typeof item?.bairro === "string" ? item.bairro.trim() : "",
-              enabled: item?.enabled !== false
+              enabled: item?.enabled !== false,
+              ...(item?.conditionMetric === "stops" || item?.conditionMetric === "packages" ? {
+                conditionMetric: item.conditionMetric,
+                conditionMax: this.clampNumber(item.conditionMax, 0, 999, 0)
+              } : {})
             }))
             .filter((item) => item.bairro)
         : [],
@@ -179,7 +183,11 @@ export class ConfigStore {
                 ? preset.routes.map((item: any) => ({
                     cidade: "",
                     bairro: typeof item?.bairro === "string" ? item.bairro.trim() : "",
-                    enabled: item?.enabled !== false
+                    enabled: item?.enabled !== false,
+                    ...(item?.conditionMetric === "stops" || item?.conditionMetric === "packages" ? {
+                      conditionMetric: item.conditionMetric,
+                      conditionMax: this.clampNumber(item.conditionMax, 0, 999, 0)
+                    } : {})
                   })).filter((item: any) => item.bairro)
                 : [],
               createdAt: typeof preset?.createdAt === "string" ? preset.createdAt : new Date().toISOString(),

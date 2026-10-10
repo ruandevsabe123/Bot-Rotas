@@ -129,6 +129,17 @@ test("editor salva bairros visíveis e sua nova ordem, sem reutilizar códigos o
   assert.equal(editor.config.rotasMonitoradasDetalhadas[0].bairro, "Bairro antigo");
 });
 
+test("editor adiciona condicao somente ao bairro escolhido", () => {
+  const editor = renderEditor();
+  editor.click(editor.find((node) => node.type === "button" && node.props.className === "link-button add-condition-button"));
+  editor.change(editor.find((node) => node.type === "select" && /1$/.test(node.props["aria-label"] || "")), "packages");
+  editor.change(editor.find((node) => node.type === "input" && node.props.type === "number" && /1$/.test(node.props["aria-label"] || "")), "90");
+  editor.submit();
+  assert.deepEqual(JSON.parse(JSON.stringify(editor.saved[0][8])), [{
+    cidade: "", bairro: "Bairro antigo", enabled: true, conditionMetric: "packages", conditionMax: 90
+  }]);
+});
+
 test("editor de bairros não exibe mais limites manuais de paradas", () => {
   const editor = renderEditor({
     config: {

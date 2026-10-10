@@ -99,7 +99,8 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
   const nextPreferences = normalizeMonitoredRoutes(monitoredRoutes);
   const activePreferences = getEnabledNeighborhoodPreferences(nextPreferences);
   const hasIncompletePreference = monitoredRoutes.some((route) => !route.bairro.trim());
-  const hasMessageSettings = isImageTarget ? nextPreferences.length > 0 && !hasIncompletePreference : parseCodes(codes).length > 0;
+  const hasIncompleteCondition = monitoredRoutes.some((route) => route.conditionMetric && !(Number(route.conditionMax) > 0));
+  const hasMessageSettings = isImageTarget ? nextPreferences.length > 0 && !hasIncompletePreference && !hasIncompleteCondition : parseCodes(codes).length > 0;
 
   useEffect(() => {
     setGroup(isTarget ? config.grupoAlvoNome || "" : config.grupoTesteNome || "");
@@ -298,6 +299,45 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
                   }}
                   placeholder="Bairro: Parque Penha"
                 />
+                {route.conditionMetric ? (
+                  <div className="preference-condition">
+                    <select
+                      aria-label={`Tipo da condiÃ§Ã£o da preferÃªncia ${index + 1}`}
+                      disabled={busy}
+                      value={route.conditionMetric}
+                      onChange={(event) => {
+                        const nextRoutes = [...monitoredRoutes];
+                        nextRoutes[index] = { ...route, conditionMetric: event.target.value as "stops" | "packages" };
+                        setMonitoredRoutes(nextRoutes);
+                      }}
+                    >
+                      <option value="stops">Paradas</option>
+                      <option value="packages">Pacotes</option>
+                    </select>
+                    <input
+                      aria-label={`MÃ¡ximo da condiÃ§Ã£o da preferÃªncia ${index + 1}`}
+                      type="number" min={1} max={999} disabled={busy}
+                      value={route.conditionMax || ""} placeholder="MÃ¡ximo"
+                      onChange={(event) => {
+                        const nextRoutes = [...monitoredRoutes];
+                        nextRoutes[index] = { ...route, conditionMax: event.target.value ? Number(event.target.value) : 0 };
+                        setMonitoredRoutes(nextRoutes);
+                      }}
+                    />
+                    <button className="link-button danger-link" disabled={busy} type="button" onClick={() => {
+                      const { conditionMetric: _metric, conditionMax: _max, ...withoutCondition } = route;
+                      const nextRoutes = [...monitoredRoutes];
+                      nextRoutes[index] = withoutCondition;
+                      setMonitoredRoutes(nextRoutes);
+                    }}>Remover condiÃ§Ã£o</button>
+                  </div>
+                ) : (
+                  <button className="link-button add-condition-button" disabled={busy} type="button" onClick={() => {
+                    const nextRoutes = [...monitoredRoutes];
+                    nextRoutes[index] = { ...route, conditionMetric: "stops", conditionMax: 0 };
+                    setMonitoredRoutes(nextRoutes);
+                  }}>+ Adicionar condiÃ§Ã£o de paradas ou pacotes</button>
+                )}
                 </div>
                 <button
                   aria-checked={route.enabled !== false}
@@ -337,6 +377,7 @@ export function GroupMessageCard({ kind, targetMode = "manual", config, groups, 
               </button>
               <small>{activePreferences.length} de {nextPreferences.length} bairro(s) participam da análise. Use as setas para ordenar as preferências ativas.</small>
               {hasIncompletePreference ? <small role="alert">Preencha o bairro antes de salvar.</small> : null}
+              {hasIncompleteCondition ? <small role="alert">Informe um mÃ¡ximo maior que zero para cada condiÃ§Ã£o adicionada.</small> : null}
               {!activePreferences.length && nextPreferences.length ? <small role="alert">Todas as preferências estão pausadas. Você pode salvar, mas precisa ativar ao menos uma para iniciar o bot imagem.</small> : null}
             </div>
             </div>
