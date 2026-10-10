@@ -59,6 +59,7 @@ import { LogsPanel } from "./components/LogsPanel";
 import { QrCodeBox } from "./components/QrCodeBox";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AdminCommandCenter } from "./admin/AdminCommandCenter";
+import { getAdminDatePreset, isDateInsideAdminRange } from "./adminDateFilter";
 import { enableWebPushNotifications } from "./pushNotifications";
 import { uiText } from "./uiText";
 import { getEnabledNeighborhoodPreferences, getNeighborhoodPreferences, neighborhoodPreferenceLabel, normalizeNeighborhoodPreferences } from "./neighborhoodPreferences";
@@ -1516,6 +1517,16 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const [actionToast, setActionToast] = useState("");
   const [reportStartDate, setReportStartDate] = useState(getCurrentMonthStartInput);
   const [reportEndDate, setReportEndDate] = useState(() => toDateInputValue(new Date()));
+  const [historyDatePreset, setHistoryDatePreset] = useState<"current-month" | "previous-month" | "last-30-days" | "custom" | "all">("current-month");
+  const [historyStartDate, setHistoryStartDate] = useState(getCurrentMonthStartInput);
+  const [historyEndDate, setHistoryEndDate] = useState(() => toDateInputValue(new Date()));
+
+  function applyHistoryDatePreset(preset: "current-month" | "previous-month" | "last-30-days" | "all") {
+    const range = getAdminDatePreset(preset);
+    setHistoryDatePreset(preset);
+    setHistoryStartDate(range.startDate);
+    setHistoryEndDate(range.endDate);
+  }
 
   useEdgeSwipeBack(() => {
     if (leaderAlert) return setLeaderAlert("");
@@ -1539,6 +1550,7 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
   const filteredRoutes = useMemo(() => {
     return dashboard.routes.filter((route) => {
       const matchesClient = clientFilter === "all" || route.clientEmail === clientFilter;
+      const matchesDate = isDateInsideAdminRange(route.createdAt || route.updatedAt, historyStartDate, historyEndDate);
       const search = routeSearch.trim().toLowerCase();
       const matchesSearch =
         !search ||
@@ -1563,9 +1575,9 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
         (routeKindFilter === "automatic" && route.mode === "target" && trigger === "automatic") ||
         (routeKindFilter === "manual" && ["manual", "simulation"].includes(trigger)) ||
         (routeKindFilter === "test" && (route.mode === "test" || ["warmup", "target-simulation"].includes(trigger)));
-      return matchesClient && matchesSearch && matchesStatus && matchesKind;
+      return matchesClient && matchesDate && matchesSearch && matchesStatus && matchesKind;
     });
-  }, [clientFilter, dashboard.routes, routeKindFilter, routeSearch, routeStatusFilter]);
+  }, [clientFilter, dashboard.routes, historyEndDate, historyStartDate, routeKindFilter, routeSearch, routeStatusFilter]);
   const filteredPendingRoutes = useMemo(
     () => dashboard.pendingReactionRoutes.filter((route) => getRouteDecisionStatus(route) === "pending" && (clientFilter === "all" || route.clientEmail === clientFilter)),
     [clientFilter, dashboard.pendingReactionRoutes]
@@ -2218,10 +2230,23 @@ function AdminDashboard({ userEmail, onLogout }: { userEmail: string; onLogout: 
                 placeholder="Buscar por grupo, cliente ou e-mail..."
               />
             </label>
-            <button className="button" type="button">
-              <CalendarDays size={18} />
-              Período
-            </button>
+            <div className="admin-date-filter">
+              <div className="admin-date-presets" role="group" aria-label="Período do histórico">
+                <button className={historyDatePreset === "current-month" ? "active" : ""} type="button" onClick={() => applyHistoryDatePreset("current-month")}>Este mês</button>
+                <button className={historyDatePreset === "previous-month" ? "active" : ""} type="button" onClick={() => applyHistoryDatePreset("previous-month")}>Mês passado</button>
+                <button className={historyDatePreset === "last-30-days" ? "active" : ""} type="button" onClick={() => applyHistoryDatePreset("last-30-days")}>30 dias</button>
+                <button className={historyDatePreset === "all" ? "active" : ""} type="button" onClick={() => applyHistoryDatePreset("all")}>Tudo</button>
+              </div>
+              <label title="Data inicial">
+                <CalendarDays size={17} />
+                <input aria-label="Data inicial do histórico" type="date" value={historyStartDate} onChange={(event) => { setHistoryDatePreset("custom"); setHistoryStartDate(event.target.value); }} />
+              </label>
+              <label title="Data final">
+                <CalendarDays size={17} />
+                <input aria-label="Data final do histórico" type="date" value={historyEndDate} onChange={(event) => { setHistoryDatePreset("custom"); setHistoryEndDate(event.target.value); }} />
+              </label>
+              <span className="admin-date-summary">{historyDatePreset === "all" ? "Todo o histórico preservado" : formatReportDateRange(historyStartDate, historyEndDate)}</span>
+            </div>
             <label>
               <select value={routeStatusFilter} onChange={(event) => setRouteStatusFilter(event.target.value as RouteStatusFilter)}>
                 <option value="all">Todos</option>
