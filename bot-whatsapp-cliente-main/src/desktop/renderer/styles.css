@@ -4880,6 +4880,59 @@ body:has(.modal-backdrop) {
   gap: 16px;
 }
 
+.adminx-report-filter {
+  display: grid;
+  gap: 14px;
+}
+
+.adminx-report-presets,
+.adminx-report-calendar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.adminx-report-presets button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid rgba(164, 103, 237, 0.35);
+  border-radius: 8px;
+  color: #e8dcf5;
+  background: #100718;
+  cursor: pointer;
+}
+
+.adminx-report-presets button.active {
+  border-color: rgba(215, 183, 255, 0.72);
+  color: #fff;
+  background: linear-gradient(155deg, #ad70ff, #8a49df 46%, #59239e);
+}
+
+.adminx-report-calendar label {
+  display: grid;
+  gap: 6px;
+  min-width: 210px;
+  color: #b9adc7;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.adminx-report-calendar input {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(164, 103, 237, 0.35);
+  border-radius: 8px;
+  color: #faf6ff;
+  color-scheme: dark;
+  background: #0d0613;
+}
+
+.adminx-date-result {
+  color: #cdb4ef;
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .adminx-metrics {
   display: grid;
   grid-template-columns: repeat(6, minmax(150px, 1fr));

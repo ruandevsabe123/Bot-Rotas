@@ -66,6 +66,7 @@ import {
   validateAdminRoute
 } from "../api";
 import { enableWebPushNotifications } from "../pushNotifications";
+import { AdminDatePreset, getAdminDatePreset, isDateInsideAdminRange } from "../adminDateFilter";
 
 type AdminCommandCenterProps = {
   userEmail: string;
@@ -75,6 +76,7 @@ type AdminCommandCenterProps = {
 
 type AdminPage = "today" | "operations" | "dashboard" | "clients" | "validations" | "reactions" | "validated_ai" | "usage" | "history" | "logs" | "support" | "reports" | "maintenance" | "settings";
 type DatePreset = "today" | "7d" | "30d" | "all";
+type ReportDatePreset = AdminDatePreset | "custom";
 type DecisionFilter = "all" | "pending" | "validated" | "rejected" | "leader" | "removed";
 type ModeFilter = "all" | "target" | "test" | "manual" | "automatic" | "ocr" | "warmup" | "simulation";
 type LogLevelFilter = "all" | "info" | "success" | "warning" | "error";
@@ -668,6 +670,10 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   });
   const [clientFilter, setClientFilter] = useState("all");
   const [datePreset, setDatePreset] = useState<DatePreset>("30d");
+  const initialReportDates = getAdminDatePreset("current-month");
+  const [reportDatePreset, setReportDatePreset] = useState<ReportDatePreset>("current-month");
+  const [reportStartDate, setReportStartDate] = useState(initialReportDates.startDate);
+  const [reportEndDate, setReportEndDate] = useState(initialReportDates.endDate);
   const [search, setSearch] = useState("");
   const [decisionFilter, setDecisionFilter] = useState<DecisionFilter>("all");
   const [modeFilter, setModeFilter] = useState<ModeFilter>("all");
@@ -736,6 +742,13 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
   }, [clientFilter, clients]);
   const period = dateRangeMs(datePreset);
 
+  function applyReportDatePreset(preset: AdminDatePreset) {
+    const range = getAdminDatePreset(preset);
+    setReportDatePreset(preset);
+    setReportStartDate(range.startDate);
+    setReportEndDate(range.endDate);
+  }
+
   async function enterClientMode() {
     if (!clientModeTarget) return;
     setBusy(true);
@@ -753,7 +766,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     return routes.routes.filter((route) => {
       const created = new Date(route.createdAt).getTime();
       const clientOk = clientFilter === "all" || route.clientEmail === clientFilter;
-      const dateOk = created >= period.start && created <= period.end;
+      const dateOk = page === "reports" || (created >= period.start && created <= period.end);
       const decision = routeDecision(route);
       const decisionOk =
         decisionFilter === "all" ||
@@ -780,7 +793,13 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       ].some((item) => String(item || "").toLowerCase().includes(query));
       return clientOk && dateOk && decisionOk && modeOk && queryOk;
     });
-  }, [clientFilter, decisionFilter, modeFilter, period.end, period.start, routes.routes, search]);
+  }, [clientFilter, decisionFilter, modeFilter, page, period.end, period.start, routes.routes, search]);
+
+  const reportRoutes = useMemo(() => visibleRoutes.filter((route) =>
+    isDateInsideAdminRange(route.createdAt, reportStartDate, reportEndDate)
+  ), [reportEndDate, reportStartDate, visibleRoutes]);
+  const reportValidatedCount = reportRoutes.filter((route) => routeDecision(route) === "validated").length;
+  const reportValidationRate = reportRoutes.length ? Math.round((reportValidatedCount / reportRoutes.length) * 100) : 0;
 
   const visibleLogs = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -1233,8 +1252,8 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
     }
   }
 
-  function exportRoutes(format: "csv" | "json") {
-    const rows = visibleRoutes.map((route) => ({
+  function exportRoutes(format: "csv" | "json", sourceRoutes = visibleRoutes) {
+    const rows = sourceRoutes.map((route) => ({
       id: route.id,
       cliente: route.clientEmail,
       grupo: route.groupName || route.groupJid,
@@ -1249,7 +1268,7 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
       criado_em: route.createdAt
     }));
     if (format === "json") {
-      downloadText("rotas-admin.json", JSON.stringify(visibleRoutes, null, 2), "application/json;charset=utf-8");
+      downloadText("rotas-admin.json", JSON.stringify(sourceRoutes, null, 2), "application/json;charset=utf-8");
       return;
     }
     downloadText("rotas-admin.csv", toCsv(rows), "text/csv;charset=utf-8");
@@ -1316,12 +1335,12 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
               <option value="all">Todos os clientes</option>
               {clients.map((client) => <option key={client.email} value={client.email}>{client.email}</option>)}
             </select>
-            <select value={datePreset} onChange={(event) => setDatePreset(event.target.value as DatePreset)}>
+            {page !== "reports" ? <select value={datePreset} onChange={(event) => setDatePreset(event.target.value as DatePreset)}>
               <option value="today">Hoje</option>
               <option value="7d">7 dias</option>
               <option value="30d">30 dias</option>
               <option value="all">Tudo</option>
-            </select>
+            </select> : null}
             <StatusPill tone={streamState === "live" ? "green" : streamState === "fallback" ? "yellow" : "blue"}>
               {streamState === "live" ? "SSE ao vivo" : streamState === "fallback" ? "Polling" : "Conectando"}
             </StatusPill>
@@ -1815,18 +1834,34 @@ export function AdminCommandCenter({ userEmail, onLogout, onEnterClientMode }: A
 
         {page === "reports" ? (
           <section className="adminx-page">
+            <article className="adminx-panel adminx-report-filter">
+              <div className="adminx-panel-head">
+                <div><p>Período do relatório</p><h2>Filtrar por data</h2></div>
+                <span className="adminx-date-result">{reportRoutes.length} rota(s) encontrada(s)</span>
+              </div>
+              <div className="adminx-report-presets" role="group" aria-label="Período do relatório">
+                <button className={reportDatePreset === "current-month" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("current-month")}>Este mês</button>
+                <button className={reportDatePreset === "previous-month" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("previous-month")}>Mês passado</button>
+                <button className={reportDatePreset === "last-30-days" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("last-30-days")}>Últimos 30 dias</button>
+                <button className={reportDatePreset === "all" ? "active" : ""} type="button" onClick={() => applyReportDatePreset("all")}>Tudo</button>
+              </div>
+              <div className="adminx-report-calendar">
+                <label><span>Data inicial</span><input type="date" value={reportStartDate} onChange={(event) => { setReportDatePreset("custom"); setReportStartDate(event.target.value); }} /></label>
+                <label><span>Data final</span><input type="date" value={reportEndDate} onChange={(event) => { setReportDatePreset("custom"); setReportEndDate(event.target.value); }} /></label>
+              </div>
+            </article>
             <div className="adminx-metrics">
-              <MetricCard Icon={History} tone="blue" title="Rotas" value={visibleRoutes.length} detail="no filtro" />
-              <MetricCard Icon={CheckCircle2} tone="green" title="Validadas" value={validatedCount} detail={`${validationRate}%`} />
-              <MetricCard Icon={Ban} tone="red" title="Rejeitadas" value={visibleRoutes.filter((route) => routeDecision(route) === "rejected").length} detail="julgadas" />
-              <MetricCard Icon={MessageSquareText} tone="yellow" title="Líder" value={visibleRoutes.filter(hasLeaderReaction).length} detail="com reação" />
+              <MetricCard Icon={History} tone="blue" title="Rotas" value={reportRoutes.length} detail="no período" />
+              <MetricCard Icon={CheckCircle2} tone="green" title="Validadas" value={reportValidatedCount} detail={`${reportValidationRate}%`} />
+              <MetricCard Icon={Ban} tone="red" title="Rejeitadas" value={reportRoutes.filter((route) => routeDecision(route) === "rejected").length} detail="julgadas" />
+              <MetricCard Icon={MessageSquareText} tone="yellow" title="Líder" value={reportRoutes.filter(hasLeaderReaction).length} detail="com reação" />
             </div>
             <article className="adminx-panel">
               <div className="adminx-panel-head">
                 <div><p>Por cliente</p><h2>Relatório operacional</h2></div>
-                <button className="button" type="button" onClick={() => exportRoutes("csv")}>Exportar CSV</button>
+                <button className="button" type="button" onClick={() => exportRoutes("csv", reportRoutes)}>Exportar CSV</button>
               </div>
-              <ReportTable clients={clients} routes={visibleRoutes} />
+              <ReportTable clients={clients} routes={reportRoutes} />
             </article>
           </section>
         ) : null}
